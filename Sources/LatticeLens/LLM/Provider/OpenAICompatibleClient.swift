@@ -154,6 +154,13 @@ struct OpenAICompatibleSSEParser: Sendable {
                 completed += try finishEvent()
                 continue
             }
+            // SSE comments and event metadata are legal keep-alives.  They
+            // are not model content and must neither reset the first-content
+            // deadline nor be treated as malformed provider JSON.
+            if line.first == 0x3A || line.starts(with: Data("event:".utf8)) ||
+                line.starts(with: Data("id:".utf8)) || line.starts(with: Data("retry:".utf8)) {
+                continue
+            }
             guard line.starts(with: Data("data:".utf8)) else { throw LLMClientError.malformedSSE }
             var payload = line.dropFirst(5)
             if payload.first == 0x20 { payload = payload.dropFirst() }
@@ -235,10 +242,30 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
         guard !profile.provider.apiKeyIsRequired || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw LatticeLensError.missingCredential }
         let url = try APIEndpointBuilder.endpoint(baseURL: profile.baseURL, path: "chat/completions", provider: profile.provider)
         struct Message: Codable { let role: String; let content: String }
-        struct RequestBody: Codable { let model: String; let messages: [Message]; let stream: Bool }
+        struct ResponseFormat: Codable { let type: String }
+        struct RequestBody: Codable {
+            let model: String
+            let messages: [Message]
+            let stream: Bool
+            let responseFormat: ResponseFormat?
+
+            enum CodingKeys: String, CodingKey {
+                case model, messages, stream
+                case responseFormat = "response_format"
+            }
+        }
         let body = RequestBody(model: profile.effectiveModel,
                                messages: [Message(role: "system", content: system), Message(role: "user", content: userPayload)],
-                               stream: profile.usesStreaming)
+                               stream: profile.usesStreaming,
+                               // DeepSeek's documented OpenAI-compatible JSON
+                               // mode asks the provider to emit an object, not
+                               // a prose/fenced completion.  The app still
+                               // runs its exact-root, duplicate-key, source
+                               // scope, figure and numeric-anchor validators;
+                               // JSON mode never turns an invalid claim into a
+                               // successful artifact.  Custom/local providers
+                               // keep their existing compatibility contract.
+                               responseFormat: profile.provider == .deepSeek ? ResponseFormat(type: "json_object") : nil)
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: profile.provider)
         request.httpMethod = "POST"
         request.timeoutInterval = 30

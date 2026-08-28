@@ -78,7 +78,10 @@ struct V3WorkbenchView: View {
         // two-paper matrix and its evidence inspector can coexist; smaller
         // widths would otherwise hide the actionable inspector column.
         .frame(minWidth: 820, minHeight: 640)
-        .task { await viewModel.refreshWorkbench() }
+        .task {
+            await viewModel.refreshWorkbench()
+            viewModel.runDueRadarQueries()
+        }
     }
 }
 

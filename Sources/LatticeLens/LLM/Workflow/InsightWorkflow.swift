@@ -23,6 +23,25 @@ actor InsightWorkflow {
         self.timeouts = timeouts
     }
 
+    /// Kept in one place so selection-time cache restoration and workflow-time
+    /// request execution use exactly the same frozen payload/configuration
+    /// identity.  A cache hit is therefore never used across a provider,
+    /// prompt, schema, source, model, or capability change.
+    nonisolated static func cacheKey(for paper: Paper, settings: LLMSettings) throws -> InsightCacheKey {
+        let profile = settings.activeProfile
+        let baseURL = try APIEndpointBuilder.normalizedBaseURL(from: profile.baseURL, provider: profile.provider).absoluteString
+        let source = InsightSourcePayload(paper: paper)
+        return InsightCacheKey(paperID: paper.literatureID, paperUpdated: paper.updated,
+                               promptVersion: PaperInsightPrompt.version, insightSchemaVersion: ProductContract.insightSchemaVersion,
+                               sourceScope: ProductContract.sourceScope, provider: settings.activeProvider.rawValue,
+                               normalizedBaseURL: baseURL, model: profile.effectiveModel, credentialRevision: settings.credentialRevision, mode: settings.mode,
+                               detailLevel: settings.detailLevel,
+                               figureSetHash: StableHash.sha256(source.figures.map(\.key).sorted().joined(separator: "|")),
+                               maximumFigures: settings.maximumFigures,
+                               terminologyHash: StableHash.sha256(settings.terminology.map { "\($0.source)|\($0.preferredZH)|\($0.note)" }.sorted().joined(separator: "\n")),
+                               providerCapabilityHash: StableHash.sha256("stream=\(profile.usesStreaming)|vision=\(profile.supportsVision)"))
+    }
+
     func generate(
         for paper: Paper,
         settings: LLMSettings,
@@ -30,17 +49,8 @@ actor InsightWorkflow {
         onState: @escaping @Sendable (InsightWorkflowState) async -> Void
     ) async throws -> InsightArtifact {
         let profile = settings.activeProfile
-        let baseURL = try APIEndpointBuilder.normalizedBaseURL(from: profile.baseURL, provider: profile.provider).absoluteString
         let source = InsightSourcePayload(paper: paper)
-        let cacheKey = InsightCacheKey(paperID: paper.literatureID, paperUpdated: paper.updated,
-                                      promptVersion: PaperInsightPrompt.version, insightSchemaVersion: ProductContract.insightSchemaVersion,
-                                      sourceScope: ProductContract.sourceScope, provider: settings.activeProvider.rawValue,
-                                      normalizedBaseURL: baseURL, model: profile.effectiveModel, credentialRevision: settings.credentialRevision, mode: settings.mode,
-                                      detailLevel: settings.detailLevel,
-                                      figureSetHash: StableHash.sha256(source.figures.map(\.key).sorted().joined(separator: "|")),
-                                      maximumFigures: settings.maximumFigures,
-                                      terminologyHash: StableHash.sha256(settings.terminology.map { "\($0.source)|\($0.preferredZH)|\($0.note)" }.sorted().joined(separator: "\n")),
-                                      providerCapabilityHash: StableHash.sha256("stream=\(profile.usesStreaming)|vision=\(profile.supportsVision)"))
+        let cacheKey = try Self.cacheKey(for: paper, settings: settings)
         if let cached = await store.snapshot().insights[cacheKey.value] {
             await onState(.completed(cacheHit: true, requestCount: 0))
             return cached

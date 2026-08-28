@@ -350,19 +350,7 @@ struct AuthorIndexService: Sendable {
     }
 
     func visibleAuthors(search: String) async -> [Author] {
-        let snapshot = await store.snapshot()
-        let activeMembership = snapshot.authorIndexGenerations.values
-            .filter { $0.state == .completed }
-            .max { $0.completedAt ?? .distantPast < $1.completedAt ?? .distantPast }?.activeMembership
-        return snapshot.authors.values
-            .filter { author in
-                author.isSelf || ((activeMembership == nil || activeMembership!.contains(author.recid)) && author.isVisibleInQualifiedList && author.matches(search: search))
-            }
-            .sorted { lhs, rhs in
-                if lhs.isSelf != rhs.isSelf { return lhs.isSelf }
-                if lhs.stableSortKey != rhs.stableSortKey { return lhs.stableSortKey < rhs.stableSortKey }
-                return lhs.preferredName.localizedStandardCompare(rhs.preferredName) == .orderedAscending
-            }
+        await store.authorSidebarProjection().visibleAuthors(search: search)
     }
 
     private func indexProgress(state: SyncCheckpointState, pages: Int) async -> AuthorIndexProgress {

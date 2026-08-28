@@ -10,12 +10,7 @@ struct PaperSyncService: Sendable {
     }
 
     func papers(for authorRecid: Int) async -> [Paper] {
-        let snapshot = await store.snapshot()
-        let ids = Set(snapshot.paperAuthorLinks.filter { $0.authorRecid == authorRecid }.map(\.paperID))
-        return ids.compactMap { snapshot.papers[$0] }
-            .sorted { lhs, rhs in
-                (lhs.timelineDate ?? .distantPast) > (rhs.timelineDate ?? .distantPast)
-            }
+        await store.papers(forAuthorRecid: authorRecid)
     }
 
     func markRead(_ read: Bool, paperID: Int) async throws {
@@ -25,7 +20,23 @@ struct PaperSyncService: Sendable {
     /// A failed/cancelled run resumes from the durable page URL. A completed
     /// manual sync begins a fresh generation at page one and compares `updated`
     /// to distinguish new, metadata-updated, and unchanged records.
-    func sync(authorRecid: Int, forceFreshGeneration: Bool = false) async -> SyncStatus {
+    /// Called only after a complete page has been durably committed.  It lets
+    /// the UI surface real papers during a long author history without ever
+    /// showing an uncommitted network page as local library state.
+    func sync(
+        authorRecid: Int,
+        forceFreshGeneration: Bool = false,
+        /// Automatic foreground refreshes deliberately stop after a small
+        /// durable page.  This makes the first real papers usable while a
+        /// person can choose whether a long author history should continue.
+        /// `nil` retains the explicit user-requested full sync behavior.
+        pageBudget: Int? = nil,
+        /// V9 token writes are intentionally deferred for an automatic first
+        /// page on a large existing library.  This never defers the paper,
+        /// author link, checkpoint, revision or Radar event itself.
+        updateSearchIndex: Bool = true,
+        onPageCommitted: (@Sendable (SyncStatus) async -> Void)? = nil
+    ) async -> SyncStatus {
         let jobID = "literature:\(authorRecid)"
         let query = "authors.recid:\(authorRecid)"
         let batchID = UUID()
@@ -52,13 +63,16 @@ struct PaperSyncService: Sendable {
                 try Task.checkCancellation()
                 guard running.completedPages < 1_000 else { throw LatticeLensError.paginationLimitExceeded }
                 let page = try await client.literaturePage(for: authorRecid, nextURL: running.nextURL)
-                let before = await store.snapshot()
+                // A page-local diff must not require a full compatibility
+                // snapshot.  On a real V9 library that snapshot decodes every
+                // paper/artifact and can postpone Yang's first visible page.
+                let before = await store.papers(forIDs: page.papers.map(\.literatureID))
                 var revisions: [PaperRevisionSnapshot] = []
                 var radarEvents: [RadarEvent] = []
                 for paper in page.papers {
                     let revision = V3RevisionHasher.snapshot(for: paper, syncBatchID: batchID)
                     revisions.append(revision)
-                    radarEvents.append(contentsOf: V4RadarDiff.events(before: before.papers[paper.literatureID], after: paper,
+                    radarEvents.append(contentsOf: V4RadarDiff.events(before: before[paper.literatureID], after: paper,
                                                                         authorRecids: [authorRecid], batchID: batchID,
                                                                         observedAt: revision.observedAt))
                 }
@@ -67,9 +81,16 @@ struct PaperSyncService: Sendable {
                 running.nextURL = page.nextURL
                 running.updatedAt = Date()
                 running.lastCheckpointAt = running.updatedAt
+                let hasReachedPageBudget = pageBudget.map { running.completedPages >= max(1, $0) } ?? false
                 if page.nextURL == nil {
                     running.state = .completed
                     running.completedAt = running.updatedAt
+                } else if hasReachedPageBudget {
+                    // The complete page, its resume URL, and this paused
+                    // state are published in one transaction.  A relaunch or
+                    // explicit Sync can therefore resume at the next page
+                    // without treating the first visible page as final.
+                    running.state = .paused
                 }
                 let jobEvent = SyncJobEvent(id: UUID(), batchID: batchID, jobID: jobID,
                                             kind: page.nextURL == nil ? .completed : .pageCompleted,
@@ -78,12 +99,36 @@ struct PaperSyncService: Sendable {
                                             remaining: page.nextURL == nil ? 0 : nil, observedAt: running.updatedAt, message: nil)
                 let pageReport = try await store.commitPaperSyncPage(PaperSyncPageCommit(
                     authorRecid: authorRecid, papers: page.papers, revisions: revisions,
-                    radarEvents: radarEvents, checkpoint: running, jobEvent: jobEvent
+                    radarEvents: radarEvents, checkpoint: running, jobEvent: jobEvent,
+                    updateSearchIndex: updateSearchIndex
                 ))
                 report = report + pageReport
-            } while running.nextURL != nil
+                if let onPageCommitted {
+                    await onPageCommitted(SyncStatus(
+                        phase: running.state == .paused ? .partial : .syncingMetadata,
+                        message: running.state == .paused
+                            ? "已显示第 \(running.completedPages) 页；点击同步继续"
+                            : "正在同步文献；已显示第 \(running.completedPages) 页",
+                        completedPages: running.completedPages,
+                        successfulRecords: running.successfulRecords,
+                        failedRecords: running.failedRecords,
+                        lastUpdatedAt: running.updatedAt,
+                        newRecords: report.inserted,
+                        metadataUpdatedRecords: report.metadataUpdated,
+                        unchangedRecords: report.unchanged,
+                        remainingRecords: max(0, page.total - running.successfulRecords)
+                    ))
+                }
+            } while running.nextURL != nil && running.state != .paused
+            if running.state == .paused {
+                return SyncStatus(phase: .partial, message: "已显示 \(running.successfulRecords) 篇；点击同步继续",
+                                  completedPages: running.completedPages, successfulRecords: running.successfulRecords,
+                                  failedRecords: running.failedRecords, lastUpdatedAt: running.updatedAt,
+                                  newRecords: report.inserted, metadataUpdatedRecords: report.metadataUpdated,
+                                  unchangedRecords: report.unchanged, remainingRecords: nil)
+            }
             let completedAt = Date()
-            if var author = (await store.snapshot()).authors[authorRecid] {
+            if var author = await store.author(recid: authorRecid) {
                 author.lastCheckpointAt = running.lastCheckpointAt
                 author.lastSuccessfulSyncAt = completedAt
                 author.lastSyncedAt = completedAt

@@ -1,8 +1,56 @@
 import Foundation
 
+/// The author sidebar is intentionally a small projection.  Loading it must
+/// never require the V8/V9 repository to decode every paper, AI artifact, or
+/// search-token row just to paint the first window.
+struct LibraryAuthorSidebarProjection: Sendable {
+    let authors: [Author]
+    let activeMembership: Set<Int>?
+
+    func visibleAuthors(search: String) -> [Author] {
+        authors
+            .filter { author in
+                author.isSelf || ((activeMembership == nil || activeMembership!.contains(author.recid)) &&
+                    author.isVisibleInQualifiedList && author.matches(search: search))
+            }
+            .sorted { lhs, rhs in
+                if lhs.isSelf != rhs.isSelf { return lhs.isSelf }
+                if lhs.stableSortKey != rhs.stableSortKey { return lhs.stableSortKey < rhs.stableSortKey }
+                return lhs.preferredName.localizedStandardCompare(rhs.preferredName) == .orderedAscending
+            }
+    }
+}
+
+/// A bounded projection for the active paper inspector.  It contains only
+/// rows belonging to the selected paper plus the small tag/collection lists;
+/// it deliberately excludes the rest of the library and the V9 index.
+struct LibraryPaperContextProjection: Sendable {
+    let paper: Paper?
+    let insight: InsightArtifact?
+    let fullTextDocuments: [FullTextDocument]
+    let evidenceAnchors: [EvidenceAnchor]
+    let evidenceInsights: [EvidenceInsightArtifact]
+    let visionArtifacts: [VisionArtifact]
+    let notes: [UserNote]
+    let bibTeXRecord: BibTeXRecord?
+    let tags: [LibraryTag]
+    let availableTags: [LibraryTag]
+    let availableCollections: [PaperCollection]
+    let selectedCollectionIDs: Set<UUID>
+}
+
 protocol LibraryStoring: Sendable {
     func initializationState() async -> LibraryInitializationState
     func snapshot() async -> LibrarySnapshot
+    /// Startup/sidebar projection.  Production stores override the default
+    /// snapshot compatibility path with a bounded typed-row query.
+    func authorSidebarProjection() async -> LibraryAuthorSidebarProjection
+    func author(recid: Int) async -> Author?
+    func papers(forAuthorRecid authorRecid: Int) async -> [Paper]
+    func papers(forIDs: [Int]) async -> [Int: Paper]
+    func trackedAuthorRecids() async -> Set<Int>
+    func insight(cacheKey: String) async -> InsightArtifact?
+    func paperContext(paperID: Int, insightCacheKey: String?) async -> LibraryPaperContextProjection
     func upsert(authors: [Author]) async throws
     func upsert(papers: [Paper], for authorRecid: Int) async throws -> PaperUpsertReport
     func upsert(detail paper: Paper) async throws
@@ -105,19 +153,81 @@ struct PaperSyncPageCommit: Sendable {
     let radarEvents: [RadarEvent]
     let checkpoint: SyncCheckpoint
     let jobEvent: SyncJobEvent
+    /// The bounded author timeline can be made durable before its optional
+    /// V9 local-search projection is refreshed.  Automatic first paint uses
+    /// `false`; an explicit full Sync uses the default `true`.
+    let updateSearchIndex: Bool
 
     init(authorRecid: Int, papers: [Paper], revisions: [PaperRevisionSnapshot],
-         radarEvents: [RadarEvent], checkpoint: SyncCheckpoint, jobEvent: SyncJobEvent) {
+         radarEvents: [RadarEvent], checkpoint: SyncCheckpoint, jobEvent: SyncJobEvent,
+         updateSearchIndex: Bool = true) {
         self.authorRecid = authorRecid
         self.papers = papers
         self.revisions = revisions
         self.radarEvents = radarEvents
         self.checkpoint = checkpoint
         self.jobEvent = jobEvent
+        self.updateSearchIndex = updateSearchIndex
     }
 }
 
 extension LibraryStoring {
+    func authorSidebarProjection() async -> LibraryAuthorSidebarProjection {
+        let snapshot = await snapshot()
+        let activeMembership = snapshot.authorIndexGenerations.values
+            .filter { $0.state == .completed }
+            .max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?
+            .activeMembership
+        return LibraryAuthorSidebarProjection(authors: Array(snapshot.authors.values), activeMembership: activeMembership)
+    }
+
+    func author(recid: Int) async -> Author? {
+        (await snapshot()).authors[recid]
+    }
+
+    func papers(forAuthorRecid authorRecid: Int) async -> [Paper] {
+        let snapshot = await snapshot()
+        let ids = Set(snapshot.paperAuthorLinks.filter { $0.authorRecid == authorRecid }.map(\.paperID))
+        return ids.compactMap { snapshot.papers[$0] }
+            .sorted { lhs, rhs in
+                if (lhs.timelineDate ?? Date.distantPast) != (rhs.timelineDate ?? Date.distantPast) {
+                    return (lhs.timelineDate ?? Date.distantPast) > (rhs.timelineDate ?? Date.distantPast)
+                }
+                return lhs.literatureID < rhs.literatureID
+            }
+    }
+
+    func papers(forIDs: [Int]) async -> [Int: Paper] {
+        let values = (await snapshot()).papers
+        return Dictionary(uniqueKeysWithValues: Set(forIDs).compactMap { id in values[id].map { (id, $0) } })
+    }
+
+    func trackedAuthorRecids() async -> Set<Int> {
+        Set((await snapshot()).authors.values.filter(\.isTracked).map(\.recid))
+    }
+
+    func insight(cacheKey: String) async -> InsightArtifact? {
+        (await snapshot()).insights[cacheKey]
+    }
+
+    func paperContext(paperID: Int, insightCacheKey: String?) async -> LibraryPaperContextProjection {
+        let snapshot = await snapshot()
+        return LibraryPaperContextProjection(
+            paper: snapshot.papers[paperID],
+            insight: insightCacheKey.flatMap { snapshot.insights[$0] },
+            fullTextDocuments: snapshot.fullTextDocuments.values.filter { $0.paperID == paperID },
+            evidenceAnchors: snapshot.evidenceAnchors.values.filter { $0.paperID == paperID },
+            evidenceInsights: snapshot.evidenceInsights.values.filter { $0.paperID == paperID },
+            visionArtifacts: snapshot.visionArtifacts.values.filter { $0.paperID == paperID },
+            notes: snapshot.notes.values.filter { $0.paperID == paperID },
+            bibTeXRecord: snapshot.bibTeXRecords[paperID],
+            tags: Set(snapshot.paperTags.filter { $0.paperID == paperID }.map(\.tagID)).compactMap { snapshot.tags[$0] },
+            availableTags: Array(snapshot.tags.values),
+            availableCollections: Array(snapshot.collections.values),
+            selectedCollectionIDs: Set(snapshot.collectionPapers.filter { $0.paperID == paperID }.map(\.collectionID))
+        )
+    }
+
     func searchPapers(_ query: String, limit: Int = 500) async -> [Paper] {
         let needle = SearchNormalizer.normalize(query)
         let snapshot = await snapshot()
@@ -554,12 +664,65 @@ extension LibrarySnapshot {
 
 actor InMemoryLibraryStore: LibraryStoring {
     private var value = LibrarySnapshot()
+    private var snapshotReads = 0
 
-    func snapshot() -> LibrarySnapshot { value }
+    func snapshot() -> LibrarySnapshot { snapshotReads += 1; return value }
+    /// Test instrumentation only.  Production V8 reads use typed projections;
+    /// this makes the same first-paint invariant observable in host-free tests.
+    func snapshotReadCount() -> Int { snapshotReads }
+    func resetSnapshotReadCount() { snapshotReads = 0 }
     func snapshotResult() -> LibrarySnapshotReadResult {
         LibrarySnapshotReadResult(state: .ready, snapshot: value, message: nil)
     }
     func initializationState() -> LibraryInitializationState { .ready }
+
+    func authorSidebarProjection() -> LibraryAuthorSidebarProjection {
+        let activeMembership = value.authorIndexGenerations.values
+            .filter { $0.state == .completed }
+            .max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?
+            .activeMembership
+        return LibraryAuthorSidebarProjection(authors: Array(value.authors.values), activeMembership: activeMembership)
+    }
+
+    func author(recid: Int) -> Author? { value.authors[recid] }
+
+    func papers(forAuthorRecid authorRecid: Int) -> [Paper] {
+        let ids = Set(value.paperAuthorLinks.filter { $0.authorRecid == authorRecid }.map(\.paperID))
+        return ids.compactMap { value.papers[$0] }
+            .sorted { lhs, rhs in
+                if (lhs.timelineDate ?? Date.distantPast) != (rhs.timelineDate ?? Date.distantPast) {
+                    return (lhs.timelineDate ?? Date.distantPast) > (rhs.timelineDate ?? Date.distantPast)
+                }
+                return lhs.literatureID < rhs.literatureID
+            }
+    }
+
+    func papers(forIDs: [Int]) -> [Int: Paper] {
+        Dictionary(uniqueKeysWithValues: Set(forIDs).compactMap { id in value.papers[id].map { (id, $0) } })
+    }
+
+    func trackedAuthorRecids() -> Set<Int> {
+        Set(value.authors.values.filter(\.isTracked).map(\.recid))
+    }
+
+    func insight(cacheKey: String) -> InsightArtifact? { value.insights[cacheKey] }
+
+    func paperContext(paperID: Int, insightCacheKey: String?) -> LibraryPaperContextProjection {
+        LibraryPaperContextProjection(
+            paper: value.papers[paperID],
+            insight: insightCacheKey.flatMap { value.insights[$0] },
+            fullTextDocuments: value.fullTextDocuments.values.filter { $0.paperID == paperID },
+            evidenceAnchors: value.evidenceAnchors.values.filter { $0.paperID == paperID },
+            evidenceInsights: value.evidenceInsights.values.filter { $0.paperID == paperID },
+            visionArtifacts: value.visionArtifacts.values.filter { $0.paperID == paperID },
+            notes: value.notes.values.filter { $0.paperID == paperID },
+            bibTeXRecord: value.bibTeXRecords[paperID],
+            tags: Set(value.paperTags.filter { $0.paperID == paperID }.map(\.tagID)).compactMap { value.tags[$0] },
+            availableTags: Array(value.tags.values),
+            availableCollections: Array(value.collections.values),
+            selectedCollectionIDs: Set(value.collectionPapers.filter { $0.paperID == paperID }.map(\.collectionID))
+        )
+    }
 
     func upsert(authors: [Author]) throws {
         value.merge(authors: authors)

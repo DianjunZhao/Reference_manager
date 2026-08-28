@@ -114,9 +114,14 @@ final class V2RecoveryTests: XCTestCase {
                                                          successfulRecords: 0, state: .failed))
         let client = InspireClient(transport: SequentialTransport([try fixtureData("literature-page")]))
         let service = PaperSyncService(client: client, store: store)
-        let first = await service.sync(authorRecid: 21)
+        let progress = V2PaperSyncProgressRecorder()
+        let first = await service.sync(authorRecid: 21, onPageCommitted: { status in await progress.record(status) })
         XCTAssertEqual(first.phase, .ready)
         XCTAssertEqual(first.newRecords, 1)
+        let visiblePage = await progress.values().only
+        XCTAssertEqual(visiblePage?.phase, .syncingMetadata)
+        XCTAssertEqual(visiblePage?.successfulRecords, 1)
+        XCTAssertEqual(visiblePage?.completedPages, 2)
         let second = await service.sync(authorRecid: 21, forceFreshGeneration: true)
         // No second scripted response is intentionally available: failure must
         // retain the first durable page as stale rather than clear it.
@@ -129,6 +134,16 @@ final class V2RecoveryTests: XCTestCase {
         Author(recid: recid, preferredName: name, nativeNames: [], bai: nil, arxivCategories: ["hep-lat"],
                hIndex: nil, hIndexState: .unknown, isTracked: false, lastSyncedAt: nil)
     }
+}
+
+private actor V2PaperSyncProgressRecorder {
+    private var recorded: [SyncStatus] = []
+    func record(_ status: SyncStatus) { recorded.append(status) }
+    func values() -> [SyncStatus] { recorded }
+}
+
+private extension Array {
+    var only: Element? { count == 1 ? first : nil }
 }
 
 private actor FirstThenBlockingHIndexTransport: HTTPTransport {

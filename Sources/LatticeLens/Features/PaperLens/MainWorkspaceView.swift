@@ -37,9 +37,29 @@ struct MainWorkspaceView: View {
                                 .accessibilityValue("ready")
                         }
                     }
-                    Text(viewModel.connectivityDescription)
-                        .foregroundStyle(viewModel.syncStatus.phase == .failed ? .red : .secondary)
-                        .accessibilityIdentifier("inspireConnectivity")
+                    Button {
+                        viewModel.presentSyncCenter = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: viewModel.syncStatusSymbol)
+                                .accessibilityHidden(true)
+                            Text("INSPIRE")
+                            Text(viewModel.syncToolbarStatus)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        // The principal toolbar item can shrink when all four
+                        // trailing actions are visible.  Keep its rendered
+                        // status intentionally short rather than forcing a
+                        // multi-line text node out of the toolbar bounds.
+                        .frame(minWidth: 170, idealWidth: 250, maxWidth: 330, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(viewModel.syncStatus.phase == .failed ? .red : .secondary)
+                    .help(viewModel.connectivityDescription)
+                    .accessibilityIdentifier("inspireConnectivity")
+                    .accessibilityLabel("最近 INSPIRE 同步")
+                    .accessibilityValue(viewModel.connectivityDescription)
                 }
             }
             ToolbarItem(placement: .automatic) {
@@ -51,7 +71,7 @@ struct MainWorkspaceView: View {
                     .accessibilityIdentifier("syncCenterButton")
             }
             ToolbarItem(placement: .automatic) {
-                Button { viewModel.presentWorkbench = true } label: { Label("Evidence Workbench", systemImage: "rectangle.3.group") }
+                Button { viewModel.openWorkbench() } label: { Label("Evidence Workbench", systemImage: "rectangle.3.group") }
                     .accessibilityIdentifier("workbenchButton")
             }
             ToolbarItem(placement: .automatic) {
@@ -587,6 +607,16 @@ private struct PaperTimeline: View {
     /// several independent, cancellable jobs, so it must not publish while
     /// List is applying its selection update.
     private func schedulePaperSelection(_ paperID: Int?) {
+        // During an incremental paper-sync commit AppKit can transiently send
+        // a nil List selection while it reconciles the inserted rows.  It is
+        // not a user request to abandon the visible paper, and treating it as
+        // one would cancel/restart its LLM task.  Preserve a selection that is
+        // still present in the current local projection.
+        if paperID == nil,
+           let selected = viewModel.selectedPaperID,
+           viewModel.papers.contains(where: { $0.literatureID == selected }) {
+            return
+        }
         guard paperID != viewModel.selectedPaperID else { return }
         Task { @MainActor in
             await Task.yield()

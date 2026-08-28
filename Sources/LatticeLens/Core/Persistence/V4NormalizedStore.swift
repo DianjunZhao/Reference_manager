@@ -698,14 +698,21 @@ enum V9TypedSearchIndex {
         try context.save()
     }
 
-    static func update(paperIDs: Set<Int>, in context: ModelContext, at date: Date = Date()) throws {
+    static func update(paperIDs: Set<Int>, knownNewPaperIDs: Set<Int> = [],
+                       in context: ModelContext, at date: Date = Date()) throws {
         guard !paperIDs.isEmpty else { return }
         for paperID in paperIDs {
-            let previousDescriptor = FetchDescriptor<StoredV9PaperSearchTerm>(predicate: #Predicate { $0.paperID == paperID })
-            let previous = try context.fetch(previousDescriptor)
-            let oldTerms = Set(previous.map(\.token))
-            for row in previous { context.delete(row) }
-            for term in oldTerms { try remove(paperID: paperID, from: term, in: context, at: date) }
+            // A page of never-before-seen INSPIRE papers has no reverse rows
+            // to retire.  Asking SwiftData for those rows by `paperID` can
+            // otherwise fault its entire unindexed reverse-token table once
+            // per paper, which made a first live sync monopolise the UI.
+            if !knownNewPaperIDs.contains(paperID) {
+                let previousDescriptor = FetchDescriptor<StoredV9PaperSearchTerm>(predicate: #Predicate { $0.paperID == paperID })
+                let previous = try context.fetch(previousDescriptor)
+                let oldTerms = Set(previous.map(\.token))
+                for row in previous { context.delete(row) }
+                for term in oldTerms { try remove(paperID: paperID, from: term, in: context, at: date) }
+            }
 
             let paperDescriptor = FetchDescriptor<StoredV8Paper>(predicate: #Predicate { $0.literatureID == paperID })
             guard try context.fetch(paperDescriptor).first != nil else { continue }
@@ -1298,7 +1305,14 @@ actor V8TypedLibraryStore: LibraryStoring {
 
     func initializationState() -> LibraryInitializationState {
         do {
-            _ = try V8TypedStoreCodec.snapshot(from: modelContext)
+            // Startup must validate the activation boundary without decoding
+            // the whole library.  The latter can include tens of thousands of
+            // V9 token rows and large artifact payloads, none of which are a
+            // prerequisite for first paint or for opening Settings.
+            guard let marker = try modelContext.fetch(FetchDescriptor<StoredV8StoreMarker>()).first,
+                  marker.schemaVersion >= 80 else {
+                throw LatticeLensError.persistenceUnavailable("V8 typed activation marker 缺失")
+            }
             return .ready
         } catch {
             let reason = "V8 typed store 读取失败；资料库保持只读，原 V7 source 未被覆盖"
@@ -1329,6 +1343,149 @@ actor V8TypedLibraryStore: LibraryStoring {
             var failure = LibrarySnapshot(); failure.readErrorMessage = reason
             return LibrarySnapshotReadResult(state: .readOnlyFailure, snapshot: failure, message: reason)
         }
+    }
+
+    /// These projections are deliberately typed-row queries rather than
+    /// wrappers around `snapshot()`: startup and paper selection should not
+    /// materialize unrelated papers, AI artifacts, or V9 search postings.
+    func authorSidebarProjection() -> LibraryAuthorSidebarProjection {
+        do {
+            let authors = try modelContext.fetch(FetchDescriptor<StoredV8Author>()).map { try $0.decoded() }
+            let generations = try modelContext.fetch(FetchDescriptor<StoredV8AuthorIndexGeneration>())
+                .map { try JSONDecoder.latticeLens.decode(AuthorIndexGeneration.self, from: $0.generationData) }
+            let activeMembership = generations
+                .filter { $0.state == .completed }
+                .max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?
+                .activeMembership
+            return LibraryAuthorSidebarProjection(authors: authors, activeMembership: activeMembership)
+        } catch {
+            availabilityFailure = "V8 typed store 作者投影读取失败；资料库保持只读"
+            return LibraryAuthorSidebarProjection(authors: [], activeMembership: nil)
+        }
+    }
+
+    func author(recid: Int) -> Author? {
+        do {
+            let descriptor = FetchDescriptor<StoredV8Author>(predicate: #Predicate { $0.recid == recid })
+            return try modelContext.fetch(descriptor).first.map { try $0.decoded() }
+        } catch {
+            availabilityFailure = "V8 typed store 作者行读取失败；资料库保持只读"
+            return nil
+        }
+    }
+
+    func papers(forAuthorRecid authorRecid: Int) -> [Paper] {
+        do {
+            let links = try modelContext.fetch(FetchDescriptor<StoredV8PaperAuthorLink>(predicate: #Predicate { $0.authorRecid == authorRecid }))
+            var values: [Paper] = []
+            for link in links {
+                if let paper = try typedPaper(id: link.paperID) { values.append(paper) }
+            }
+            return values.sorted { lhs, rhs in
+                if (lhs.timelineDate ?? .distantPast) != (rhs.timelineDate ?? .distantPast) {
+                    return (lhs.timelineDate ?? .distantPast) > (rhs.timelineDate ?? .distantPast)
+                }
+                return lhs.literatureID < rhs.literatureID
+            }
+        } catch {
+            availabilityFailure = "V8 typed store 作者论文投影读取失败；资料库保持只读"
+            return []
+        }
+    }
+
+    func papers(forIDs ids: [Int]) -> [Int: Paper] {
+        do {
+            var values: [Int: Paper] = [:]
+            for id in Set(ids) {
+                if let paper = try typedPaper(id: id) { values[id] = paper }
+            }
+            return values
+        } catch {
+            availabilityFailure = "V8 typed store 论文行读取失败；资料库保持只读"
+            return [:]
+        }
+    }
+
+    func trackedAuthorRecids() -> Set<Int> {
+        do {
+            let descriptor = FetchDescriptor<StoredV8Author>(predicate: #Predicate { $0.isTracked == true })
+            return Set(try modelContext.fetch(descriptor).map(\.recid))
+        } catch {
+            availabilityFailure = "V8 typed store tracked 作者读取失败；资料库保持只读"
+            return []
+        }
+    }
+
+    func insight(cacheKey: String) -> InsightArtifact? {
+        do {
+            let descriptor = FetchDescriptor<StoredV8AIArtifact>(predicate: #Predicate { $0.cacheKey == cacheKey })
+            guard let row = try modelContext.fetch(descriptor).first, row.workflowKind == "insight" else { return nil }
+            return try JSONDecoder.latticeLens.decode(InsightArtifact.self, from: row.artifactData)
+        } catch {
+            availabilityFailure = "V8 typed store insight 缓存读取失败；资料库保持只读"
+            return nil
+        }
+    }
+
+    func paperContext(paperID: Int, insightCacheKey: String?) -> LibraryPaperContextProjection {
+        do {
+            let paper = try typedPaper(id: paperID)
+            let documents = try modelContext.fetch(FetchDescriptor<StoredV8FullTextDocument>(predicate: #Predicate { $0.paperID == paperID }))
+                .map { try $0.decoded() }
+            let anchors = try modelContext.fetch(FetchDescriptor<StoredV8EvidenceAnchor>(predicate: #Predicate { $0.paperID == paperID }))
+                .map { try $0.decoded() }
+            let notes = try modelContext.fetch(FetchDescriptor<StoredV8Note>(predicate: #Predicate { $0.paperID == paperID }))
+                .map { $0.decoded() }
+            let bibDescriptor = FetchDescriptor<StoredV8BibTeXRecord>(predicate: #Predicate { $0.paperID == paperID })
+            let bibTeX = try modelContext.fetch(bibDescriptor).first.map { try $0.decoded() }
+            let linkedTagIDs = Set(try modelContext.fetch(FetchDescriptor<StoredV8PaperTagLink>(predicate: #Predicate { $0.paperID == paperID })).map(\.tagID))
+            let allTags = try modelContext.fetch(FetchDescriptor<StoredV8Tag>()).map { $0.decoded() }
+            let tagsByID = Dictionary(uniqueKeysWithValues: allTags.map { ($0.id, $0) })
+            let allCollections = try modelContext.fetch(FetchDescriptor<StoredV8Collection>()).map { $0.decoded() }
+            let selectedCollectionIDs = Set(try modelContext.fetch(FetchDescriptor<StoredV8PaperCollectionLink>(predicate: #Predicate { $0.paperID == paperID })).map(\.collectionID))
+            let artifacts = try modelContext.fetch(FetchDescriptor<StoredV8AIArtifact>(predicate: #Predicate { $0.paperID == paperID }))
+            var cachedInsight: InsightArtifact?
+            var evidenceInsights: [EvidenceInsightArtifact] = []
+            var visionArtifacts: [VisionArtifact] = []
+            for artifact in artifacts {
+                switch artifact.workflowKind {
+                case "insight":
+                    if artifact.cacheKey == insightCacheKey {
+                        cachedInsight = try JSONDecoder.latticeLens.decode(InsightArtifact.self, from: artifact.artifactData)
+                    }
+                case "evidenceInsight":
+                    evidenceInsights.append(try JSONDecoder.latticeLens.decode(EvidenceInsightArtifact.self, from: artifact.artifactData))
+                case "vision":
+                    visionArtifacts.append(try JSONDecoder.latticeLens.decode(VisionArtifact.self, from: artifact.artifactData))
+                default:
+                    throw LatticeLensError.persistenceUnavailable("V8 AI artifact workflow 无法识别")
+                }
+            }
+            return LibraryPaperContextProjection(
+                paper: paper,
+                insight: cachedInsight,
+                fullTextDocuments: documents,
+                evidenceAnchors: anchors,
+                evidenceInsights: evidenceInsights,
+                visionArtifacts: visionArtifacts,
+                notes: notes,
+                bibTeXRecord: bibTeX,
+                tags: linkedTagIDs.compactMap { tagsByID[$0] },
+                availableTags: allTags,
+                availableCollections: allCollections,
+                selectedCollectionIDs: selectedCollectionIDs
+            )
+        } catch {
+            availabilityFailure = "V8 typed store 单篇上下文读取失败；资料库保持只读"
+            return LibraryPaperContextProjection(paper: nil, insight: nil, fullTextDocuments: [], evidenceAnchors: [],
+                                                 evidenceInsights: [], visionArtifacts: [], notes: [], bibTeXRecord: nil,
+                                                 tags: [], availableTags: [], availableCollections: [], selectedCollectionIDs: [])
+        }
+    }
+
+    private func typedPaper(id: Int) throws -> Paper? {
+        let descriptor = FetchDescriptor<StoredV8Paper>(predicate: #Predicate { $0.literatureID == id })
+        return try modelContext.fetch(descriptor).first.map { try $0.decoded() }
     }
 
     func searchPapers(_ query: String, limit: Int) -> [Paper] {
@@ -1372,9 +1529,9 @@ actor V8TypedLibraryStore: LibraryStoring {
         return v9SearchIndexAvailability ?? false
     }
 
-    private func refreshV9SearchIndex(_ paperIDs: Set<Int>) throws {
+    private func refreshV9SearchIndex(_ paperIDs: Set<Int>, knownNewPaperIDs: Set<Int> = []) throws {
         guard try hasV9SearchIndex() else { return }
-        try V9TypedSearchIndex.update(paperIDs: paperIDs, in: modelContext)
+        try V9TypedSearchIndex.update(paperIDs: paperIDs, knownNewPaperIDs: knownNewPaperIDs, in: modelContext)
     }
 
     private func compatibilitySearch(query: String, limit: Int, snapshot: LibrarySnapshot) -> [Paper] {
@@ -1443,8 +1600,11 @@ actor V8TypedLibraryStore: LibraryStoring {
     /// Updates only the rows touched by a literature page.  The caller owns
     /// the save boundary so a page can be committed with its revision, Radar,
     /// and checkpoint rows in one SwiftData transaction.
-    private func upsertPaperRows(_ papers: [Paper], for authorRecid: Int) throws -> PaperUpsertReport {
+    private func upsertPaperRows(_ papers: [Paper], for authorRecid: Int,
+                                 updateSearchIndex: Bool = true) throws -> PaperUpsertReport {
         var report = PaperUpsertReport.empty
+        var newlyInsertedPaperIDs = Set<Int>()
+        var searchInvalidatedPaperIDs = Set<Int>()
         for (position, incoming) in papers.enumerated() {
             let paperID = incoming.literatureID
             let descriptor = FetchDescriptor<StoredV8Paper>(predicate: #Predicate { $0.literatureID == paperID })
@@ -1454,6 +1614,11 @@ actor V8TypedLibraryStore: LibraryStoring {
                 merged.firstSeenAt = prior.firstSeenAt; merged.isRead = prior.isRead; merged.readAt = prior.readAt; merged.isFavorite = prior.isFavorite
                 if V8TypedLibraryStore.paperMetadataChanged(from: prior, to: incoming) {
                     report.metadataUpdated += 1
+                    // The V9 terms include title, abstract, contributor, DOI
+                    // and arXiv metadata.  Rebuild only when that searchable
+                    // content actually changed; a conditional GET/second
+                    // launch must not re-index an unchanged live page.
+                    searchInvalidatedPaperIDs.insert(paperID)
                 } else {
                     report.unchanged += 1
                 }
@@ -1461,7 +1626,11 @@ actor V8TypedLibraryStore: LibraryStoring {
                     report.citationChanged += 1
                 }
                 modelContext.delete(existing)
-            } else { report.inserted += 1 }
+            } else {
+                report.inserted += 1
+                newlyInsertedPaperIDs.insert(paperID)
+                searchInvalidatedPaperIDs.insert(paperID)
+            }
             modelContext.insert(try StoredV8Paper(merged))
             let key = "\(merged.literatureID):\(authorRecid)"
             let linkDescriptor = FetchDescriptor<StoredV8PaperAuthorLink>(predicate: #Predicate { $0.key == key })
@@ -1475,7 +1644,9 @@ actor V8TypedLibraryStore: LibraryStoring {
                 }
             }
         }
-        try refreshV9SearchIndex(Set(papers.map(\.literatureID)))
+        if updateSearchIndex {
+            try refreshV9SearchIndex(searchInvalidatedPaperIDs, knownNewPaperIDs: newlyInsertedPaperIDs)
+        }
         return report
     }
 
@@ -1548,7 +1719,8 @@ actor V8TypedLibraryStore: LibraryStoring {
 
     func commitPaperSyncPage(_ commit: PaperSyncPageCommit) throws -> PaperUpsertReport {
         try requireWritable()
-        let report = try upsertPaperRows(commit.papers, for: commit.authorRecid)
+        let report = try upsertPaperRows(commit.papers, for: commit.authorRecid,
+                                         updateSearchIndex: commit.updateSearchIndex)
         for revision in commit.revisions {
             let revisionID = revision.id
             try replaceRow(try StoredV8RevisionSnapshot(revision), matching: FetchDescriptor<StoredV8RevisionSnapshot>(predicate: #Predicate { $0.id == revisionID }))

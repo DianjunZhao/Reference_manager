@@ -328,7 +328,20 @@ enum APIEndpointBuilder {
 protocol KeychainStoring: Sendable {
     func save(_ value: String, service: String, account: String) throws
     func read(service: String, account: String) throws -> String?
+    /// Checks only for a credential entry.  Callers that merely render saved
+    /// versus missing status must not request the secret bytes.
+    func contains(service: String, account: String) throws -> Bool
     func delete(service: String, account: String) throws
+}
+
+extension KeychainStoring {
+    /// Test doubles that only model `read` retain their existing behavior.
+    /// The production store overrides this with a metadata-only Security
+    /// query, so no API-key bytes are decrypted for Settings status.
+    func contains(service: String, account: String) throws -> Bool {
+        guard let value = try read(service: service, account: account) else { return false }
+        return !value.isEmpty
+    }
 }
 
 enum KeychainStoreError: LocalizedError {
@@ -367,6 +380,16 @@ final class KeychainStore: KeychainStoring, @unchecked Sendable {
         guard status == errSecSuccess else { throw KeychainStoreError.unexpectedStatus(status) }
         guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else { throw KeychainStoreError.invalidData }
         return value
+    }
+
+    func contains(service: String, account: String) throws -> Bool {
+        // Do not set `kSecReturnData`: this query is intentionally limited to
+        // existence metadata and must not request/decrypt an API key merely to
+        // render a Settings disclosure.
+        let status = SecItemCopyMatching(baseQuery(service: service, account: account) as CFDictionary, nil)
+        if status == errSecSuccess { return true }
+        if status == errSecItemNotFound { return false }
+        throw KeychainStoreError.unexpectedStatus(status)
     }
 
     func delete(service: String, account: String) throws {

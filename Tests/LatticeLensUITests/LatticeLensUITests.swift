@@ -293,7 +293,10 @@ final class LatticeLensUITests: XCTestCase {
         let terminologySearch = settingsSheet.textFields["terminologySearch"]
         XCTAssertTrue(terminologySearch.waitForExistence(timeout: 5))
         terminologySearch.click()
-        terminologySearch.typeText("fixture term 500")
+        // Use a single token here.  The product normalizer treats whitespace
+        // as non-semantic, while this avoids a macOS XCUITest text-injection
+        // quirk that can insert an IME composition boundary between words.
+        terminologySearch.typeText("500")
         let finalTermID = "00000000-0009-4000-8000-0000000001F4"
         let terminologyMatchCount = settingsSheet.descendants(matching: .any)["terminologySearchCount"].firstMatch
         XCTAssertTrue(terminologyMatchCount.waitForExistence(timeout: 5))

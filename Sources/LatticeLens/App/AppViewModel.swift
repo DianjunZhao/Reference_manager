@@ -103,6 +103,14 @@ final class AppViewModel: ObservableObject {
     private var fullTextTask: Task<Void, Never>?
     private var fullTextSessionID = UUID()
     private var analysisDebounceTask: Task<Void, Never>?
+    /// The active task is keyed by the exact same frozen cache identity used
+    /// by InsightWorkflow.  It prevents selection/reconciliation noise from
+    /// sending the same title/abstract a second time while a request is live.
+    private var activeInsightCacheKey: String?
+    /// Failed/cancelled automatic work is paused for this exact frozen input.
+    /// Only an explicit "重新生成" action (or a changed cache key) can send it
+    /// again, so clicking elsewhere cannot silently create another disclosure.
+    private var automaticInsightTerminalMessages: [String: String] = [:]
     private var pendingInsightPaper: Paper?
     private var pendingEvidencePaper: Paper?
     private var pendingVisionPaper: Paper?
@@ -196,6 +204,13 @@ final class AppViewModel: ObservableObject {
         presentSettings = true
     }
 
+    /// Workbench is the one surface that intentionally consumes the complete
+    /// durable projection.  Present it first; its own task then performs the
+    /// expensive read, so normal browsing and Settings stay responsive.
+    func openWorkbench() {
+        presentWorkbench = true
+    }
+
     /// Settings edit only a local draft until Save.  Drive the binding rather
     /// than relying on an ambient nested-sheet dismiss action so Cancel is a
     /// deterministic zero-write exit even after the model selector was open.
@@ -221,6 +236,41 @@ final class AppViewModel: ObservableObject {
     var connectivityDescription: String {
         let timestamp = syncStatus.lastUpdatedAt?.formatted(date: .omitted, time: .shortened) ?? "未探测"
         return "最近 INSPIRE 同步：\(syncStatus.message) · \(timestamp)"
+    }
+
+    /// A short rendering for the constrained principal toolbar.  The complete,
+    /// timestamped status remains available as the control's AX value/help and
+    /// in Sync Center instead of overflowing a narrow toolbar item.
+    var syncToolbarStatus: String {
+        switch syncStatus.phase {
+        case .syncingMetadata:
+            return "同步中 · \(syncStatus.successfulRecords) 篇"
+        case .ready:
+            return "已同步 · \(syncStatus.successfulRecords) 篇"
+        case .stale:
+            return "本地结果 · 刷新失败"
+        case .partial:
+            return "部分完成 · \(syncStatus.successfulRecords) 篇"
+        case .cancelled:
+            return "已取消 · \(syncStatus.successfulRecords) 篇"
+        case .failed:
+            return "同步失败"
+        case .loadingLocal:
+            return "读取本地资料"
+        case .idle:
+            return "未同步"
+        }
+    }
+
+    var syncStatusSymbol: String {
+        switch syncStatus.phase {
+        case .syncingMetadata, .loadingLocal: "arrow.triangle.2.circlepath"
+        case .ready: "checkmark.circle"
+        case .stale, .partial: "exclamationmark.arrow.triangle.2.circlepath"
+        case .cancelled: "pause.circle"
+        case .failed: "exclamationmark.triangle"
+        case .idle: "circle.dashed"
+        }
     }
 
     var researchHomeSnapshot: V4ResearchHomeSnapshot {
@@ -297,11 +347,9 @@ final class AppViewModel: ObservableObject {
             return
         }
         await reloadAuthors()
-        await refreshWorkbench()
         if selectedAuthorID == nil { selectedAuthorID = authors.first?.recid }
         if authors.first(where: { $0.isSelf }) == nil { await refreshPinnedSelf() }
         if let selectedAuthorID { await loadPapers(for: selectedAuthorID, syncIfNeeded: true) }
-        runDueRadarQueries()
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
             await self?.refreshTrackedAuthorsInForeground()
@@ -324,6 +372,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func selectPaper(_ paperID: Int?) {
+        // This method is also called by keyboard/list/Workbench routes.  A
+        // repeated delivery of the same selection has no semantic work to do
+        // and must not cancel/restart analysis or resend its frozen source.
+        guard paperID != selectedPaperID else { return }
         analysisDebounceTask?.cancel()
         paperDetailTask?.cancel()
         // A document/anchor projection is paper-scoped.  Clear and cancel it
@@ -344,6 +396,12 @@ final class AppViewModel: ObservableObject {
         cancelEvidenceInsight()
         cancelVision()
         selectedPaperID = paperID
+        // Never let a completed artifact for paper A remain visible while the
+        // asynchronous context restore for paper B is still in flight.
+        insightArtifact = nil
+        insightState = .idle
+        insightStartedAt = nil
+        analysisRunState = nil
         guard let paperID, let paper = selectedPaper else { return }
         Task { [weak self] in
             guard let self else { return }
@@ -355,7 +413,7 @@ final class AppViewModel: ObservableObject {
         analysisDebounceTask = Task { [weak self, paper] in
             do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
             guard !Task.isCancelled else { return }
-            self?.requestInsight(for: paper)
+            await self?.requestAutomaticInsight(for: paper)
         }
     }
 
@@ -393,7 +451,9 @@ final class AppViewModel: ObservableObject {
 
     func syncSelectedAuthor(forceFreshGeneration: Bool = false) {
         guard let recid = selectedAuthorID else { return }
-        startPaperSync(for: recid, forceFreshGeneration: forceFreshGeneration)
+        // This visible action is the explicit opt-in to a complete author
+        // history.  Automatic first paint commits just one durable page.
+        startPaperSync(for: recid, forceFreshGeneration: forceFreshGeneration, pageBudget: nil)
     }
 
     func cancelSelectedPaperSync() {
@@ -438,30 +498,40 @@ final class AppViewModel: ObservableObject {
 
     func generateSelectedInsight() {
         guard let paper = selectedPaper else { return }
-        requestInsight(for: paper)
+        requestInsight(for: paper, trigger: .manual)
     }
 
     func cancelInsight() {
         analysisDebounceTask?.cancel()
+        analysisDebounceTask = nil
+        if let activeInsightCacheKey {
+            automaticInsightTerminalMessages[activeInsightCacheKey] = "已取消；不会自动重试。请使用“重新生成”明确重试。"
+        }
         insightTask?.cancel()
         insightSessionID = UUID()
-        if case .idle = insightState {} else { insightState = .cancelled }
+        activeInsightCacheKey = nil
+        if isInsightRunning { insightState = .cancelled }
+        insightStartedAt = nil
     }
 
     func cancelEvidenceInsight() {
         evidenceInsightTask?.cancel()
+        evidenceInsightTask = nil
         evidenceInsightSessionID = UUID()
         if case .idle = evidenceInsightState {} else { evidenceInsightState = .cancelled }
+        evidenceInsightStartedAt = nil
     }
 
     func cancelVision() {
         visionPreflightTask?.cancel()
         visionTask?.cancel()
+        visionTask = nil
         visionSessionID = UUID()
         pendingVisionPaper = nil
         pendingVisionRequest = nil
         visionPreflight = nil
         if case .idle = visionState {} else { visionState = .cancelled }
+        visionStartedAt = nil
     }
 
     func acceptPrivacyDisclosure() {
@@ -471,7 +541,7 @@ final class AppViewModel: ObservableObject {
         presentPrivacyDisclosure = false
         guard let paper = pendingInsightPaper, selectedPaperID == paper.literatureID else { return }
         pendingInsightPaper = nil
-        startInsightTask(for: paper)
+        requestInsight(for: paper, trigger: .manual)
     }
 
     func acceptEvidencePrivacyDisclosure() {
@@ -568,8 +638,19 @@ final class AppViewModel: ObservableObject {
     }
 
     func apiKeyIsSaved(for provider: LLMProvider) -> Bool {
-        guard let key = try? keychain.read(service: Self.keychainService, account: provider.rawValue) else { return false }
-        return !key.isEmpty
+        (try? keychain.contains(service: Self.keychainService, account: provider.rawValue)) ?? false
+    }
+
+    /// Resolves only a non-secret saved/missing status for Settings.  Keychain
+    /// reads can synchronously wait for SecurityServer; never perform that
+    /// work from a SwiftUI `body` evaluation or the AppKit main thread can
+    /// enter a render loop while the sheet is being presented.
+    func apiKeySavedStatus(for provider: LLMProvider) async -> Bool {
+        let keychain = keychain
+        let service = Self.keychainService
+        return await Task.detached(priority: .userInitiated) {
+            (try? keychain.contains(service: service, account: provider.rawValue)) ?? false
+        }.value
     }
 
     /// Discovery can use a newly typed (not-yet-saved) key or the selected
@@ -579,7 +660,7 @@ final class AppViewModel: ObservableObject {
         modelDiscoveryTask?.cancel()
         let session = UUID()
         modelDiscoverySessionID = session
-        let credential = try providerCredential(provider: provider, typedAPIKey: apiKey)
+        let credential = try await providerCredential(provider: provider, typedAPIKey: apiKey)
         let discoverer = modelDiscoverer
         let task = Task { try await discoverer.discoverModels(profile: profile, provider: provider, apiKey: credential) }
         modelDiscoveryTask = task
@@ -596,7 +677,7 @@ final class AppViewModel: ObservableObject {
     /// model IDs.  The same endpoint and credential guards nevertheless
     /// apply before any request is built.
     func testProviderConnection(profile: ProviderProfile, provider: LLMProvider, apiKey: String? = nil) async throws -> ProviderConnectionProbe {
-        let credential = try providerCredential(provider: provider, typedAPIKey: apiKey)
+        let credential = try await providerCredential(provider: provider, typedAPIKey: apiKey)
         return try await connectionTester.testConnection(profile: profile, provider: provider, apiKey: credential)
     }
 
@@ -606,10 +687,23 @@ final class AppViewModel: ObservableObject {
         modelDiscoveryTask = nil
     }
 
-    private func providerCredential(provider: LLMProvider, typedAPIKey: String?) throws -> String {
+    /// `SecItemCopyMatching` can synchronously wait on SecurityServer.  Every
+    /// caller starts from an interactive Settings or analysis action on the
+    /// main actor, so move the secret read to a detached task.  This helper
+    /// never logs or persists the credential bytes.
+    private func storedAPIKey(for provider: LLMProvider) async throws -> String? {
+        let keychain = keychain
+        let service = Self.keychainService
+        let account = provider.rawValue
+        return try await Task.detached(priority: .userInitiated) {
+            try keychain.read(service: service, account: account)
+        }.value
+    }
+
+    private func providerCredential(provider: LLMProvider, typedAPIKey: String?) async throws -> String {
         let typedKey = typedAPIKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !typedKey.isEmpty { return typedKey }
-        if let saved = try keychain.read(service: Self.keychainService, account: provider.rawValue),
+        if let saved = try await storedAPIKey(for: provider),
            !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return saved
         }
@@ -1416,7 +1510,8 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func startPaperSync(for recid: Int, forceFreshGeneration: Bool, isTrackedRefresh: Bool = false) {
+    private func startPaperSync(for recid: Int, forceFreshGeneration: Bool,
+                                isTrackedRefresh: Bool = false, pageBudget: Int? = 1) {
         let ownerKey = paperSyncOwnerKey(recid)
         let ownerToken = jobOwners.begin(key: ownerKey)
         if isTrackedRefresh {
@@ -1441,7 +1536,15 @@ final class AppViewModel: ObservableObject {
                 self.jobOwners.finish(key: ownerKey, token: ownerToken)
                 if isTrackedRefresh { self.finishTrackedAuthorRefresh(recid: recid, token: ownerToken) }
             }
-            let result = await self.paperSync.sync(authorRecid: recid, forceFreshGeneration: forceFreshGeneration)
+            let result = await self.paperSync.sync(
+                authorRecid: recid,
+                forceFreshGeneration: forceFreshGeneration,
+                pageBudget: pageBudget,
+                updateSearchIndex: pageBudget == nil,
+                onPageCommitted: { [weak self] status in
+                    await self?.publishPaperSyncPage(status, authorRecid: recid, session: session)
+                }
+            )
             guard self.paperSyncSessions[recid] == session else { return }
             self.paperSyncTasks.removeValue(forKey: recid)
             if self.selectedAuthorID == recid {
@@ -1455,10 +1558,20 @@ final class AppViewModel: ObservableObject {
     }
 
     private func paperSyncOwnerKey(_ authorRecid: Int) -> String { "paper-sync:\(authorRecid)" }
+
+    /// Only the task/session that owns the selected author can publish a
+    /// durable page to the visible timeline.  A late callback for an author
+    /// selected previously stays in the store but cannot overwrite the
+    /// current author/status surface.
+    private func publishPaperSyncPage(_ status: SyncStatus, authorRecid: Int, session: UUID) async {
+        guard paperSyncSessions[authorRecid] == session, selectedAuthorID == authorRecid else { return }
+        syncStatus = status
+        await loadPapers(for: authorRecid, syncIfNeeded: false)
+    }
     private func radarOwnerKey(_ queryID: UUID) -> String { "radar-query:\(queryID.uuidString)" }
 
     private func refreshTrackedAuthorsInForeground() async {
-        let tracked = Set((await store.snapshot()).authors.values.filter(\.isTracked).map(\.recid))
+        let tracked = await store.trackedAuthorRecids()
         // Do not retain jobs for authors that were untracked while this app
         // was suspended.  Their durable checkpoint remains untouched; only
         // the in-process owner is cancelled.
@@ -1511,12 +1624,12 @@ final class AppViewModel: ObservableObject {
                 if let authorRecid, self.selectedAuthorID == authorRecid {
                     await self.loadPapers(for: authorRecid, syncIfNeeded: false)
                 }
-                let snapshot = await self.store.snapshot()
-                if let current = snapshot.papers[paperID],
+                let updatedRows = await self.store.papers(forIDs: [paperID])
+                if let current = updatedRows[paperID],
                    let index = self.globalPaperResults.firstIndex(where: { $0.literatureID == paperID }) {
                     self.globalPaperResults[index] = current
                 }
-                if let current = snapshot.papers[paperID] {
+                if let current = updatedRows[paperID] {
                     try? await self.store.saveEvidenceAnchors(EvidenceAnchorFactory.metadataAnchors(for: current))
                 }
                 await self.reloadSelectedPaperContext(for: paperID)
@@ -1536,21 +1649,86 @@ final class AppViewModel: ObservableObject {
         guard selectedAuthorID == recid else { return }
         papers = localPapers
         guard syncIfNeeded else { return }
-        let snapshot = await store.snapshot()
         // A durable partial checkpoint takes precedence over freshness.  A
         // recently successful page must not mask a failed page-2 job after an
         // app restart or author re-selection.
-        let checkpoint = snapshot.checkpoints["literature:\(recid)"]
+        let checkpoint = try? await store.checkpoint(jobID: "literature:\(recid)")
         if V4CheckpointRecovery.shouldResume(checkpoint) {
-            startPaperSync(for: recid, forceFreshGeneration: false)
+            // A relaunch must preserve the precise resume URL, but it must
+            // not immediately monopolise the restored UI when a prior page
+            // is already readable.  The visible Sync action resumes exactly
+            // this durable checkpoint; an empty first visit still fetches one
+            // small page automatically so a newly selected author is useful.
+            if localPapers.isEmpty {
+                startPaperSync(for: recid, forceFreshGeneration: false)
+            } else if let checkpoint {
+                syncStatus = SyncStatus(phase: .partial,
+                                        message: "已显示 \(localPapers.count) 篇；点击同步继续",
+                                        completedPages: checkpoint.completedPages,
+                                        successfulRecords: checkpoint.successfulRecords,
+                                        failedRecords: checkpoint.failedRecords,
+                                        lastUpdatedAt: checkpoint.updatedAt,
+                                        remainingRecords: nil)
+            }
             return
         }
-        let author = snapshot.authors[recid]
+        let author = await store.author(recid: recid)
         let isStale = author?.lastSyncedAt.map { Date().timeIntervalSince($0) > staleInterval } ?? true
         if localPapers.isEmpty || isStale { startPaperSync(for: recid, forceFreshGeneration: false) }
     }
 
-    private func requestInsight(for paper: Paper) {
+    private enum InsightRequestTrigger { case automatic, manual }
+
+    private func requestAutomaticInsight(for paper: Paper) async {
+        guard selectedPaperID == paper.literatureID else { return }
+        let cacheKey: String
+        do {
+            cacheKey = try InsightWorkflow.cacheKey(for: paper, settings: settings).value
+        } catch {
+            insightState = .failed("分析设置无效：\(error.localizedDescription)")
+            insightStartedAt = nil
+            return
+        }
+        // Context restoration normally populated this first.  Keep this
+        // second cache check at the dispatch boundary because a store reload
+        // can race the 600 ms debounce without ever requiring a provider call.
+        if let cached = await store.insight(cacheKey: cacheKey) {
+            insightArtifact = cached
+            insightState = .completed(cacheHit: true, requestCount: 0)
+            insightStartedAt = nil
+            return
+        }
+        if let terminal = automaticInsightTerminalMessages[cacheKey] {
+            insightState = .failed(terminal)
+            insightStartedAt = nil
+            return
+        }
+        requestInsight(for: paper, trigger: .automatic, cacheKey: cacheKey)
+    }
+
+    private func requestInsight(for paper: Paper, trigger: InsightRequestTrigger, cacheKey: String? = nil) {
+        let resolvedCacheKey: String
+        if let cacheKey {
+            resolvedCacheKey = cacheKey
+        } else {
+            do {
+                resolvedCacheKey = try InsightWorkflow.cacheKey(for: paper, settings: settings).value
+            } catch {
+                insightState = .failed("分析设置无效：\(error.localizedDescription)")
+                insightStartedAt = nil
+                return
+            }
+        }
+        // A selection-list reconciliation, an automatic debounce, and a user
+        // click may all arrive on the main actor.  Coalesce them before any
+        // Keychain read or provider request is scheduled.
+        if activeInsightCacheKey == resolvedCacheKey, isInsightRunning { return }
+        if trigger == .automatic, let terminal = automaticInsightTerminalMessages[resolvedCacheKey] {
+            insightState = .failed(terminal)
+            insightStartedAt = nil
+            return
+        }
+        if trigger == .manual { automaticInsightTerminalMessages.removeValue(forKey: resolvedCacheKey) }
         guard settings.hasConsent(for: settings.activeProvider) else {
             pendingInsightPaper = paper
             presentPrivacyDisclosure = true
@@ -1558,13 +1736,14 @@ final class AppViewModel: ObservableObject {
         }
         // Without an abstract the workflow sends only the title, obtains a
         // strict title-only translation, and creates no model physics claim.
-        startInsightTask(for: paper)
+        startInsightTask(for: paper, cacheKey: resolvedCacheKey)
     }
 
-    private func startInsightTask(for paper: Paper) {
+    private func startInsightTask(for paper: Paper, cacheKey: String) {
         insightTask?.cancel()
         let session = UUID()
         insightSessionID = session
+        activeInsightCacheKey = cacheKey
         insightStartedAt = Date()
         let runID = UUID()
         let started = insightStartedAt ?? Date()
@@ -1581,9 +1760,20 @@ final class AppViewModel: ObservableObject {
                                               provider: settings.activeProvider.rawValue, model: settings.activeProfile.effectiveModel)
         insightTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.insightSessionID == session {
+                    self.insightTask = nil
+                    self.activeInsightCacheKey = nil
+                }
+            }
             let apiKey: String
-            do { apiKey = try self.keychain.read(service: Self.keychainService, account: self.settings.activeProvider.rawValue) ?? "" }
-            catch { self.insightState = .failed("无法读取钥匙串中的 API Key。"); return }
+            do { apiKey = try await self.storedAPIKey(for: self.settings.activeProvider) ?? "" }
+            catch {
+                self.insightState = .failed("无法读取钥匙串中的 API Key。")
+                self.automaticInsightTerminalMessages[cacheKey] = "无法读取钥匙串中的 API Key；不会自动重试。"
+                self.insightStartedAt = nil
+                return
+            }
             do {
                 let artifact = try await self.insightWorkflow.generate(for: paper, settings: self.settings, apiKey: apiKey) { @MainActor [weak self] state in
                     guard let self, self.insightSessionID == session else { return }
@@ -1592,19 +1782,32 @@ final class AppViewModel: ObservableObject {
                 }
                 guard self.insightSessionID == session, self.selectedPaperID == paper.literatureID else { return }
                 self.insightArtifact = artifact
-                self.updateAnalysisRun(runID: runID, workflowState: .completed(cacheHit: false, requestCount: requestTotal), startedAt: started)
+                let completion: InsightWorkflowState
+                if case .completed = self.insightState {
+                    completion = self.insightState
+                } else {
+                    completion = .completed(cacheHit: false, requestCount: requestTotal)
+                }
+                self.updateAnalysisRun(runID: runID, workflowState: completion, startedAt: started)
+                self.insightStartedAt = nil
             } catch is CancellationError {
                 guard self.insightSessionID == session else { return }
                 self.insightState = .cancelled
                 self.updateAnalysisRun(runID: runID, workflowState: .cancelled, startedAt: started)
+                self.automaticInsightTerminalMessages[cacheKey] = "已取消；不会自动重试。请使用“重新生成”明确重试。"
+                self.insightStartedAt = nil
             } catch let error as LatticeLensError where error == .cancelled {
                 guard self.insightSessionID == session else { return }
                 self.insightState = .cancelled
                 self.updateAnalysisRun(runID: runID, workflowState: .cancelled, startedAt: started)
+                self.automaticInsightTerminalMessages[cacheKey] = "已取消；不会自动重试。请使用“重新生成”明确重试。"
+                self.insightStartedAt = nil
             } catch {
                 guard self.insightSessionID == session else { return }
                 if case .failed = self.insightState {} else { self.insightState = .failed(error.localizedDescription) }
                 self.updateAnalysisRun(runID: runID, workflowState: .failed(error.localizedDescription), startedAt: started)
+                self.automaticInsightTerminalMessages[cacheKey] = "上次自动分析失败：\(error.localizedDescription)；不会自动重试。请使用“重新生成”明确重试。"
+                self.insightStartedAt = nil
             }
         }
     }
@@ -1640,9 +1843,15 @@ final class AppViewModel: ObservableObject {
         evidenceInsightStartedAt = Date()
         evidenceInsightTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.evidenceInsightSessionID == session {
+                    self.evidenceInsightTask = nil
+                    if !self.isEvidenceInsightRunning { self.evidenceInsightStartedAt = nil }
+                }
+            }
             let apiKey: String
             do {
-                apiKey = try self.keychain.read(service: Self.keychainService, account: self.settings.activeProvider.rawValue) ?? ""
+                apiKey = try await self.storedAPIKey(for: self.settings.activeProvider) ?? ""
             } catch {
                 self.evidenceInsightState = .failed("无法读取钥匙串中的 API Key。")
                 return
@@ -1677,9 +1886,15 @@ final class AppViewModel: ObservableObject {
         visionStartedAt = Date()
         visionTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.visionSessionID == session {
+                    self.visionTask = nil
+                    if !self.isVisionRunning { self.visionStartedAt = nil }
+                }
+            }
             let apiKey: String
             do {
-                apiKey = try self.keychain.read(service: Self.keychainService, account: self.settings.activeProvider.rawValue) ?? ""
+                apiKey = try await self.storedAPIKey(for: self.settings.activeProvider) ?? ""
             } catch {
                 self.visionState = .failed("无法读取钥匙串中的 API Key。")
                 return
@@ -1719,34 +1934,39 @@ final class AppViewModel: ObservableObject {
             visionArtifact = nil
             return
         }
-        let snapshot = await store.snapshot()
+        let paperRows = await store.papers(forIDs: [paperID])
+        let paper = paperRows[paperID]
+        let key = paper.flatMap { try? InsightWorkflow.cacheKey(for: $0, settings: settings).value }
+        let context = await store.paperContext(paperID: paperID, insightCacheKey: key)
         guard selectedPaperID == paperID else { return }
-        selectedFullTextDocument = snapshot.fullTextDocuments.values
-            .filter { $0.paperID == paperID }
+        if let cached = context.insight {
+            insightArtifact = cached
+            // This is a presentation of an already schema-validated artifact;
+            // it does not imply a new provider call or restart its timer.
+            insightState = .completed(cacheHit: true, requestCount: 0)
+            insightStartedAt = nil
+        }
+        selectedFullTextDocument = context.fullTextDocuments
             .sorted { ($0.downloadedAt ?? .distantPast) > ($1.downloadedAt ?? .distantPast) }
             .first
-        selectedEvidenceAnchors = snapshot.evidenceAnchors.values
-            .filter { $0.paperID == paperID }
+        selectedEvidenceAnchors = context.evidenceAnchors
             .sorted { lhs, rhs in
                 if lhs.sourceKind != rhs.sourceKind { return lhs.sourceKind.rawValue < rhs.sourceKind.rawValue }
                 if lhs.page != rhs.page { return (lhs.page ?? 0) < (rhs.page ?? 0) }
                 return lhs.id < rhs.id
             }
-        evidenceInsightArtifact = snapshot.evidenceInsights.values
-            .filter { $0.paperID == paperID }
+        evidenceInsightArtifact = context.evidenceInsights
             .sorted { $0.createdAt > $1.createdAt }
             .first
-        visionArtifact = snapshot.visionArtifacts.values
-            .filter { $0.paperID == paperID }
+        visionArtifact = context.visionArtifacts
             .sorted { $0.createdAt > $1.createdAt }
             .first
-        selectedNotes = snapshot.notes.values.filter { $0.paperID == paperID }.sorted { $0.updatedAt > $1.updatedAt }
-        selectedBibTeXRecord = snapshot.bibTeXRecords[paperID]
-        let linkedIDs = Set(snapshot.paperTags.filter { $0.paperID == paperID }.map(\.tagID))
-        selectedTags = linkedIDs.compactMap { snapshot.tags[$0] }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        availableTags = snapshot.tags.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        availableCollections = snapshot.collections.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        selectedCollectionIDs = Set(snapshot.collectionPapers.filter { $0.paperID == paperID }.map(\.collectionID))
+        selectedNotes = context.notes.sorted { $0.updatedAt > $1.updatedAt }
+        selectedBibTeXRecord = context.bibTeXRecord
+        selectedTags = context.tags.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        availableTags = context.availableTags.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        availableCollections = context.availableCollections.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        selectedCollectionIDs = context.selectedCollectionIDs
     }
 
     private func persistAuthorIndexStopState(_ stopState: SyncCheckpointState) async {
@@ -1762,9 +1982,9 @@ final class AppViewModel: ObservableObject {
         // Keep the complete qualified local snapshot in the view model.  The
         // sidebar applies its own synchronous search predicate so typing never
         // races an actor reload or changes the selected author/paper state.
-        authors = await authorIndex.visibleAuthors(search: "")
-        let snapshot = await store.snapshot()
-        let candidates = snapshot.authors.values.filter(\.isHepLatCandidate)
+        let projection = await store.authorSidebarProjection()
+        authors = projection.visibleAuthors(search: "")
+        let candidates = projection.authors.filter(\.isHepLatCandidate)
         authorIndexProgress = AuthorIndexProgress(verified: candidates.filter { $0.hIndex != nil }.count,
                                                   candidates: candidates.count,
                                                   failed: candidates.filter { $0.hIndexState == .failed }.count,

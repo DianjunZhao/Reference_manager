@@ -206,7 +206,14 @@ struct InspireClient: Sendable {
         let url = try nextURL.map { try validatedNextURL($0, expectedPath: "/api/literature") } ?? makeURL(path: "/api/literature", query: [
             URLQueryItem(name: "q", value: normalizedQuery),
             URLQueryItem(name: "sort", value: "mostrecent"),
-            URLQueryItem(name: "size", value: "100")
+            // Live author records can contain unusually large figure/document
+            // metadata.  A 100-record page for Yang, Yi-Bo exceeded both the
+            // product's 8 MiB body ceiling and its 30 s request deadline in
+            // real INSPIRE use.  Ten records is intentionally conservative:
+            // each page is committed and surfaced immediately by PaperSync,
+            // rather than leaving the user with an empty list until an entire
+            // author's history finishes downloading.
+            URLQueryItem(name: "size", value: "10")
         ])
         let page = try decoder.decode(InspireSearchPage<InspireLiteratureHit>.self, from: await get(url))
         return (try page.hits.hits.map { try InspireMapper.paper(from: $0, now: now) }, try trustedNextURL(page.links?.next, expectedPath: "/api/literature"), page.hits.total)

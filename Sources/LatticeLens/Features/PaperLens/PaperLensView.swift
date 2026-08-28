@@ -1164,7 +1164,7 @@ private struct InsightStatusBar: View {
         case .receiving(let characters, let bytes): "正在接收 · \(characters) 字符 / \(bytes) bytes"
         case .validating: "正在验证结构化资料边界"
         case .completed(let cacheHit, let requestCount): cacheHit ? "已从本地缓存显示 · 0 次请求" : "已完成 · \(requestCount) 次请求"
-        case .cancelled: "已取消；已保留先前成功结果"
+        case .cancelled: viewModel.insightArtifact == nil ? "已取消；本次没有保存结果" : "已取消；已保留先前成功结果"
         case .failed(let message): "失败：\(message)"
         }
     }
@@ -1212,6 +1212,7 @@ private struct InsightStatusBar: View {
     }
 
     private func elapsedSuffix(at date: Date) -> String {
+        guard viewModel.isInsightRunning else { return "" }
         guard let started = viewModel.insightStartedAt else { return "" }
         return " · \(max(0, Int(date.timeIntervalSince(started)))) s"
     }

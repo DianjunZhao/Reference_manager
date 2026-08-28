@@ -45,6 +45,141 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(models, ["fixture-text-model"])
     }
 
+    @MainActor
+    func testSettingsCredentialStatusUsesPresenceQueryWithoutReadingSecretBytes() async {
+        let keychain = PresenceOnlyKeychain()
+        let viewModel = AppViewModel(keychain: keychain, useFixtureDependencies: false)
+
+        let isSaved = await viewModel.apiKeySavedStatus(for: .openAI)
+        XCTAssertTrue(isSaved)
+        XCTAssertEqual(keychain.containsCallCount, 1)
+        XCTAssertEqual(keychain.readCallCount, 0,
+                       "Settings 的保存状态不得请求或解密 API Key 内容")
+    }
+
+    @MainActor
+    func testFirstPaintUsesBoundedStoreProjectionsInsteadOfWholeSnapshot() async throws {
+        let store = InMemoryLibraryStore()
+        let selfAuthor = Author(recid: ProductContract.selfAuthorRecid, preferredName: "Zhao, Dian-Jun", nativeNames: [], bai: nil,
+                                arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .unknown,
+                                isTracked: false, lastSyncedAt: Date())
+        let paper = Paper(literatureID: 7_101,
+                          titles: [PaperTitle(value: "first-paint fixture", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "bounded row fixture", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: nil, arxivCategories: ["hep-lat"], doi: nil,
+                          citationCount: nil, publicationStatus: nil, updated: nil, figures: [], firstSeenAt: Date(), isRead: false)
+        try await store.upsert(authors: [selfAuthor])
+        _ = try await store.upsert(papers: [paper], for: selfAuthor.recid)
+        await store.resetSnapshotReadCount()
+
+        let viewModel = AppViewModel(store: store, client: InspireClient(transport: SequentialTransport([])),
+                                     keychain: FixedKeychain(value: "fixture-key"), useFixtureDependencies: false)
+        await viewModel.start()
+        try await Task.sleep(for: .milliseconds(450)) // foreground tracked-author scheduling boundary
+
+        XCTAssertEqual(viewModel.authors.map(\.recid), [selfAuthor.recid])
+        XCTAssertEqual(viewModel.papers.map(\.literatureID), [paper.literatureID])
+        let snapshotReadCount = await store.snapshotReadCount()
+        XCTAssertEqual(snapshotReadCount, 0,
+                       "首屏不得因作者栏、同步 checkpoint 或 tracked refresh 解码整库 snapshot")
+    }
+
+    func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
+        let store = InMemoryLibraryStore()
+        let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,
+                            arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .unknown,
+                            isTracked: false, lastSyncedAt: nil)
+        try await store.upsert(authors: [author])
+        await store.resetSnapshotReadCount()
+        let service = PaperSyncService(client: InspireClient(transport: SequentialTransport([try fixtureData("literature-page")])), store: store)
+
+        let status = await service.sync(authorRecid: author.recid)
+
+        XCTAssertEqual(status.phase, .ready)
+        XCTAssertGreaterThan(status.successfulRecords, 0)
+        let snapshotReadCount = await store.snapshotReadCount()
+        XCTAssertEqual(snapshotReadCount, 0,
+                       "每一页 INSPIRE diff 只能读取该页的旧论文，不能物化全部资料库")
+    }
+
+    @MainActor
+    func testRepeatedSamePaperSelectionDoesNotResendAutomaticInsight() async throws {
+        let store = InMemoryLibraryStore()
+        let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,
+                            arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .unknown,
+                            isTracked: false, lastSyncedAt: Date())
+        let paper = Paper(literatureID: 7_001,
+                          titles: [PaperTitle(value: "fixture title", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "fixture abstract", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: nil, arxivCategories: ["hep-lat"], doi: nil,
+                          citationCount: nil, publicationStatus: nil, updated: nil, figures: [], firstSeenAt: Date(), isRead: false)
+        try await store.upsert(authors: [author])
+        _ = try await store.upsert(papers: [paper], for: author.recid)
+        let llm = SlowCountingInsightClient()
+        let viewModel = AppViewModel(store: store, client: InspireClient(transport: SequentialTransport([])),
+                                     keychain: FixedKeychain(value: "fixture-key"), llmClient: llm,
+                                     useFixtureDependencies: false)
+        var settings = LLMSettings(activeProvider: .openAI,
+                                   profiles: [LLMProvider.openAI.rawValue: ProviderProfile(provider: .openAI, baseURL: "https://example.test/v1", manualModel: "fixture", usesStreaming: false)],
+                                   automaticAnalysis: true, mode: .fast, maximumFigures: 0)
+        settings.recordConsent(for: .openAI)
+        viewModel.saveSettings(settings, apiKey: nil)
+
+        viewModel.selectAuthor(author.recid)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(viewModel.papers.map(\.literatureID), [paper.literatureID])
+        viewModel.selectPaper(paper.literatureID)
+        try await Task.sleep(for: .milliseconds(750))
+        viewModel.selectPaper(paper.literatureID)
+        try await Task.sleep(for: .milliseconds(100))
+
+        let requestCount = await llm.requestCount()
+        XCTAssertEqual(requestCount, 1)
+        viewModel.cancelInsight()
+    }
+
+    @MainActor
+    func testSchemaFailureStopsTimerAndPausesAutomaticRetryForSamePaper() async throws {
+        let store = InMemoryLibraryStore()
+        let author = Author(recid: 22, preferredName: "Schema, Fixture", nativeNames: [], bai: nil,
+                            arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .unknown,
+                            isTracked: false, lastSyncedAt: Date())
+        let paper = Paper(literatureID: 7_002,
+                          titles: [PaperTitle(value: "schema failure fixture", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "The source is deliberately bounded.", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: nil, arxivCategories: ["hep-lat"], doi: nil,
+                          citationCount: nil, publicationStatus: nil, updated: nil, figures: [], firstSeenAt: Date(), isRead: false)
+        try await store.upsert(authors: [author])
+        _ = try await store.upsert(papers: [paper], for: author.recid)
+        let llm = SchemaRejectingInsightClient()
+        let viewModel = AppViewModel(store: store, client: InspireClient(transport: SequentialTransport([])),
+                                     keychain: FixedKeychain(value: "fixture-key"), llmClient: llm,
+                                     useFixtureDependencies: false)
+        var settings = LLMSettings(activeProvider: .openAI,
+                                   profiles: [LLMProvider.openAI.rawValue: ProviderProfile(provider: .openAI, baseURL: "https://example.test/v1", manualModel: "fixture", usesStreaming: false)],
+                                   automaticAnalysis: true, mode: .fast, maximumFigures: 0)
+        settings.recordConsent(for: .openAI)
+        viewModel.saveSettings(settings, apiKey: nil)
+
+        viewModel.selectAuthor(author.recid)
+        try await Task.sleep(for: .milliseconds(100))
+        viewModel.selectPaper(paper.literatureID)
+        try await Task.sleep(for: .milliseconds(800))
+
+        guard case .failed = viewModel.insightState else {
+            return XCTFail("strict root-key rejection must become a visible terminal failure")
+        }
+        XCTAssertFalse(viewModel.isInsightRunning)
+        XCTAssertNil(viewModel.insightStartedAt, "schema failure must retire elapsed-time state")
+
+        viewModel.selectPaper(nil)
+        viewModel.selectPaper(paper.literatureID)
+        try await Task.sleep(for: .milliseconds(750))
+        let requestCount = await llm.requestCount()
+        XCTAssertEqual(requestCount, 1,
+                       "leaving and returning to the same failed automatic input must not resend it")
+    }
+
     func testUIFixtureFullTextAndVisionDependenciesAreAllowlistedAndOffline() async throws {
         let downloader = AppFixtureFullTextDownloader()
         let allowedURL = try XCTUnwrap(URL(string: "https://fixture.invalid/fulltext/1234567.pdf"))
@@ -93,6 +228,26 @@ final class CoreContractTests: XCTestCase {
         let apiKey = await discoverer.lastAPIKey
         XCTAssertEqual(provider, .openAI)
         XCTAssertEqual(apiKey, "saved-provider-key")
+    }
+
+    @MainActor
+    func testSavedCredentialReadNeverBlocksTheInteractiveMainActor() async throws {
+        let keychain = DelayedReadKeychain(delay: 0.7)
+        let viewModel = AppViewModel(keychain: keychain, modelDiscoverer: ModelDiscovererSpy(), useFixtureDependencies: false)
+        let discovery = Task {
+            try await viewModel.discoverModels(profile: viewModel.settings.activeProfile, provider: .openAI)
+        }
+
+        for _ in 0..<20 where !keychain.isReading {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertTrue(keychain.isReading,
+                      "Keychain read must still be in progress while the main actor remains responsive")
+
+        viewModel.openSettings()
+        XCTAssertTrue(viewModel.presentSettings,
+                      "A blocked Keychain read must not prevent an interactive Settings transition")
+        _ = try? await discovery.value
     }
 
     func testHIndexThresholdIsStrictAndSelfIsAlwaysVisible() {
@@ -316,9 +471,12 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(try APIEndpointBuilder.normalizedBaseURL(from: "https://Example.TEST/v1/").absoluteString, "https://example.test/v1")
 
         var parser = OpenAICompatibleSSEParser()
-        let payload = "data: {\"choices\":[{\"delta\":{\"content\":\"格点\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n"
+        let payload = ": keepalive\r\nevent: message\r\nid: 1\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"格点\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n"
         XCTAssertEqual(try parser.consume(Data(payload.utf8)), ["格点"])
         XCTAssertNoThrow(try parser.finish())
+
+        XCTAssertTrue(PaperInsightPrompt.systemInstruction.contains("exact root keys"))
+        XCTAssertTrue(PaperInsightPrompt.systemInstruction.contains("no wrapper"))
     }
 
     private func author(recid: Int, name: String) -> Author {
@@ -364,6 +522,45 @@ private final class FixedKeychain: KeychainStoring, @unchecked Sendable {
     func delete(service: String, account: String) throws {}
 }
 
+private final class DelayedReadKeychain: KeychainStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private let delay: TimeInterval
+    private var reading = false
+
+    init(delay: TimeInterval) { self.delay = delay }
+    var isReading: Bool { lock.lock(); defer { lock.unlock() }; return reading }
+    func save(_ value: String, service: String, account: String) throws {}
+    func read(service: String, account: String) throws -> String? {
+        lock.lock(); reading = true; lock.unlock()
+        Thread.sleep(forTimeInterval: delay)
+        lock.lock(); reading = false; lock.unlock()
+        return "delayed-test-key"
+    }
+    func delete(service: String, account: String) throws {}
+}
+
+private final class PresenceOnlyKeychain: KeychainStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var containsCalls = 0
+    private var readCalls = 0
+
+    var containsCallCount: Int { lock.lock(); defer { lock.unlock() }; return containsCalls }
+    var readCallCount: Int { lock.lock(); defer { lock.unlock() }; return readCalls }
+
+    func save(_ value: String, service: String, account: String) throws {}
+    func read(service: String, account: String) throws -> String? {
+        lock.lock(); defer { lock.unlock() }
+        readCalls += 1
+        return "must-not-read"
+    }
+    func contains(service: String, account: String) throws -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        containsCalls += 1
+        return true
+    }
+    func delete(service: String, account: String) throws {}
+}
+
 private actor ModelDiscovererSpy: ModelDiscovering {
     private(set) var lastProvider: LLMProvider?
     private(set) var lastAPIKey: String?
@@ -373,6 +570,41 @@ private actor ModelDiscovererSpy: ModelDiscovering {
         lastAPIKey = apiKey
         return ["model-from-saved-key"]
     }
+}
+
+private actor SlowCountingInsightClient: LLMCompleting {
+    private var count = 0
+
+    func complete(system: String, userPayload: String, profile: ProviderProfile, apiKey: String, maximumResponseBytes: Int,
+                  onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
+                  onDelta: @escaping @Sendable (String) async -> Void) async throws -> String {
+        count += 1
+        await onTransportState(.connected)
+        await onTransportState(.waitingFirstContent)
+        try await Task.sleep(for: .seconds(2))
+        let response = "{\"schema_version\":\"paper-insight-v1\",\"source_scope\":\"title_abstract_figure_captions\",\"title_zh\":\"标题\",\"abstract_zh\":\"摘要\",\"physics\":{\"research_question\":\"问题\",\"background\":\"背景\",\"method_and_data_flow\":[],\"main_results\":[],\"lattice_conventions_reported\":[],\"missing_information\":[\"未提供\"],\"caveats\":[\"摘要级\"]},\"important_figures\":[],\"terminology\":[]}"
+        await onDelta(response)
+        return response
+    }
+
+    func requestCount() -> Int { count }
+}
+
+private actor SchemaRejectingInsightClient: LLMCompleting {
+    private var count = 0
+
+    func complete(system: String, userPayload: String, profile: ProviderProfile, apiKey: String, maximumResponseBytes: Int,
+                  onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
+                  onDelta: @escaping @Sendable (String) async -> Void) async throws -> String {
+        count += 1
+        await onTransportState(.connected)
+        await onTransportState(.waitingFirstContent)
+        let invalidRoot = #"{"not_the_required_root_schema":true}"#
+        await onDelta(invalidRoot)
+        return invalidRoot
+    }
+
+    func requestCount() -> Int { count }
 }
 
 private actor RetryDelayRecorder {
