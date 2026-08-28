@@ -1,0 +1,46 @@
+{
+  "schema_version": "latticelens-app-icon-validation-v1.0",
+  "generated_at_utc": "2026-08-26T16:01:02Z",
+  "scope": "Root icon deliverables and isolated local Release asset-catalog build only; this is neither a signed package nor a DMG validation.",
+  "editable_master": {
+    "path": "AppIcon-master.svg",
+    "sha256": "94ce9cf63ac40bae1c9875a70111317231c5ccc35e7450fdd827c6aa1971a155",
+    "matches_assets_review_copy": true
+  },
+  "contact_sheet": {
+    "path": "AppIcon-contact-sheet.png",
+    "pixel_width": 760,
+    "pixel_height": 180,
+    "has_alpha": true,
+    "sha256": "3f6a2533befae57d813e086f02261b7102b8ae0678d9ea21634e80ebb95742d1",
+    "sizes_previewed_px": [16, 32, 128, 512]
+  },
+  "asset_catalog": {
+    "contents_json_path": "Assets.xcassets/AppIcon.appiconset/Contents.json",
+    "contents_json_valid": true,
+    "pngs": [
+      {"path": "appicon_16.png", "pixel_width": 16, "pixel_height": 16, "has_alpha": true, "sha256": "fdb25429dda4ad5fbdb0fd7ac3ae60f1dd212f0e6358cbbd3ecb84dea89f098f"},
+      {"path": "appicon_16@2x.png", "pixel_width": 32, "pixel_height": 32, "has_alpha": true, "sha256": "7ad91c3afb049668e34bd865b057da5495b5abbd54f71bbf22abf55840669d96"},
+      {"path": "appicon_32@2x.png", "pixel_width": 64, "pixel_height": 64, "has_alpha": true, "sha256": "4a21e221b8fd64920921380a15127c75245270581b36191d93dca7a8f619552a"},
+      {"path": "appicon_128.png", "pixel_width": 128, "pixel_height": 128, "has_alpha": true, "sha256": "71d62183e2a15f25bdd6cbd49e142aa7664326f6b7fe53a339d466ec6144bccd"},
+      {"path": "appicon_128@2x.png", "pixel_width": 256, "pixel_height": 256, "has_alpha": true, "sha256": "18341db6a80ddfa0a231516068b948d4119bf572358ca95ba1b8322440030794"},
+      {"path": "appicon_256@2x.png", "pixel_width": 512, "pixel_height": 512, "has_alpha": true, "sha256": "104154aa4948982c164ac8d40533edc072645e39953a88943edbb59be40dd461"},
+      {"path": "appicon_512@2x.png", "pixel_width": 1024, "pixel_height": 1024, "has_alpha": true, "sha256": "a3ad384af7d47db8a78714f8dc3923f7a4f9d3b25d34b8da0fe48746e099f730"}
+    ]
+  },
+  "isolated_xcode_release_resource_build": {
+    "status": "pass",
+    "xcode_version": "26.6",
+    "xcode_build": "17F113",
+    "result": "BUILD SUCCEEDED",
+    "code_signing": "disabled for this resource-only build",
+    "bundle_short_version": "1.0.0",
+    "bundle_build": "100",
+    "architectures": ["x86_64", "arm64"],
+    "app_icon_resource": {
+      "path": "LatticeLens.app/Contents/Resources/AppIcon.icns",
+      "byte_count": 86565,
+      "sha256": "c8ab41a824d9d51d214033c0ec080208c499f63a469a182fbca688bf460b2661"
+    }
+  }
+}

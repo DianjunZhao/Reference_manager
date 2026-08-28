@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">LatticeLens App Icon</title><desc id="desc">A cyan lattice and gold magnifying glass surrounding a white research paper.</desc>
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111A3A"/><stop offset="1" stop-color="#2458A6"/></linearGradient></defs>
+  <rect x="48" y="48" width="928" height="928" rx="205" fill="url(#bg)"/>
+  <g stroke="#45D7E8" stroke-width="24" stroke-linecap="round" opacity=".92"><path d="M210 292h270M210 512h270M210 732h270M210 292v440M345 292v440M480 292v440"/></g>
+  <g fill="#45D7E8"><circle cx="210" cy="292" r="31"/><circle cx="345" cy="292" r="31"/><circle cx="480" cy="292" r="31"/><circle cx="210" cy="512" r="31"/><circle cx="345" cy="512" r="31"/><circle cx="480" cy="512" r="31"/><circle cx="210" cy="732" r="31"/><circle cx="345" cy="732" r="31"/><circle cx="480" cy="732" r="31"/></g>
+  <path d="M541 305h216l78 78v276H541z" fill="#F7FAFF"/><path d="M757 305v78h78" fill="#dbe8ff"/><path d="M600 471h176M600 545h176M600 619h122" stroke="#20325B" stroke-width="25" stroke-linecap="round"/>
+  <g fill="none" stroke="#F5B94C" stroke-linecap="round"><circle cx="639" cy="570" r="207" stroke-width="58"/><path d="M785 716l106 106" stroke-width="64"/><path d="M867 800l63 63v73l-36-19-35 19z" stroke-width="18" fill="#F5B94C"/></g>
+</svg>

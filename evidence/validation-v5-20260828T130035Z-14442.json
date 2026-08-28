@@ -1,0 +1,42 @@
+{
+  "schema_version": "latticelens-seal-v5",
+  "product_version": "1.0.0",
+  "build_number": 100,
+  "local_only": true,
+  "run_id": "20260828T130035Z-14442",
+  "build_input_tree_sha256": "17fa101852400699a9a9f3dd1740e1608aaaf0d34e047caa12f71192d50a7df5",
+  "automatic_validation": {
+    "path": "validation-v5-20260828T123739Z-5925.json",
+    "sha256": "93eb45b5cfc7a71e9c8ed586a3785536beaead7343409c5e40dd9808b202a45b"
+  },
+  "package_manifest": {
+    "path": "Release-1.0.0-local/manifest-v1.0.json",
+    "sha256": "db7c4f483f1e03aac710fe09b8fe02bbec76c6dac4678beec0dfdce67c315449"
+  },
+  "manual_acceptance": {
+    "path": "ManualAcceptanceReceipt-v5-20260828T124000Z.json",
+    "sha256": "b1e526776f737b712adc2897e835757a9e4e8e6ed85cf95cf901f898d0ac84d3",
+    "applications_installation_choice": "no_old_app"
+  },
+  "cleanup_apply_receipt": {
+    "path": "cleanup-apply-receipt-v1.0-20260828T123739Z-5925.json",
+    "sha256": "68b797ad154a1a18424595f7dcb498a5805d8209708d9ac6a3ec3f3f4408cfae"
+  },
+  "mandatory": {
+    "automatic_validation": true,
+    "dmg_resmoke": true,
+    "cleanup_receipt": true,
+    "manual_voiceover": true,
+    "manual_lqcd_rubric": true,
+    "manual_applications_install": true,
+    "manual_disposable_library_drill": true
+  },
+  "optional": {
+    "developer_id": "out_of_scope",
+    "notarization": "out_of_scope",
+    "cross_machine": "out_of_scope",
+    "live_inspire": "not_run",
+    "live_llm": "not_required"
+  },
+  "failures": 0
+}

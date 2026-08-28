@@ -1,0 +1,21 @@
+{
+  "hits": {
+    "total": 1,
+    "hits": [
+    {
+      "id": 1234567,
+      "updated": "2026-08-20T12:00:00+00:00",
+      "metadata": {
+        "titles": [{"title": "A lattice observable", "source": "arXiv"}],
+        "abstracts": [{"value": "We compute a matrix element on the lattice.", "source": "arXiv"}],
+        "arxiv_eprints": [{"value": "2608.12345", "categories": ["hep-lat", "hep-ph"]}],
+        "citation_count": 4,
+        "preprint_date": "2026-08-20",
+        "dois": [{"value": "10.0000/example"}],
+        "figures": [{"key": "fig1", "url": "https://inspirehep.net/files/fig1.png", "label": "Figure 1", "caption": "A matrix element at P=2 GeV.", "source": "arXiv", "filename": "fig1.png"}]
+      }
+    }
+    ]
+  },
+  "links": {}
+}

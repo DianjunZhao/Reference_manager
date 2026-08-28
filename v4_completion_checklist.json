@@ -1,0 +1,282 @@
+{
+  "schema_version": "latticelens-v4-completion-checklist-v1",
+  "scope": "local and fixture evidence only; no live INSPIRE, provider, user library, Keychain, Developer ID, notarization, or public-release claim",
+  "current_execution": {
+    "run_id": "20260825T234536Z-47201",
+    "source_hash": "dd72df978b0c3872539bd46fce271a45f3965cd202a6c014e551185a225d9907",
+    "verifier_mode": "zsh Scripts/verify_v4.sh --local-only --skip-ui",
+    "swiftpm": "89 executed / 0 skipped / 0 failed",
+    "xcode_unit": "89 total / 88 passed / 1 explicit opt-in benchmark skipped / 0 failed",
+    "fixture_ui": "front-end Xcode Test action: LatticeLensUITests 20 total / 20 passed / 0 failed / 0 skipped; full action 109 total / 108 passed / 0 failed / 1 skipped",
+    "ui_provenance": "Composite current-source evidence: CLI verifier UI stage was explicitly skipped, and the contemporaneous readable Xcode aggregate is recorded in validation-v4-ui.xcresult.",
+    "historical_ui_evidence_is_not_current": true
+  },
+  "requirements": [
+    {
+      "id": "R01",
+      "status": "verified_local_contract",
+      "evidence": [
+        "testSharedBlobDeleteUsesReferenceCountAndOwnedPath",
+        "testSharedBlobServiceDeletesFileOnlyAfterLastReference",
+        "testPDFPreflightOccursBeforeGETAndKeepsHardLimitAndPortPolicyVisible"
+      ]
+    },
+    {
+      "id": "R02",
+      "status": "verified_local_contract",
+      "evidence": [
+        "testCheckpointResumeIgnoresFreshLastSuccessfulTimestamp",
+        "testRadarPausePublishesAndPersistsTheSameDurableQueryState"
+      ]
+    },
+    {
+      "id": "R03",
+      "status": "verified_local_contract_and_fixture_ui",
+      "evidence": [
+        "testExportCoordinatorDoesNotMarkCancelledAsSucceeded",
+        "testFixtureReferenceNoteAndTagControlsMutateOnlyFixtureStore"
+      ]
+    },
+    {
+      "id": "R04",
+      "status": "verified_local_contract_and_fixture_ui",
+      "evidence": [
+        "testFixtureSyncCenterExposesDurableLocalJobSummary",
+        "testFixtureRadarQueryCanBeSavedAndPausedThroughOwnedJobPath"
+      ]
+    },
+    {
+      "id": "R05",
+      "status": "verified_local_contract",
+      "evidence": [
+        "testAnalysisDeadlineEnforcerSeparatesConnectFirstContentIdleHardAndOversize",
+        "testAnalysisDeadlineEnforcerDropsLateCallbacksAndDoesNotRetry",
+        "testAIClearPreviewIsScopeBoundedAndNamesAffectedPaperSet"
+      ]
+    },
+    {
+      "id": "R06",
+      "status": "verified_local_contract",
+      "evidence": [
+        "testPhysicsValidatorRequiresValueAndUnitInSameAnchorWindow",
+        "testNumericCorpusRejectsYearsReferencesEquationsAndPagesWithoutDiscardingLatticeForms",
+        "testCompareLocalExtractorAtomicallyReplacesOnlyFullyValidatedMatrix"
+      ]
+    },
+    {
+      "id": "R07",
+      "status": "verified_local_contract",
+      "evidence": [
+        "testPDFPreflightOccursBeforeGETAndKeepsHardLimitAndPortPolicyVisible",
+        "testAppFixtureDownloaderProducesExtractablePDFAndEvidenceResponse"
+      ]
+    },
+    {
+      "id": "R08",
+      "status": "verified_actual_disk_backed_v6_and_v7_active_domain",
+      "evidence": [
+        "run 20260825T120151Z-61860: V6 disk benchmark (2k/20k/100k/10k, backup and V5→V6 migration)",
+        "run 20260825T120151Z-61860: V7 active-domain disk benchmark (2k/20k/100k/10k, verified backup, cold-open/search/markRead)",
+        "testV7ReadMutationUsesBoundedPaperAndReadingStateTransaction"
+      ],
+      "limitations": [
+        "V7 legacy-compatible full snapshot materialization is measured separately; it is not a real user-library migration drill"
+      ]
+    },
+    {
+      "id": "R09",
+      "status": "verified_current_source_fixture_ui_composite",
+      "evidence": [
+        "validation-v4.json run 20260825T234536Z-47201: current non-UI gates, failures=0, artifact hash matches",
+        "validation-v4-ui.xcresult: full Xcode action 109/108/0/1 Passed; LatticeLensUITests target 20/20/0/0",
+        "validation-v4-ui-independent-summary.json: source-hash and copied-bundle provenance"
+      ],
+      "limitations": [
+        "The verifier CLI UI stage was deliberately skipped; its success is not claimed.",
+        "Manual local acceptance and a disposable user-library migration/rollback drill remain pending."
+      ]
+    },
+    {
+      "id": "R10",
+      "status": "verified_local_contract_and_fixture_ui",
+      "evidence": [
+        "testRadarDiffClassifiesAddedRemovedAndModifiedWithFieldHashes",
+        "testFixtureRadarQueryCanBeSavedAndPausedThroughOwnedJobPath"
+      ]
+    },
+    {
+      "id": "R11",
+      "status": "verified_local_contract_and_fixture_ui",
+      "evidence": [
+        "testCompareExtractorReturnsMissingInsteadOfGuessing",
+        "testCompareLocalExtractorAtomicallyReplacesOnlyFullyValidatedMatrix",
+        "testFixtureCompareExposesTwoLocalPapersAndBoundedWorkspaceInput"
+      ]
+    },
+    {
+      "id": "R12",
+      "status": "verified_local_contract_and_fixture_ui",
+      "evidence": [
+        "testAnnotationRelocatesAcrossChangedDocumentHashAndRetiresOldDocument",
+        "testWorkbenchExportWritesLedgerOnlyFromCompletionCallback",
+        "testFixtureNotebookShowsExactAnchorAnnotationAfterLocalPDFExtraction"
+      ]
+    },
+    {
+      "id": "R13",
+      "status": "honest_preview_not_implemented",
+      "evidence": [
+        "testFixtureWorkbenchEntryShowsGraphPreview"
+      ],
+      "limitations": [
+        "no edge-ingestion pipeline is claimed"
+      ]
+    },
+    {
+      "id": "V4-1",
+      "status": "verified_local_contract_and_fixture_ui",
+      "evidence": [
+        "testLocalSearchReportsProvenanceAndFacets",
+        "testNormalizedSearchTokenIndexReturnsBoundedRealPaperIDs",
+        "testFixtureUnifiedLocalSearchShowsProvenanceWithoutProviderRequest"
+      ]
+    },
+    {
+      "id": "V4-2",
+      "status": "verified_local_contract_and_fixture_ui",
+      "evidence": [
+        "testFixtureResearchHomeUsesLocalSnapshotCounts",
+        "testFixtureReadAndFavoriteControlsPerformVisibleLocalMutation"
+      ]
+    },
+    {
+      "id": "V4-3",
+      "status": "verified_local_contract",
+      "evidence": [
+        "testResearchBundleVerifyDryRunAndRestoreToNewTarget",
+        "testBundleManifestHashAndTamperDetectionContract"
+      ],
+      "limitations": [
+        "no real user-library restore was attempted"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "id": "A",
+      "status": "passed_local",
+      "evidence": "SwiftPM plus Xcode Debug/Release/analyze warnings-as-errors"
+    },
+    {
+      "id": "B",
+      "status": "passed_local",
+      "evidence": "latest verifier SwiftPM 89 executed, 0 skipped, 0 failed"
+    },
+    {
+      "id": "C",
+      "status": "fixture_passed_live_not_run",
+      "evidence": "live-shaped fixture contracts; no current live smoke claim"
+    },
+    {
+      "id": "D",
+      "status": "passed_local_contract",
+      "evidence": "normalized store, backup/migration tests and actual in-memory benchmark",
+      "limitations": [
+        "disk-backed performance/migration drill not run"
+      ]
+    },
+    {
+      "id": "E",
+      "status": "passed_current_source_composite_fixture_ui",
+      "evidence": "same-source non-UI verifier 20260825T234536Z-47201 plus readable Xcode GUI fixture aggregate LatticeLensUITests 20/20/0/0",
+      "limitations": [
+        "The CLI UI stage was skipped intentionally; this is front-end Xcode evidence, not a scripted UI-pass claim.",
+        "VoiceOver/manual and real-library acceptance are not established."
+      ]
+    },
+    {
+      "id": "F",
+      "status": "passed_local_contract",
+      "evidence": "shared blob, anchors, validators and preflight tests"
+    },
+    {
+      "id": "G",
+      "status": "passed_local_fixture",
+      "evidence": "read/favorite/note/tag/sync fixture flows"
+    },
+    {
+      "id": "K",
+      "status": "passed_local_fixture",
+      "evidence": "semantic Radar diff and owned pause fixture flow"
+    },
+    {
+      "id": "L",
+      "status": "passed_local_fixture",
+      "evidence": "atomic Compare extractor/validator and fixture workspace flow"
+    },
+    {
+      "id": "M",
+      "status": "passed_local_fixture",
+      "evidence": "annotation/export contracts and fixture Notebook flow"
+    },
+    {
+      "id": "O",
+      "status": "passed_local_fixture",
+      "evidence": "local search provenance, facets and 20k in-memory normalized index benchmark"
+    },
+    {
+      "id": "P",
+      "status": "passed_local_fixture",
+      "evidence": "Research Home and read/favorite durable fixture flows"
+    },
+    {
+      "id": "Q",
+      "status": "passed_local_contract",
+      "evidence": "bundle verify, tamper, dry-run and restore-to-new-target tests"
+    },
+    {
+      "id": "R",
+      "status": "passed_current_source_same_mac_fixture_archive",
+      "evidence": "Release-v4-local-final-20260826: manifest validation hash matches source; current fixture UI 20/20/0/0; fixture archive smoke passed twice (creation plus independent recheck)",
+      "limitations": [
+        "Manual browse/search/note/PDF/Compare acceptance and a disposable user-library migration/backup/rollback drill remain pending.",
+        "This is unsigned same-Mac evidence, not Developer ID, notarization, Gatekeeper, VoiceOver, cross-machine, or public-release evidence."
+      ]
+    }
+  ],
+  "completion_verdict": "current_source_local_feature_complete_for_automated_contract_and_fixture_scope; a no-overwrite unsigned same-Mac archive has passed fixture smoke; manual local acceptance, a disposable user-library migration/rollback drill, live services, signing, notarization, Gatekeeper, VoiceOver, and cross-machine installation remain unverified",
+  "current_ui_evidence": {
+    "source_hash": "dd72df978b0c3872539bd46fce271a45f3965cd202a6c014e551185a225d9907",
+    "current_workspace_bundle": "validation-v4-ui.xcresult",
+    "historical_workspace_bundle": "validation-v4-ui-historical-20260825T103443Z-24874.xcresult",
+    "bundle_tree_sha256": "0f91c533be90d870741231e562061031cd1a6b3b9c4d31701178460fc9cf48ca",
+    "xcode_action": {
+      "total": 109,
+      "passed": 108,
+      "failed": 0,
+      "skipped": 1,
+      "result": "Passed"
+    },
+    "ui_target": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0,
+      "skipped": 0,
+      "result": "Passed"
+    }
+  },
+  "current_archive": {
+    "directory": "Release-v4-local-final-20260826",
+    "artifact_class": "same_mac_unsigned_local_artifact",
+      "manifest_sha256": "8fa9d662b0dca7924a9db111ace5dc00bf0c8070f18e586b36f817494549d98a",
+    "payload_sha256": "f684c532870e755705655dfe86e249edcc6de0b3d1cf22eb20c59c88915f338b",
+    "executable_sha256": "57eec61d1fb263531537d5384161fb3bcf02cb2fab34ddda17bdd0b36e701429",
+    "architectures": [
+      "x86_64",
+      "arm64"
+    ],
+    "validation_matches_current_source": true,
+    "fixture_smoke": "passed at archive creation and rechecked after final manifest provenance update",
+    "local_candidate": "pending_manual_local_drill"
+  }
+}

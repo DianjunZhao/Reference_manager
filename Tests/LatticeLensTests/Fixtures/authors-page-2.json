@@ -1,0 +1,16 @@
+{
+  "hits": {
+    "total": 3,
+    "hits": [
+    {
+      "id": 22,
+      "metadata": {
+        "name": {"value": "Bali, Gunnar"},
+        "ids": [{"schema": "INSPIRE BAI", "value": "G.Bali.1"}],
+        "arxiv_categories": ["hep-lat"]
+      }
+    }
+    ]
+  },
+  "links": {}
+}

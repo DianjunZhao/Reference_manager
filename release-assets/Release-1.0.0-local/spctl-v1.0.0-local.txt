@@ -1,0 +1,1 @@
+$PROJECT_ROOT/.codex-task-tmp-v5-package-20260828T124508Z-7867-xcp9Bo/DerivedData/Build/Products/Release/LatticeLens.app: rejected

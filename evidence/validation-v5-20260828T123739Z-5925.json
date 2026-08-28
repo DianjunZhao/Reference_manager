@@ -1,0 +1,79 @@
+{
+  "schema_version": "latticelens-verify-v5",
+  "product_version": "1.0.0",
+  "build_number": 100,
+  "local_only": true,
+  "run_id": "20260828T123739Z-5925",
+  "xcode_timeout_seconds": 600,
+  "ui_timeout_seconds": 600,
+  "build_input_tree_sha256": "17fa101852400699a9a9f3dd1740e1608aaaf0d34e047caa12f71192d50a7df5",
+  "ui_evidence": {
+    "scope": "selected_ui_delta_once_per_case",
+    "normal_case_count": 1,
+    "large_case_count": 1
+  },
+  "mandatory": {
+    "swiftpm": true,
+    "actual_swiftdata_benchmark": true,
+    "swiftpm_release": true,
+    "xcode_build_analyze": true,
+    "xcode_unit": true,
+    "ui_normal": true,
+    "ui_large_scroll_accessibility": true,
+    "typed_store": true,
+    "migration_backup_rollback": true,
+    "physics_validator": true,
+    "radar": true,
+    "compare": true,
+    "notebook": true,
+    "bundle": true,
+    "icon_version_resources": true,
+    "dmg_smoke": true,
+    "cleanup": true
+  },
+  "migration_evidence": {
+    "source_origin": "synthetic_v7_benchmark",
+    "source_store_name": "synthetic-v7-benchmark-disposable.store",
+    "sha256": "ca4c40ece5fefda459c35235f8152f6f8d6aadd4254ebb00ca02bcdf96a044b0"
+  },
+  "benchmarks": {
+    "warm_search_p95_ms": 26,
+    "disk_cold_open_p95_ms": 23,
+    "disk_single_row_mutation_p95_ms": 3,
+    "v7_warm_search_p95_ms": 27
+  },
+  "artifacts": {
+    "package_manifest": {
+      "path": "Release-1.0.0-local/manifest-v1.0.json",
+      "sha256": "db7c4f483f1e03aac710fe09b8fe02bbec76c6dac4678beec0dfdce67c315449"
+    }
+  },
+  "manual": {
+    "voiceover": false,
+    "lqcd_rubric": false,
+    "applications_install": false,
+    "disposable_library_drill": false,
+    "status": "not_supplied"
+  },
+  "cleanup": {
+    "status": "applied",
+    "approvalManifest": {
+      "path": "CleanupManifest-v1.0-approved-apply-20260828T030918Z.json",
+      "sha256": "2b00e57a4ad4a50a2f397e558fd62b5c085f3c58654fcf0a121acf780b04cfcf"
+    },
+    "applyReceipt": {
+      "path": "cleanup-apply-receipt-v1.0-20260828T123739Z-5925.json",
+      "sha256": "68b797ad154a1a18424595f7dcb498a5805d8209708d9ac6a3ec3f3f4408cfae"
+    },
+    "deletedBytes": 0
+  },
+  "optional": {
+    "live_inspire": "not_run",
+    "live_llm": "not_required",
+    "developer_id": "out_of_scope",
+    "notarization": "out_of_scope",
+    "cross_machine": "out_of_scope"
+  },
+  "failures": 1,
+  "task_scratch": "removed_after_summary"
+}

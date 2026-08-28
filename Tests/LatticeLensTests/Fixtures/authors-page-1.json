@@ -1,0 +1,26 @@
+{
+  "hits": {
+    "total": 3,
+    "hits": [
+    {
+      "id": "2010363",
+      "metadata": {
+        "name": {"value": "Zhao, Dian-Jun"},
+        "native_names": [{"value": "赵殿军"}],
+        "ids": [{"schema": "INSPIRE BAI", "value": "D.Zhao.1"}],
+        "arxiv_categories": ["hep-lat"]
+      }
+    },
+    {
+      "id": 21,
+      "metadata": {
+        "name": {"value": "Álvarez, Ana-Maria"},
+        "native_names": [{"value": "阿娜"}],
+        "ids": [{"schema": "INSPIRE BAI", "value": "A.Alvarez.1"}],
+        "arxiv_categories": ["hep-lat"]
+      }
+    }
+    ]
+  },
+  "links": {"next": "https://inspirehep.net/api/authors?page=2"}
+}

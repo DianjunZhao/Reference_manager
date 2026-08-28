@@ -1,0 +1,118 @@
+{
+  "schema_version": "latticelens-v5-completion-checklist",
+  "product": "LatticeLens",
+  "product_version": "1.0.0",
+  "status_date": "2026-08-28",
+  "verdict": "provenance_valid_automatic_candidate_manual_landing_pending",
+  "evidence_boundary": {
+    "current_automatic_verifier": "validation-v5-20260828T023235Z-134.json",
+    "run_id": "20260828T023235Z-134",
+    "build_input_tree_sha256": "f1458e59d1aa5b3703bff11ec07679ffda1786525ce9994c2540cef163d5a711",
+    "result": "All automatic product gates were true before manual acceptance was supplied. The candidate package is provenance-valid, but any tracked input change requires a new verification/package cycle before manual promotion.",
+    "superseded_automatic_verifier": "validation-v5-20260827T142210Z-50893.json",
+    "superseded_reason": "The older package had an empty build-input manifest and remains historical, not a release candidate."
+  },
+  "automatic_gates": {
+    "swiftpm": true,
+    "actual_swiftdata_benchmark": true,
+    "swiftpm_release": true,
+    "xcode_build_analyze": true,
+    "xcode_unit": true,
+    "ui_normal": {
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0
+    },
+    "ui_large_scroll_accessibility": {
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    "typed_store": true,
+    "migration_backup_rollback": true,
+    "physics_validator": true,
+    "radar": true,
+    "compare": true,
+    "notebook": true,
+    "bundle": true,
+    "icon_version_resources": true,
+    "dmg_smoke": true
+  },
+  "benchmark": {
+    "dataset": {
+      "authors": 2000,
+      "papers": 20000,
+      "paper_author_links": 100000,
+      "chunks": 10000,
+      "full_text_documents": 100,
+      "radar_events": 500,
+      "annotations": 200,
+      "tags": 100,
+      "collections": 100
+    },
+    "p95_ms": {
+      "warm_search": 31,
+      "disk_cold_open": 28,
+      "single_row_mutation": 3,
+      "v7_warm_search": 27
+    },
+    "scope": "actual project SwiftData disk benchmark, not a Python or in-memory substitute"
+  },
+  "synthetic_disposable_migration": {
+    "source_origin": "synthetic_v7_benchmark",
+    "source_store_name": "synthetic-v7-benchmark-disposable.store",
+    "source_main_store_sha256": "3b7146cefdd3cc884b71b03cfaeeaa4b20848d46f60b09be95e7402f57f71c73",
+    "evidence": "DisposableMigrationV7VerifierOutput-final-20260828T023235Z/LatticeLens-V9-Disposable-Drill-F6AD5714-2804-4DC8-BF75-E7F9245418C6/migration-v7-disposable-drill.json",
+    "scope": "synthetic disposable source only; not a real-user-library or installed-app rollback attestation"
+  },
+  "local_artifact": {
+    "status": "provenance_valid_automatic_candidate_pending_manual_acceptance",
+    "release_directory": "Release-1.0.0-local",
+    "manifest": "Release-1.0.0-local/manifest-v1.0.json",
+    "manifest_sha256": "2564c849ad05beea10463ea09f75fc707a5a74fb0ab49d9f211b8c252d74dd36",
+    "dmg_file": "LatticeLens-1.0.0-local.dmg",
+    "dmg_sha256": "82903e434cfc213068cfa8019c3bde9b5507511606033bf3497a7f257739d99b",
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ],
+    "signature_class": "ad_hoc_local",
+    "developer_id": false,
+    "notarized": false,
+    "spctl_status": "rejected_or_unavailable",
+    "smoke": "Mounted-DMG verification, project-local inspection copy and fixture/no-network launch passed. It is not a public, notarized or cross-Mac release."
+  },
+  "cleanup": {
+    "dry_run_manifest": "CleanupManifest-v1.0-20260828T025853Z.json",
+    "dry_run_manifest_sha256": "9d92fba57be7e2531f32df8ebc8eecbe7efb928b7c6938e29c4b557bcd4a3f8c",
+    "approved_manifest": "CleanupManifest-v1.0-approved-apply-20260828T030918Z.json",
+    "approved_manifest_sha256": "2b00e57a4ad4a50a2f397e558fd62b5c085f3c58654fcf0a121acf780b04cfcf",
+    "apply_receipt": "CleanupApplyReceipt-v1.0-20260828T030918Z.json",
+    "deleted_targets": 207,
+    "already_absent_targets": 0,
+    "deleted_bytes": 40327176192,
+    "status": "approved_whitelist_applied"
+  },
+  "required_human_evidence": {
+    "manual_worksheet": "MANUAL_V5_ACCEPTANCE.md",
+    "voiceover": "not_run",
+    "lqcd_rubric": "not_run",
+    "applications_install_rollback": "not_run",
+    "disposable_library_app_flow": "not_run",
+    "promotion_rule": "Do not synthesize a manual receipt. Bind an explicit user attestation to the exact mounted package manifest, then rerun the final verifier with that receipt and the approved cleanup manifest."
+  },
+  "out_of_scope_or_not_required": {
+    "live_inspire": "not_run",
+    "live_llm": "not_required",
+    "developer_id": "out_of_scope",
+    "notarization": "out_of_scope",
+    "cross_machine": "out_of_scope"
+  },
+  "safety": {
+    "active_library_touched": false,
+    "keychain_touched": false,
+    "applications_app_touched": false,
+    "real_research_data_touched": false,
+    "historical_evidence_promoted": false
+  }
+}

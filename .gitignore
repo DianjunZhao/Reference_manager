@@ -1,0 +1,28 @@
+# Build products and package-manager state
+/.build/
+/.swiftpm/
+/DerivedData/
+*.xcresult/
+*.xcarchive/
+*.xcuserstate
+xcuserdata/
+__pycache__/
+*.py[cod]
+
+# Isolated UI-test applications and disposable migration outputs
+/LatticeLens-UIFixture-*/
+/DisposableMigration*Output*/
+/UIEvidence-*/
+
+# Local validation runs and macOS metadata
+/validation-*.json
+/validation-*.xcresult
+/benchmark-*.json
+/cleanup-apply-receipt-*.json
+/.DS_Store
+/.codex-*
+
+# Keep binary distribution assets only under release-assets/ when intentionally committed.
+/Release-*/
+!/release-assets/
+!/release-assets/**

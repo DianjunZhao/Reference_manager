@@ -1,0 +1,44 @@
+{
+  "schema_version": "latticelens-package-manifest-v1.0",
+  "run_id": "20260828T124508Z-7867",
+  "generated_at_utc": "2026-08-28T12:46:56Z",
+  "artifact_class": "same_mac_local_ad_hoc",
+  "product_version": "1.0.0",
+  "build_number": 100,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "dmg_smoke": "passed",
+  "spctl_status": "rejected_or_unavailable",
+  "build_input_tree_sha256": "17fa101852400699a9a9f3dd1740e1608aaaf0d34e047caa12f71192d50a7df5",
+  "prepackage_validation": {
+    "source_project_path": ".build/verify-v5-20260828T123739Z-5925/prepackage-validation-v5.json",
+    "copied_file": "compact-validation/prepackage-validation-v5.json",
+    "sha256": "2db0a68490473ac15a46e4966ab0e5a444ed6cff31fff19a6f2c3b1ad78ab5cb"
+  },
+  "benchmark_evidence": {
+    "source_project_path": ".build/verify-v5-20260828T123739Z-5925/benchmark-v5.json",
+    "copied_file": "compact-validation/benchmark-v5.json",
+    "sha256": "ebff5780483910e298aa9b744ed755369bd058498ad38f7d9c15ddbf1a092f09"
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "5fc0337d9a88eafb9eabb7ead565351c10174f14478f8734d765fc143e1b8f82",
+    "icon_resource": "Contents/Resources/AppIcon.icns",
+    "dsym_uuids": "1E9597C9-77EA-3F8E-AF4D-875B198F076B (x86_64)\n35BFCC50-BB78-319B-A093-E735D7F810E5 (arm64)"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.0-local.dmg",
+      "sha256": "a88bccbddfc134c5f826343779ec5196cc2c8ec0ef8cc2b97049f56236f40c06"
+    },
+    "dsym": {
+      "file": "LatticeLens-1.0.0.dSYM.zip",
+      "sha256": "6fac79b32460374f6ebc2ab1b3fa758212112cffe1557d12502bd9e469796075"
+    }
+  },
+  "install_boundary": "DMG smoke used only a project-local inspection copy with fixture/no-network launch; it did not write /Applications or a user library."
+}

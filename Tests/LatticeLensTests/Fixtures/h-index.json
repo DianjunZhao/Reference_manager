@@ -1,0 +1,12 @@
+{
+  "aggregations": {
+    "citation-summary": {
+      "h-index": {
+        "value": {
+          "all": 21,
+          "published": 19
+        }
+      }
+    }
+  }
+}
