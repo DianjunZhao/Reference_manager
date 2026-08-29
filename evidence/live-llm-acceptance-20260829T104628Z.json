@@ -1,0 +1,27 @@
+{
+  "schema_version": "latticelens-live-llm-acceptance-v1",
+  "generated_at_utc": "2026-08-29T10:46:28Z",
+  "provider": "deepSeek",
+  "endpoint": "https://api.deepseek.com/v1",
+  "model": "deepseek-v4-flash",
+  "streaming": true,
+  "source_class": "synthetic_disposable_fixture",
+  "source_paper_id": 9900001,
+  "source_scope": "title_abstract_figure_captions",
+  "request_count": 1,
+  "transport": "production OpenAICompatibleClient over live HTTPS",
+  "workflow_stages": [
+    "SSE transport",
+    "deadline enforcement",
+    "paper-insight-v1 schema validation",
+    "InMemoryLibraryStore persistence"
+  ],
+  "result": "PASS",
+  "report_generated": true,
+  "report_persisted": true,
+  "api_key_recorded": false,
+  "real_research_material_sent": false,
+  "test_duration_seconds": 11.483,
+  "test_command": "DEEPSEEK_API_KEY=<environment variable> swift test --filter LiveProviderAcceptanceTests.testDeepSeekLiveProviderGeneratesSanitizedReport",
+  "note": "One-shot live acceptance used only a synthetic title/abstract with no real paper, PDF, figure pixels, or numeric claims. The temporary test source was removed after the run."
+}
