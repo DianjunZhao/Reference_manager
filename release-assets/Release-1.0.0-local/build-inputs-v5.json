@@ -1,4 +1,4 @@
-{"schema_version":"latticelens-build-input-v5-current","source_commit":"4fc9f89b70d9817428b6bd7cfc816682aa7b6651","files":[
+{"schema_version":"latticelens-build-input-v5-current","source_commit":"e4c69566b09ecb7590ece350753ce3043bab516a","files":[
 {"path":"AppIcon-contact-sheet.png","sha256":"3f6a2533befae57d813e086f02261b7102b8ae0678d9ea21634e80ebb95742d1"}
 ,
 {"path":"AppIcon-master.svg","sha256":"94ce9cf63ac40bae1c9875a70111317231c5ccc35e7450fdd827c6aa1971a155"}
@@ -107,7 +107,7 @@
 ,
 {"path":"Sources/LatticeLens/Core/Workbench/V3WorkbenchService.swift","sha256":"d22c5671d8ccf235728b0947d2ae4b793565829408b9a954b3ee99c6f08c9912"}
 ,
-{"path":"Sources/LatticeLens/Features/Authors/AuthorIndexService.swift","sha256":"eafd4bb66ed5123243cabad9ed04ca0bb7b5ac6843506e62026c9724ece8a306"}
+{"path":"Sources/LatticeLens/Features/Authors/AuthorIndexService.swift","sha256":"de3dbc963073a648e22c1f895b252b705ac4514fec3657bb686729d903e36cda"}
 ,
 {"path":"Sources/LatticeLens/Features/Library/PaperSyncService.swift","sha256":"a0440a174bb7029881abb92e5aad80da5f2ee236bd469d82b356541bf3cabca6"}
 ,

@@ -1,16 +1,16 @@
 {
   "schema_version": "latticelens-package-manifest-v1.1",
-  "run_id": "20260829T095542Z-final",
-  "generated_at_utc": "2026-08-29T09:55:42Z",
+  "run_id": "20260829T100819Z-final2",
+  "generated_at_utc": "2026-08-29T10:08:19Z",
   "artifact_class": "same_mac_local_ad_hoc",
   "product_version": "1.0.0",
   "build_number": 100,
   "source": {
     "repository": "github/Reference_manager",
-    "commit": "4fc9f89b70d9817428b6bd7cfc816682aa7b6651",
+    "commit": "e4c69566b09ecb7590ece350753ce3043bab516a",
     "working_tree_clean": true,
     "build_input_manifest": "build-inputs-v5.json",
-    "build_input_tree_sha256": "5ae164c04da00ba1bcca52314e73a35f395d80fc9888c8d527c9358643b1f578"
+    "build_input_tree_sha256": "4656408343ff836e4116338b18e3cce492f32a0030fd8fea5493fa6213b2a276"
   },
   "build": {
     "scheme": "LatticeLens",
@@ -24,7 +24,7 @@
   "app": {
     "bundle": "LatticeLens.app",
     "bundle_id": "org.latticelens.app",
-    "executable_sha256": "1aa518ec75954c318aa8226e2d8403b265c4154426b6ac8b5ca5341b7943607c",
+    "executable_sha256": "05ea50cb7f6afd07e81ce34713c454bec0b7cd551db39ffd782b12d608fa9f30",
     "version": "1.0.0",
     "build_number": 100
   },
@@ -39,15 +39,15 @@
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.0-local.dmg",
-      "sha256": "79847539fad7b29b90e5fc83f864865ec9d85e88eb5509be17ffd7ab85d92cea"
+      "sha256": "7499db41fda0f9e69361d77d189fa6848903ea4a3184cfafbb326a57d12582c0"
     },
     "dsym": {
       "file": "LatticeLens-1.0.0.dSYM.zip",
-      "sha256": "4dc5dc0da67dd59b6b0fb1d75304d217d9094665e7f6868a0490af618ac4aaf7"
+      "sha256": "1440f043f219f86937fc50ed1f19e5fe63662152ef92dbc5b835f00bf21fa09d"
     }
   },
   "supersedes": {
-    "previous_dmg_sha256": "92e9a29fc5d94a62402df6ed33aff4ba131885bc7c9740cdb9078904980b1f3d"
+    "previous_dmg_sha256": "79847539fad7b29b90e5fc83f864865ec9d85e88eb5509be17ffd7ab85d92cea"
   },
   "evidence_boundary": "Rebuilt from the current source commit. Historical v5 validation ledgers are not re-used as current-source proof."
 }
