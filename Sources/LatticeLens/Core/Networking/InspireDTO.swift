@@ -183,10 +183,21 @@ struct InspireLiteratureHit: Decodable, Sendable {
     struct PublicationInfo: Codable, Sendable {
         let pubinfoFreetext: String?
         let material: String?
+        /// INSPIRE normally sends an integer, but older records and mirrors
+        /// have emitted a decimal year as a string.  Decode both forms while
+        /// ignoring malformed values instead of rejecting the whole paper.
+        let year: Int?
 
         enum CodingKeys: String, CodingKey {
-            case pubinfoFreetext = "pubinfo_freetext"
-            case material
+            case pubinfoFreetext = "pubinfo_freetext", material, year
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            pubinfoFreetext = try container.decodeIfPresent(String.self, forKey: .pubinfoFreetext)
+            material = try container.decodeIfPresent(String.self, forKey: .material)
+            year = (try? container.decodeIfPresent(Int.self, forKey: .year)) ??
+                (try? container.decodeIfPresent(String.self, forKey: .year).flatMap(Int.init))
         }
     }
 
@@ -248,6 +259,9 @@ enum InspireMapper {
             return PaperAbstract(value: value, source: item.source)
         }
         let eprint = metadata.arxivEprints?.first
+        let publicationYear = metadata.publicationInfo?
+            .compactMap(\.year)
+            .first(where: { (1900...2200).contains($0) })
         let figures = (metadata.figures ?? []).compactMap { figure -> PaperFigure? in
             guard let key = figure.key, !key.isEmpty else { return nil }
             let url = figure.url.flatMap(URL.init(string:)).flatMap { $0.scheme?.lowercased() == "https" ? $0 : nil }
@@ -270,6 +284,7 @@ enum InspireMapper {
             abstracts: abstracts,
             preprintDate: parseDate(metadata.preprintDate),
             earliestDate: parseDate(metadata.earliestDate),
+            publicationYear: publicationYear,
             arxivID: eprint?.value,
             arxivCategories: eprint?.categories ?? [],
             doi: metadata.dois?.compactMap(\.value).first,

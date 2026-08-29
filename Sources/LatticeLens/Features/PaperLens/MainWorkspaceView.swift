@@ -276,7 +276,7 @@ private struct AuthorSidebar: View {
         // never reloaded as the user types, so search cannot start a request,
         // reset a selection, or briefly leave an out-of-date A-Z row visible.
         let ordinary = viewModel.authors.filter {
-            !$0.isSelf && $0.matches(search: localAuthorSearch)
+            !$0.isSelf && !$0.isTracked && $0.matches(search: localAuthorSearch)
         }
         let grouped = Dictionary(grouping: ordinary, by: \Author.sectionKey)
         return grouped.keys.sorted().map { key in
@@ -285,6 +285,15 @@ private struct AuthorSidebar: View {
                 return $0.preferredName.localizedStandardCompare($1.preferredName) == .orderedAscending
             })
         }
+    }
+
+    private var trackedAuthors: [Author] {
+        viewModel.authors
+            .filter { !$0.isSelf && $0.isTracked && $0.matches(search: localAuthorSearch) }
+            .sorted {
+                if $0.stableSortKey != $1.stableSortKey { return $0.stableSortKey < $1.stableSortKey }
+                return $0.preferredName.localizedStandardCompare($1.preferredName) == .orderedAscending
+            }
     }
 
     var body: some View {
@@ -350,6 +359,11 @@ private struct AuthorSidebar: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    if !trackedAuthors.isEmpty {
+                        Section("置顶作者") {
+                            ForEach(trackedAuthors) { AuthorRow(author: $0).tag($0.recid).id($0.recid) }
+                        }
+                    }
                     ForEach(authorSections.filter { $0.0 != "#" }, id: \.0) { section, authors in
                         Section(section) {
                             ForEach(authors) { AuthorRow(author: $0).tag($0.recid).id($0.recid) }
@@ -398,7 +412,7 @@ private struct AuthorSidebar: View {
                             .buttonStyle(.link)
                             .accessibilityIdentifier("clearAuthorSearch")
                     }
-                    Button("构建 hep-lat 索引") { viewModel.buildAuthorIndex() }
+                    Button("构建 hep-lat / hep-th 作者索引") { viewModel.buildAuthorIndex() }
                         .buttonStyle(.link)
                         .accessibilityIdentifier("buildAuthorIndex")
                     if viewModel.isAuthorIndexRunning {
@@ -452,7 +466,7 @@ private struct SyncCenterView: View {
             // moving the only close action out of view.
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
-                    SyncJobRow(title: "hep-lat 作者索引", status: viewModel.authorIndexStatus.message) {
+                    SyncJobRow(title: "hep-lat / hep-th 作者索引", status: viewModel.authorIndexStatus.message) {
                         if viewModel.isAuthorIndexRunning {
                             Button("暂停") { viewModel.pauseAuthorIndex() }
                             Button("取消", role: .destructive) { viewModel.cancelAuthorIndex() }
@@ -533,9 +547,14 @@ private struct AuthorRow: View {
                     .background(.quaternary, in: Capsule())
                     .help("INSPIRE h(all), self-citations included, updated \(h.fetchedAt.formatted())")
             } else if author.hIndexState == .failed { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange) }
-            if author.isTracked { Image(systemName: "star").foregroundStyle(.secondary) }
+            if author.isTracked {
+                Image(systemName: "star.fill").foregroundStyle(.tint)
+                    .accessibilityLabel("已置顶作者")
+            }
         }
         .accessibilityIdentifier("authorRow-\(author.recid)")
+        .accessibilityLabel(author.isTracked ? "置顶作者 \(author.preferredName)" : author.preferredName)
+        .accessibilityValue(author.hIndex.map { "h-index \($0.all)" } ?? "h-index 未验证")
     }
 }
 
@@ -695,6 +714,7 @@ private struct PaperRow: View {
             HStack(spacing: 6) {
                 if let arxiv = paper.arxivID { Text("arXiv:\(arxiv)") }
                 if let category = paper.arxivCategories.first { Text(category) }
+                if let publicationYear = paper.publicationYear { Text("发表 \(publicationYear)") }
                 if let count = paper.citationCount { Text("引用 \(count)") }
             }
             .font(.caption).foregroundStyle(.secondary)

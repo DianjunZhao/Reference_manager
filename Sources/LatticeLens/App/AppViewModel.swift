@@ -431,7 +431,7 @@ final class AppViewModel: ObservableObject {
         authorIndexStopIntent = .cancelled
         let session = UUID()
         authorIndexSessionID = session
-        authorIndexStatus = SyncStatus(phase: .syncingMetadata, message: "正在构建 hep-lat 作者索引", completedPages: 0,
+        authorIndexStatus = SyncStatus(phase: .syncingMetadata, message: "正在构建 hep-lat / hep-th 作者索引", completedPages: 0,
                                        successfulRecords: 0, failedRecords: 0, lastUpdatedAt: Date())
         authorIndexTask = Task { [weak self] in
             guard let self else { return }
@@ -1989,7 +1989,7 @@ final class AppViewModel: ObservableObject {
         // races an actor reload or changes the selected author/paper state.
         let projection = await store.authorSidebarProjection()
         authors = projection.visibleAuthors(search: "")
-        let candidates = projection.authors.filter(\.isHepLatCandidate)
+        let candidates = projection.authors.filter(\.isHIndexCandidate)
         authorIndexProgress = AuthorIndexProgress(verified: candidates.filter { $0.hIndex != nil }.count,
                                                   candidates: candidates.count,
                                                   failed: candidates.filter { $0.hIndexState == .failed }.count,

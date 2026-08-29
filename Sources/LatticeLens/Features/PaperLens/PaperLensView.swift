@@ -117,6 +117,7 @@ private struct PaperHeader: View {
             if let arxiv = paper.arxivID { Text("arXiv:\(arxiv)") }
             HStack(spacing: 8) {
                 if let category = paper.arxivCategories.first { Text(category) }
+                if let publicationYear = paper.publicationYear { Text("发表 \(publicationYear)") }
                 if let citations = paper.citationCount { Text("引用 \(citations)") }
                 if let updated = paper.updated { Text("更新 \(updated.formatted(date: .abbreviated, time: .shortened))") }
             }
@@ -370,6 +371,7 @@ private struct SourceTab: View {
                         SourceRow(name: "DOI", value: paper.doi ?? "未提供")
                         SourceRow(name: "categories", value: paper.arxivCategories.joined(separator: ", "))
                         SourceRow(name: "publication", value: paper.publicationStatus ?? "未提供")
+                        SourceRow(name: "publication year (INSPIRE)", value: paper.publicationYear.map(String.init) ?? "未提供")
                         SourceRow(name: "record updated", value: paper.updated?.formatted(date: .abbreviated, time: .shortened) ?? "未提供")
                         SourceRow(name: "figures", value: String(paper.figures.count))
                     }

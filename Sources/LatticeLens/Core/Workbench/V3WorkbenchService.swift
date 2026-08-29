@@ -20,7 +20,7 @@ struct V3RevisionHasher: Sendable {
         let abstractHash = StableHash.sha256(paper.abstracts.map { "\($0.source ?? "")|\($0.value)" }.joined(separator: "\n"))
         let documentsHash = StableHash.sha256(paper.documents.map { "\($0.key)|\($0.url?.absoluteString ?? "")|\($0.filename ?? "")|\($0.isFullText)" }.sorted().joined(separator: "\n"))
         let figuresHash = StableHash.sha256(paper.figures.map { "\($0.key)|\($0.url?.absoluteString ?? "")|\($0.caption ?? "")|\($0.filename ?? "")" }.sorted().joined(separator: "\n"))
-        let publicationHash = StableHash.sha256("\(paper.publicationStatus ?? "")|\(paper.doi ?? "")|\(paper.arxivID ?? "")")
+        let publicationHash = StableHash.sha256("\(paper.publicationStatus ?? "")|\(paper.publicationYear.map(String.init) ?? "")|\(paper.doi ?? "")|\(paper.arxivID ?? "")")
         let recordHash = StableHash.sha256([
             titleHash, abstractHash, String(paper.citationCount ?? -1), documentsHash, figuresHash,
             publicationHash, paper.updated?.ISO8601Format() ?? ""
@@ -60,7 +60,7 @@ struct V3RadarDiff: Sendable {
         if before.figuresHash != after.figuresHash { add(.newFigure, ["figures"]) }
         if !revisionFields.isEmpty { add(.recordRevised, revisionFields) }
         if let beforePaper, let afterPaper {
-            if beforePaper.publicationStatus != afterPaper.publicationStatus || beforePaper.doi != afterPaper.doi {
+            if beforePaper.publicationStatus != afterPaper.publicationStatus || beforePaper.publicationYear != afterPaper.publicationYear || beforePaper.doi != afterPaper.doi {
                 if !events.contains(where: { $0.eventKind == .publicationChanged }) { add(.publicationChanged, ["publication"]) }
             }
         }

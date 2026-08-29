@@ -34,9 +34,9 @@
 > [VALIDATION_V2.md]($PROJECT_ROOT/VALIDATION_V2.md)
 > for the audited ledger; it is not a v2 public-release claim.
 
-LatticeLens 是一个原生 macOS SwiftUI 文献工作台，面向 INSPIRE 的 hep-lat 作者与论文资料浏览。它实现了 `INSPIRE文献管理器_开工方案_v1.md` 冻结的 v1 约定：
+LatticeLens 是一个原生 macOS SwiftUI 文献工作台，面向 INSPIRE 的 hep-lat / hep-th 作者与论文资料浏览。它实现了 `INSPIRE文献管理器_开工方案_v1.md` 冻结的 v1 约定：
 
-- 作者候选仅指 `author.arxiv_categories` 含 `hep-lat` 的 INSPIRE author record；不是历史 cross-list 合作者全集。
+- 作者候选仅指 `author.arxiv_categories` 含 `hep-lat` 或 `hep-th` 的 INSPIRE author record；完成 h-index 校验后仅展示 `h > 20`，不是历史 cross-list 合作者全集。
 - 固定 INSPIRE recid `2010363` 为“我的主页”，无论 h-index 都置顶。
 - 正式作者列表仅包含经验证的 `INSPIRE h(all, including self-citations) > 20`。`20` 不合格；请求失败保持 `failed/unknown`，绝不写成 `0` 或“不合格”。
 - Paper Lens 的证据范围严格为标题、摘要和 INSPIRE figure captions。v1 不读取 PDF 全文，也不声称模型看过图像像素。
@@ -58,7 +58,7 @@ cd $PROJECT_ROOT
 swift run LatticeLens
 ```
 
-首启时会优先请求并缓存本人作者 record；点击“构建 hep-lat 索引”后才会分页加载候选并以最多两个并发请求计算 h-index。选择作者时先显示本地论文，只有尚无本地数据才自动同步；分页每成功一页立即 upsert 与保存 checkpoint。无 abstract 的记录仅在用户同意后发送标题以生成严格的中文标题；不会生成物理解释或标题扩写的论文结论。
+首启时会优先请求并缓存本人作者 record；点击“构建 hep-lat / hep-th 作者索引”后才会分页加载候选并以最多两个并发请求计算 h-index。选择作者时先显示本地论文，只有尚无本地数据才自动同步；分页每成功一页立即 upsert 与保存 checkpoint。已关注作者会在“置顶作者”区保持可见。无 abstract 的记录仅在用户同意后发送标题以生成严格的中文标题；不会生成物理解释或标题扩写的论文结论。
 
 ## 项目结构
 

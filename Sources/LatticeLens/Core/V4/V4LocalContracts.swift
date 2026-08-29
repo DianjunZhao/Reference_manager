@@ -335,7 +335,11 @@ struct V4AnalysisTimeouts: Sendable, Equatable {
     let firstContent: TimeInterval
     let idle: TimeInterval
     let hard: TimeInterval
-    static let `default` = V4AnalysisTimeouts(connect: 10, firstContent: 30, idle: 30, hard: 300)
+    /// Real providers may spend more than 30 s preparing a long paper report
+    /// or pause between SSE chunks.  These finite budgets avoid false idle
+    /// failures while retaining a hard upper bound and the one-request
+    /// fail-closed contract.
+    static let `default` = V4AnalysisTimeouts(connect: 30, firstContent: 120, idle: 120, hard: 600)
 }
 
 /// A deadline identifies the transport phase that failed.  It deliberately

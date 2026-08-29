@@ -268,7 +268,7 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
                                responseFormat: profile.provider == .deepSeek ? ResponseFormat(type: "json_object") : nil)
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: profile.provider)
         request.httpMethod = "POST"
-        request.timeoutInterval = 30
+        request.timeoutInterval = V4AnalysisTimeouts.default.hard
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         if profile.usesStreaming {
@@ -280,10 +280,19 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
             var result = ""
             var responseBytes = 0
             var receivedFirstByte = false
+            var lastActivityNotification = Date.distantPast
             for try await byte in bytes {
                 if !receivedFirstByte {
                     receivedFirstByte = true
                     await onTransportState(.receivedFirstContent)
+                    lastActivityNotification = Date()
+                } else if Date().timeIntervalSince(lastActivityNotification) >= 1 {
+                    // SSE keep-alives/comments are transport activity even
+                    // when they do not yield a decoded delta.  Feed a bounded
+                    // heartbeat to the deadline monitor so a healthy stream
+                    // is not misclassified as idle during long generations.
+                    await onTransportState(.receivedFirstContent)
+                    lastActivityNotification = Date()
                 }
                 for delta in try parser.consume(Data([byte])) {
                     responseBytes += delta.lengthOfBytes(using: .utf8)
@@ -305,10 +314,15 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
             await onTransportState(.waitingFirstContent)
             var data = Data()
             var receivedFirstByte = false
+            var lastActivityNotification = Date.distantPast
             for try await byte in bytes {
                 if !receivedFirstByte {
                     receivedFirstByte = true
                     await onTransportState(.receivedFirstContent)
+                    lastActivityNotification = Date()
+                } else if Date().timeIntervalSince(lastActivityNotification) >= 1 {
+                    await onTransportState(.receivedFirstContent)
+                    lastActivityNotification = Date()
                 }
                 data.append(byte)
                 guard data.count <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("非流式响应超过本地字节上限") }
@@ -357,7 +371,7 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
         ]
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: profile.provider)
         request.httpMethod = "POST"
-        request.timeoutInterval = 30
+        request.timeoutInterval = V4AnalysisTimeouts.default.hard
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
         await onTransportState(.waitingFirstContent)
@@ -395,8 +409,8 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
 
     private static func makeSafeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 120
+        configuration.timeoutIntervalForRequest = V4AnalysisTimeouts.default.hard
+        configuration.timeoutIntervalForResource = V4AnalysisTimeouts.default.hard + 60
         configuration.httpShouldSetCookies = false
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration, delegate: RedirectBlockingDelegate(), delegateQueue: nil)

@@ -14,7 +14,7 @@ final class V2RecoveryTests: XCTestCase {
         let store = InMemoryLibraryStore()
         let next = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors?page=2"))
         try await store.save(checkpoint: SyncCheckpoint(jobID: AuthorIndexService.candidateJobID,
-                                                         jobKind: "author-candidates", query: "arxiv_categories:hep-lat",
+                                                         jobKind: "author-candidates", query: AuthorIndexService.candidateQuery,
                                                          generationID: "resume", nextURL: next, completedPages: 1,
                                                          successfulRecords: 2, state: .failed))
         let client = InspireClient(transport: SequentialTransport([try fixtureData("authors-page-2")]))

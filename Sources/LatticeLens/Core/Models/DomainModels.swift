@@ -53,6 +53,11 @@ struct Author: Codable, Hashable, Identifiable, Sendable {
     var id: Int { recid }
     var isSelf: Bool { recid == ProductContract.selfAuthorRecid }
     var isHepLatCandidate: Bool { arxivCategories.contains("hep-lat") }
+    var isHepThCandidate: Bool { arxivCategories.contains("hep-th") }
+    /// Author-index eligibility is the union of the two supported INSPIRE
+    /// arXiv categories.  Keep this as one derived predicate so filtering,
+    /// progress counters and generation membership cannot silently diverge.
+    var isHIndexCandidate: Bool { isHepLatCandidate || isHepThCandidate }
     var isVisibleInQualifiedList: Bool { isSelf || hIndexState == .qualified }
 
     var sectionKey: String {
@@ -125,6 +130,7 @@ struct Paper: Codable, Hashable, Identifiable, Sendable {
     var abstracts: [PaperAbstract]
     var preprintDate: Date?
     var earliestDate: Date?
+    var publicationYear: Int?
     var arxivID: String?
     var arxivCategories: [String]
     var doi: String?
@@ -142,10 +148,25 @@ struct Paper: Codable, Hashable, Identifiable, Sendable {
     var id: Int { literatureID }
     var displayTitle: String { titles.first?.value ?? "Untitled record \(literatureID)" }
     var preferredAbstract: String? { abstracts.first?.value }
-    var timelineDate: Date? { preprintDate ?? earliestDate }
+    /// INSPIRE's publication year is authoritative when present.  A paper's
+    /// preprint date remains available for provenance and is only used when no
+    /// publication year was supplied by the record.
+    var timelineDate: Date? {
+        if let publicationYear, (1900...2200).contains(publicationYear) {
+            var components = DateComponents()
+            components.calendar = Calendar(identifier: .gregorian)
+            components.timeZone = TimeZone(secondsFromGMT: 0)
+            components.year = publicationYear
+            components.month = 1
+            components.day = 1
+            if let date = components.calendar?.date(from: components) { return date }
+        }
+        return preprintDate ?? earliestDate
+    }
     var timelineYear: Int { Calendar.current.component(.year, from: timelineDate ?? firstSeenAt) }
 
     init(literatureID: Int, titles: [PaperTitle], abstracts: [PaperAbstract], preprintDate: Date?, earliestDate: Date?,
+         publicationYear: Int? = nil,
          arxivID: String?, arxivCategories: [String], doi: String?, citationCount: Int?, publicationStatus: String?,
          updated: Date?, figures: [PaperFigure], contributors: [PaperContributor] = [], documents: [PaperDocument] = [],
          firstSeenAt: Date, isRead: Bool, readAt: Date? = nil, isFavorite: Bool = false) {
@@ -154,6 +175,7 @@ struct Paper: Codable, Hashable, Identifiable, Sendable {
         self.abstracts = abstracts
         self.preprintDate = preprintDate
         self.earliestDate = earliestDate
+        self.publicationYear = publicationYear
         self.arxivID = arxivID
         self.arxivCategories = arxivCategories
         self.doi = doi
@@ -170,7 +192,7 @@ struct Paper: Codable, Hashable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case literatureID, titles, abstracts, preprintDate, earliestDate, arxivID, arxivCategories, doi, citationCount
+        case literatureID, titles, abstracts, preprintDate, earliestDate, publicationYear, arxivID, arxivCategories, doi, citationCount
         case publicationStatus, updated, figures, contributors, documents, firstSeenAt, isRead, readAt, isFavorite
     }
 
@@ -182,6 +204,7 @@ struct Paper: Codable, Hashable, Identifiable, Sendable {
             abstracts: try values.decodeIfPresent([PaperAbstract].self, forKey: .abstracts) ?? [],
             preprintDate: try values.decodeIfPresent(Date.self, forKey: .preprintDate),
             earliestDate: try values.decodeIfPresent(Date.self, forKey: .earliestDate),
+            publicationYear: try values.decodeIfPresent(Int.self, forKey: .publicationYear),
             arxivID: try values.decodeIfPresent(String.self, forKey: .arxivID),
             arxivCategories: try values.decodeIfPresent([String].self, forKey: .arxivCategories) ?? [],
             doi: try values.decodeIfPresent(String.self, forKey: .doi),

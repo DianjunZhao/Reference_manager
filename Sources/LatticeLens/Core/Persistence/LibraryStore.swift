@@ -10,11 +10,14 @@ struct LibraryAuthorSidebarProjection: Sendable {
     func visibleAuthors(search: String) -> [Author] {
         authors
             .filter { author in
-                author.isSelf || ((activeMembership == nil || activeMembership!.contains(author.recid)) &&
-                    author.isVisibleInQualifiedList && author.matches(search: search))
+                author.isSelf || (author.matches(search: search) &&
+                    ((author.isTracked && author.hIndexState != .rejected) ||
+                     ((activeMembership == nil || activeMembership!.contains(author.recid)) &&
+                      author.isVisibleInQualifiedList)))
             }
             .sorted { lhs, rhs in
                 if lhs.isSelf != rhs.isSelf { return lhs.isSelf }
+                if lhs.isTracked != rhs.isTracked { return lhs.isTracked }
                 if lhs.stableSortKey != rhs.stableSortKey { return lhs.stableSortKey < rhs.stableSortKey }
                 return lhs.preferredName.localizedStandardCompare(rhs.preferredName) == .orderedAscending
             }
@@ -658,7 +661,8 @@ extension LibrarySnapshot {
     private func paperMetadataChanged(from old: Paper, to new: Paper) -> Bool {
         old.updated != new.updated || old.titles != new.titles || old.abstracts != new.abstracts ||
         old.citationCount != new.citationCount || old.figures != new.figures ||
-        old.documents != new.documents || old.contributors != new.contributors || old.publicationStatus != new.publicationStatus
+        old.documents != new.documents || old.contributors != new.contributors ||
+        old.publicationStatus != new.publicationStatus || old.publicationYear != new.publicationYear
     }
 }
 

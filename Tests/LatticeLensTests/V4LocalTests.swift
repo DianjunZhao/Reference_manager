@@ -622,7 +622,7 @@ final class V4LocalTests: XCTestCase {
                             arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .unknown,
                             isTracked: false, lastSyncedAt: nil)
         var checkpoint = SyncCheckpoint(jobID: AuthorIndexService.hIndexJobID, jobKind: "author-h-index",
-                                        query: "arxiv_categories:hep-lat", generationID: "typed-generation",
+                                        query: AuthorIndexService.candidateQuery, generationID: "typed-generation",
                                         pendingIDs: [author.recid], startedAt: startedAt, updatedAt: startedAt,
                                         activeMembership: [], stagingMembership: [author.recid])
         var generation = AuthorIndexGeneration(id: checkpoint.generationID, query: checkpoint.query, startedAt: startedAt,
@@ -1148,6 +1148,26 @@ final class V4LocalTests: XCTestCase {
             await delta("oversize")
             return "oversize"
         }
+    }
+
+    func testTransportHeartbeatPreventsFalseIdleFailureDuringLongSSEGap() async throws {
+        let timeouts = V4AnalysisTimeouts(connect: 0.05, firstContent: 0.05, idle: 0.03, hard: 0.20)
+        let result = try await V4AnalysisDeadlineEnforcer.perform(
+            timeouts: timeouts, maximumResponseBytes: 100,
+            onTransportState: { _ in }, onDelta: { _ in }
+        ) { transport, delta in
+            await transport(.connected)
+            await transport(.waitingFirstContent)
+            await delta("{")
+            // A keep-alive byte arrives before the 30 ms idle budget, but it
+            // does not decode to a content delta.
+            try await Task.sleep(nanoseconds: 20_000_000)
+            await transport(.receivedFirstContent)
+            try await Task.sleep(nanoseconds: 20_000_000)
+            await delta("}")
+            return "{}"
+        }
+        XCTAssertEqual(result, "{}")
     }
 
     func testAnalysisDeadlineEnforcerDropsLateCallbacksAndDoesNotRetry() async throws {

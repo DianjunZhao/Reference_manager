@@ -297,14 +297,14 @@ enum LatticeLensMigrationPlanV7: SchemaMigrationPlan {
 @Model final class StoredV8Paper {
     @Attribute(.unique) var literatureID: Int
     var title: String; var abstractText: String; var titlesData: Data; var abstractsData: Data; var figuresData: Data
-    var contributorsData: Data; var documentsData: Data; var preprintDate: Date?; var earliestDate: Date?; var arxivID: String?
+    var contributorsData: Data; var documentsData: Data; var preprintDate: Date?; var earliestDate: Date?; var publicationYear: Int?; var arxivID: String?
     var categoriesData: Data; var doi: String?; var citationCount: Int?; var publicationStatus: String?; var updated: Date?
     var firstSeenAt: Date; var isRead: Bool; var readAt: Date?; var isFavorite: Bool
     init(_ value: Paper) throws {
         literatureID = value.literatureID; title = value.displayTitle; abstractText = value.preferredAbstract ?? ""
         titlesData = try JSONEncoder.latticeLens.encode(value.titles); abstractsData = try JSONEncoder.latticeLens.encode(value.abstracts)
         figuresData = try JSONEncoder.latticeLens.encode(value.figures); contributorsData = try JSONEncoder.latticeLens.encode(value.contributors)
-        documentsData = try JSONEncoder.latticeLens.encode(value.documents); preprintDate = value.preprintDate; earliestDate = value.earliestDate
+        documentsData = try JSONEncoder.latticeLens.encode(value.documents); preprintDate = value.preprintDate; earliestDate = value.earliestDate; publicationYear = value.publicationYear
         arxivID = value.arxivID; categoriesData = try JSONEncoder.latticeLens.encode(value.arxivCategories); doi = value.doi
         citationCount = value.citationCount; publicationStatus = value.publicationStatus; updated = value.updated; firstSeenAt = value.firstSeenAt
         isRead = value.isRead; readAt = value.readAt; isFavorite = value.isFavorite
@@ -312,7 +312,7 @@ enum LatticeLensMigrationPlanV7: SchemaMigrationPlan {
     func decoded() throws -> Paper {
         Paper(literatureID: literatureID, titles: try JSONDecoder.latticeLens.decode([PaperTitle].self, from: titlesData),
               abstracts: try JSONDecoder.latticeLens.decode([PaperAbstract].self, from: abstractsData), preprintDate: preprintDate,
-              earliestDate: earliestDate, arxivID: arxivID, arxivCategories: try JSONDecoder.latticeLens.decode([String].self, from: categoriesData),
+              earliestDate: earliestDate, publicationYear: publicationYear, arxivID: arxivID, arxivCategories: try JSONDecoder.latticeLens.decode([String].self, from: categoriesData),
               doi: doi, citationCount: citationCount, publicationStatus: publicationStatus, updated: updated,
               figures: try JSONDecoder.latticeLens.decode([PaperFigure].self, from: figuresData),
               contributors: try JSONDecoder.latticeLens.decode([PaperContributor].self, from: contributorsData),
@@ -1930,7 +1930,7 @@ actor V8TypedLibraryStore: LibraryStoring {
         old.updated != new.updated || old.titles != new.titles || old.abstracts != new.abstracts ||
         old.citationCount != new.citationCount || old.figures != new.figures ||
         old.documents != new.documents || old.contributors != new.contributors ||
-        old.publicationStatus != new.publicationStatus
+        old.publicationStatus != new.publicationStatus || old.publicationYear != new.publicationYear
     }
 
     private func replaceCheckpointRow(_ checkpoint: SyncCheckpoint) throws {

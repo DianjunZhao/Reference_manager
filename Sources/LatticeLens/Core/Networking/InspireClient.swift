@@ -141,7 +141,7 @@ struct InspireClient: Sendable {
 
     func authorCandidatesPage(nextURL: URL? = nil) async throws -> (authors: [Author], nextURL: URL?, total: Int) {
         let url = try nextURL.map { try validatedNextURL($0, expectedPath: "/api/authors") } ?? makeURL(path: "/api/authors", query: [
-            URLQueryItem(name: "q", value: "arxiv_categories:hep-lat"),
+            URLQueryItem(name: "q", value: AuthorIndexService.candidateQuery),
             URLQueryItem(name: "size", value: "250"),
             URLQueryItem(name: "page", value: "1")
         ])

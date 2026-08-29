@@ -289,6 +289,26 @@ final class CoreContractTests: XCTestCase {
         XCTAssertTrue(selfAuthor.isVisibleInQualifiedList)
     }
 
+    func testTrackedAuthorsArePinnedAndHepThAuthorsAreEligible() {
+        var tracked = author(recid: 30, name: "Zulu, Tracked")
+        tracked.isTracked = true
+        tracked.hIndex = hIndex(author: 30, all: 21)
+        tracked.hIndexState = .qualified // remains visible while a generation rebuilds
+        var hepTh = author(recid: 31, name: "Alpha, Hep-Th")
+        hepTh.arxivCategories = ["hep-th"]
+        hepTh.hIndex = hIndex(author: 31, all: 21)
+        hepTh.hIndexState = .qualified
+        let projection = LibraryAuthorSidebarProjection(
+            authors: [hepTh, tracked, author(recid: ProductContract.selfAuthorRecid, name: "Zhao, Dian-Jun")],
+            activeMembership: [31]
+        )
+        XCTAssertTrue(hepTh.isHIndexCandidate)
+        XCTAssertEqual(projection.visibleAuthors(search: "").map(\.recid), [ProductContract.selfAuthorRecid, tracked.recid, hepTh.recid])
+        tracked.isTracked = false
+        let unpinned = LibraryAuthorSidebarProjection(authors: [hepTh, tracked], activeMembership: [31])
+        XCTAssertEqual(unpinned.visibleAuthors(search: "").map(\.recid), [hepTh.recid])
+    }
+
     func testNameSearchNormalizesDiacriticsHyphenAndNativeName() {
         let candidate = Author(recid: 3, preferredName: "Álvarez, Ana-Maria", nativeNames: ["阿娜"], bai: "A.Alvarez.1",
                                arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .unknown, isTracked: false, lastSyncedAt: nil)
@@ -331,6 +351,16 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(paper.displayTitle, "Detail lattice paper")
         XCTAssertEqual(paper.contributors.map(\.fullName), ["Author, First"])
         XCTAssertEqual(paper.documents.first?.isFullText, true)
+    }
+
+    func testPublicationInfoYearOverridesPreprintTimelineYear() async throws {
+        let payload = Data("""
+        {"id":124,"metadata":{"titles":[{"title":"Published lattice result"}],"abstracts":[{"value":"abstract"}],"preprint_date":"2024-04-01","publication_info":[{"year":2025,"material":"published"}]}}
+        """.utf8)
+        let client = InspireClient(transport: SequentialTransport([payload]))
+        let paper = try await client.literatureDetail(for: 124, now: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(paper.publicationYear, 2025)
+        XCTAssertEqual(paper.timelineYear, 2025)
     }
 
     func testLocalMarkdownTeXPreservesRawSourceAndUsesOnlyNativePreview() {

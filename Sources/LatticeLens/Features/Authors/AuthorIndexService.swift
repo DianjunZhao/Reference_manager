@@ -192,8 +192,11 @@ private actor HIndexCheckpointWriter {
 }
 
 struct AuthorIndexService: Sendable {
-    static let candidateJobID = "author-candidates:hep-lat"
-    static let hIndexJobID = "author-h-index:hep-lat"
+    /// Exact category union used by both candidate and h-index generations.
+    /// Keeping it in one contract also makes the durable checkpoint auditable.
+    static let candidateQuery = "arxiv_categories:hep-lat OR arxiv_categories:hep-th"
+    static let candidateJobID = "author-candidates:hep-lat-or-hep-th"
+    static let hIndexJobID = "author-h-index:hep-lat-or-hep-th"
 
     let client: InspireClient
     let store: any LibraryStoring
@@ -224,9 +227,9 @@ struct AuthorIndexService: Sendable {
                 .filter { $0.state == .completed }
                 .max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?
                 .activeMembership
-                ?? Set(initialSnapshot.authors.values.filter(\.isHepLatCandidate).map(\.recid))
+                ?? Set(initialSnapshot.authors.values.filter(\.isHIndexCandidate).map(\.recid))
             checkpoint = SyncCheckpoint(jobID: Self.candidateJobID, jobKind: "author-candidates",
-                                        query: "arxiv_categories:hep-lat", activeMembership: existingMembership)
+                                        query: Self.candidateQuery, activeMembership: existingMembership)
         } else {
             checkpoint = previous!
             checkpoint.state = .active
@@ -310,13 +313,13 @@ struct AuthorIndexService: Sendable {
         let resumeIDs = canResume ? Set(prior!.resumableIDs) : nil
         let candidates = snapshot.authors.values
             .filter { author in
-                guard (candidateIDs?.contains(author.recid) ?? author.isHepLatCandidate), !author.isSelf else { return false }
+                guard (candidateIDs?.contains(author.recid) ?? author.isHIndexCandidate), !author.isSelf else { return false }
                 if let resumeIDs { return resumeIDs.contains(author.recid) }
                 return force || author.hIndex == nil || author.hIndexState == .stale || author.hIndexState == .failed || author.hIndexState == .unknown
             }
             .sorted { $0.recid < $1.recid }
         var checkpoint = canResume ? prior! : SyncCheckpoint(jobID: Self.hIndexJobID, jobKind: "author-h-index",
-                                        query: "arxiv_categories:hep-lat", generationID: generation?.id ?? UUID().uuidString,
+                                        query: Self.candidateQuery, generationID: generation?.id ?? UUID().uuidString,
                                         nextURL: nil, successfulRecords: 0, failedRecords: 0,
                                         pendingIDs: candidates.map { $0.recid })
         // Promote exactly the persisted retry set into the new in-flight
@@ -355,7 +358,7 @@ struct AuthorIndexService: Sendable {
 
     private func indexProgress(state: SyncCheckpointState, pages: Int) async -> AuthorIndexProgress {
         let snapshot = await store.snapshot()
-        let candidates = snapshot.authors.values.filter(\.isHepLatCandidate)
+        let candidates = snapshot.authors.values.filter(\.isHIndexCandidate)
         let verified = candidates.filter { $0.hIndex != nil }.count
         let qualified = candidates.filter { $0.hIndexState == .qualified }.count
         let rejected = candidates.filter { $0.hIndexState == .rejected }.count
