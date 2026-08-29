@@ -347,8 +347,15 @@ final class AppViewModel: ObservableObject {
             return
         }
         await reloadAuthors()
-        if selectedAuthorID == nil { selectedAuthorID = authors.first?.recid }
         if authors.first(where: { $0.isSelf }) == nil { await refreshPinnedSelf() }
+        // A new library is empty on the first pass through `reloadAuthors()`;
+        // `refreshPinnedSelf()` then publishes the durable self record.  Pick
+        // the author only after that refresh as well, otherwise the optional
+        // selection stays nil and the initial literature load is skipped,
+        // leaving a freshly installed app with an apparently blank workspace.
+        if selectedAuthorID == nil {
+            selectedAuthorID = authors.first(where: \.isSelf)?.recid ?? authors.first?.recid
+        }
         if let selectedAuthorID { await loadPapers(for: selectedAuthorID, syncIfNeeded: true) }
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))

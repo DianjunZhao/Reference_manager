@@ -84,6 +84,26 @@ final class CoreContractTests: XCTestCase {
                        "首屏不得因作者栏、同步 checkpoint 或 tracked refresh 解码整库 snapshot")
     }
 
+    @MainActor
+    func testFreshStoreSelectsRefreshedSelfAndLoadsInitialPapers() async throws {
+        // Regression for a first-launch blank workspace: an empty store has no
+        // author during the initial projection, so refreshPinnedSelf() must be
+        // followed by selecting the newly persisted self record.
+        let store = InMemoryLibraryStore()
+        let client = InspireClient(transport: AppFixtureTransport())
+        let viewModel = AppViewModel(store: store, client: client,
+                                     keychain: FixedKeychain(value: "fixture-key"),
+                                     useFixtureDependencies: false)
+        await viewModel.start()
+
+        for _ in 0..<100 where viewModel.papers.isEmpty {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(viewModel.selectedAuthorID, ProductContract.selfAuthorRecid)
+        XCTAssertFalse(viewModel.papers.isEmpty,
+                       "fresh store must load the first INSPIRE page after self-author refresh")
+    }
+
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
         let store = InMemoryLibraryStore()
         let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,
