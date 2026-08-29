@@ -79,10 +79,14 @@ struct MainWorkspaceView: View {
                     .accessibilityIdentifier("settingsButton")
             }
         }
-        .sheet(isPresented: $viewModel.presentSettings) {
-            SettingsView(viewModel: viewModel)
-                .id(viewModel.settingsPresentationID)
-        }
+        // Keep the fixture's historical sheet contract for XCTest (its
+        // assertions intentionally scope controls through `app.sheets`).
+        // Production uses an in-window modal instead: on this macOS release
+        // a native sheet can leave the accessibility pipe closed, making the
+        // visible Menu/SecureField controls impossible to inspect or activate.
+        // The production overlay keeps one stable hierarchy and still blocks
+        // the workspace behind it.
+        .modifier(SettingsPresentationModifier(viewModel: viewModel))
         .sheet(isPresented: $viewModel.presentResearchHome) { V4ResearchHomeView(viewModel: viewModel) }
         .sheet(isPresented: $viewModel.presentSyncCenter) { SyncCenterView(viewModel: viewModel) }
         .sheet(isPresented: $viewModel.presentWorkbench) { V3WorkbenchView(viewModel: viewModel) }
@@ -138,6 +142,53 @@ struct MainWorkspaceView: View {
         .alert("LatticeLens", isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { if !$0 { viewModel.dismissError() } })) {
             Button("好", role: .cancel) { viewModel.dismissError() }
         } message: { Text(viewModel.errorMessage ?? "") }
+    }
+}
+
+private struct SettingsPresentationModifier: ViewModifier {
+    @ObservedObject var viewModel: AppViewModel
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if viewModel.isUsingFixtureDependencies {
+            content.sheet(isPresented: $viewModel.presentSettings) {
+                SettingsView(viewModel: viewModel)
+                    .id(viewModel.settingsPresentationID)
+            }
+        } else {
+            content.overlay {
+                if viewModel.presentSettings {
+                    SettingsOverlay(viewModel: viewModel)
+                        .id(viewModel.settingsPresentationID)
+                        .transition(.opacity)
+                        .zIndex(100)
+                }
+            }
+        }
+    }
+}
+
+private struct SettingsOverlay: View {
+    @ObservedObject var viewModel: AppViewModel
+
+    var body: some View {
+        ZStack {
+            // This layer captures pointer events so the workspace cannot be
+            // edited while Settings is open.  It is intentionally hidden
+            // from assistive technology; the Settings hierarchy below is the
+            // only modal surface that should be announced.
+            Color.black.opacity(0.22)
+                .ignoresSafeArea()
+                .accessibilityHidden(true)
+
+            ProductionSettingsView(viewModel: viewModel)
+                .padding(12)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("settingsOverlay")
     }
 }
 

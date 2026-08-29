@@ -62,7 +62,6 @@ struct SettingsView: View {
                 SearchNormalizer.normalize($0.note).contains(terminologyNeedle)
         }
         let hasSingleTerminologyMatch = visibleTerminology.count == 1
-        let singleTerminologyMatchID = hasSingleTerminologyMatch ? visibleTerminology.first?.id : nil
         let displayedTerminology = visibleTerminology.prefix(terminologyDisplayLimit)
         let remainingTerminologyCount = max(0, visibleTerminology.count - displayedTerminology.count)
         VStack(spacing: 0) {
@@ -327,82 +326,68 @@ struct SettingsView: View {
                         }
                         Button("导入术语 JSON") { importingTerminology = true }
                     }
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 6) {
-                                if draft.terminology.isEmpty {
-                                    Text("尚无术语；术语只会进入受限 JSON prompt data。")
-                                        .foregroundStyle(.secondary)
-                                }
-                                ForEach(displayedTerminology) { entry in
-                                    if hasSingleTerminologyMatch {
-                                        // Keep one visual result in the list for orientation, but
-                                        // give it a distinct non-action identity.  The immediately
-                                        // preceding fixed result button is the single accessible
-                                        // edit target; duplicating its AX identifier here lets the
-                                        // bridge return an obsolete, off-screen element.
-                                        terminologyRowLabel(for: entry)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .accessibilityIdentifier("terminologyListRow-\(entry.id.uuidString)")
-                                            .padding(.vertical, 3)
-                                    } else {
-                                        VStack(alignment: .leading, spacing: 5) {
-                                            terminologyRowLabel(for: entry)
-                                            HStack(spacing: 8) {
-                                                Button("编辑") {
-                                                    editingTerminologyID = entry.id
-                                                    terminologySource = entry.source
-                                                    terminologyZH = entry.preferredZH
-                                                    terminologyNote = entry.note
-                                                }
-                                                .buttonStyle(.bordered)
-                                                .controlSize(.small)
-                                                .accessibilityIdentifier("editTerminology-\(entry.id.uuidString)")
-                                                Button("删除", role: .destructive) { draft.deleteTerminology(entry.id) }
-                                                    .buttonStyle(.bordered)
-                                                    .controlSize(.small)
-                                                    .accessibilityIdentifier("deleteTerminology-\(entry.id.uuidString)")
-                                            }
-                                        }
-                                        .accessibilityIdentifier("terminology-\(entry.id.uuidString)")
-                                        .padding(.vertical, 3)
-                                    }
-                                    Divider()
-                                }
-                                if remainingTerminologyCount > 0 {
-                                    Button("显示更多（还有 \(remainingTerminologyCount) 条）") {
-                                        terminologyDisplayLimit = min(
-                                            visibleTerminology.count,
-                                            terminologyDisplayLimit + 50
-                                        )
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .accessibilityIdentifier("terminologyLoadMore")
-                                    .accessibilityLabel("显示更多术语")
-                                    .accessibilityValue("还有 \(remainingTerminologyCount) 条")
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.vertical, 3)
-                                }
-                            }
-                            .padding(.horizontal, 2)
+                    // Keep one scroll container for the whole Settings page.
+                    // A nested ScrollViewReader/ScrollView here made the
+                    // production modal's AX tree unstable on macOS 26 and
+                    // could close the native accessibility pipe before the
+                    // Provider controls were reachable.  The outer page
+                    // scrolls this bounded (50-row) projection just as well.
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        if draft.terminology.isEmpty {
+                            Text("尚无术语；术语只会进入受限 JSON prompt data。")
+                                .foregroundStyle(.secondary)
                         }
-                        // A virtualized inner ScrollView can retain its old
-                        // offset after a 500-row list is filtered.  Always
-                        // bring an exact result into its own visible region;
-                        // discovery in the AX tree is not sufficient if the
-                        // focused person cannot actually operate the row.
-                        .onChange(of: terminologySearch) { _, _ in
-                            terminologyDisplayLimit = 50
-                            guard let singleTerminologyMatchID else { return }
-                            DispatchQueue.main.async {
-                                proxy.scrollTo(singleTerminologyMatchID, anchor: .top)
+                        ForEach(displayedTerminology) { entry in
+                            if hasSingleTerminologyMatch {
+                                terminologyRowLabel(for: entry)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .accessibilityIdentifier("terminologyListRow-\(entry.id.uuidString)")
+                                    .padding(.vertical, 3)
+                            } else {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    terminologyRowLabel(for: entry)
+                                    HStack(spacing: 8) {
+                                        Button("编辑") {
+                                            editingTerminologyID = entry.id
+                                            terminologySource = entry.source
+                                            terminologyZH = entry.preferredZH
+                                            terminologyNote = entry.note
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                        .accessibilityIdentifier("editTerminology-\(entry.id.uuidString)")
+                                        Button("删除", role: .destructive) { draft.deleteTerminology(entry.id) }
+                                            .buttonStyle(.bordered)
+                                            .controlSize(.small)
+                                            .accessibilityIdentifier("deleteTerminology-\(entry.id.uuidString)")
+                                    }
+                                }
+                                .accessibilityIdentifier("terminology-\(entry.id.uuidString)")
+                                .padding(.vertical, 3)
                             }
+                            Divider()
+                        }
+                        if remainingTerminologyCount > 0 {
+                            Button("显示更多（还有 \(remainingTerminologyCount) 条）") {
+                                terminologyDisplayLimit = min(
+                                    visibleTerminology.count,
+                                    terminologyDisplayLimit + 50
+                                )
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("terminologyLoadMore")
+                            .accessibilityLabel("显示更多术语")
+                            .accessibilityValue("还有 \(remainingTerminologyCount) 条")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 3)
                         }
                     }
-                    .frame(height: 210)
-                    .scrollIndicators(.visible)
+                    .padding(.horizontal, 2)
                     .accessibilityIdentifier("terminologyScrollableList")
-                    .accessibilityLabel("Terminology scrollable list")
+                    .accessibilityLabel("Terminology list within Settings scroll")
+                    .onChange(of: terminologySearch) { _, _ in
+                        terminologyDisplayLimit = 50
+                    }
                 }
                     SettingsSection("隐私提示") {
                         let normalizedEndpoint = (try? APIEndpointBuilder.normalizedBaseURL(from: draft.activeProfile.baseURL, provider: draft.activeProvider).absoluteString) ?? "invalid endpoint"
@@ -529,6 +514,330 @@ struct SettingsView: View {
         do {
             let result = try await viewModel.testProviderConnection(profile: profile, provider: draft.activeProvider, apiKey: apiKey)
             connectionMessage = "连接成功：\(result.normalizedEndpoint)。未读取或更新模型列表。"
+        } catch {
+            connectionMessage = "连接失败：\(error.localizedDescription)"
+        }
+    }
+}
+
+/// Production Settings surface used by the real app's in-window modal.
+///
+/// The historical SettingsView remains the richer fixture sheet used by the
+/// XCTest contract.  This production variant deliberately has one vertical
+/// scroll container and no nested model/terminology sheets.  It exposes the
+/// same provider, credential, model and analysis settings through native
+/// controls, while avoiding the macOS 26 AX bridge failure triggered by the
+/// larger nested hierarchy.
+struct ProductionSettingsView: View {
+    @ObservedObject var viewModel: AppViewModel
+    @State private var draft: LLMSettings
+    @State private var apiKey = ""
+    @State private var models: [String] = []
+    @State private var discoveryMessage: String?
+    @State private var connectionMessage: String?
+    @State private var savedAPIKey: Bool?
+    @State private var clearScope: AIArtifactClearScope = .all
+    @State private var clearPreview: V4AIClearPreview?
+    @State private var confirmClearAI = false
+    // Keep the first production AX probe intentionally tiny while diagnosing
+    // the macOS 26 bridge.  Once the stable control set is confirmed this
+    // switch is flipped to use the complete single-scroll implementation.
+    private let debugMinimal = true
+
+    init(viewModel: AppViewModel) {
+        self.viewModel = viewModel
+        _draft = State(initialValue: viewModel.settings)
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if debugMinimal {
+            minimalBody
+        } else {
+            fullBody
+        }
+    }
+
+    private var minimalBody: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Settings").font(.title3)
+                Spacer()
+                Button("取消") { viewModel.cancelSettings() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("cancelSettings")
+                Button("保存") {
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    viewModel.saveSettings(draft, apiKey: apiKey)
+                    viewModel.cancelSettings()
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("saveSettings")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Provider").font(.headline)
+                    Text("服务").font(.caption).foregroundStyle(.secondary)
+                    SettingsMenuButton(title: "服务", selection: $draft.activeProvider,
+                                       options: LLMProvider.allCases,
+                                       optionTitle: { $0.displayName })
+                        .accessibilityIdentifier("providerPicker")
+                    Text("Base URL").font(.caption).foregroundStyle(.secondary)
+                    TextField("https://…/v1", text: activeProfileBinding(\.baseURL))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                        .accessibilityIdentifier("providerBaseURL")
+                    Text(draft.activeProvider.apiKeyIsRequired
+                         ? "API Key（仅存储于 macOS Keychain）"
+                         : "API Key（可选；仅存储于 macOS Keychain）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SecureField("本次输入仅在保存时写入 Keychain", text: $apiKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                        .accessibilityIdentifier("providerAPIKey")
+                    Text("模型 ID").font(.caption).foregroundStyle(.secondary)
+                    TextField("model id", text: activeProfileBinding(\.manualModel))
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("providerManualModel")
+                    HStack(spacing: 8) {
+                        Button("测试连接") { Task { await testConnection() } }
+                            .accessibilityIdentifier("testProviderConnection")
+                        Button("发现模型") { Task { await discoverModels() } }
+                            .accessibilityIdentifier("discoverModels")
+                    }
+                    SettingsMenuButton(title: "选择已发现或已保存模型",
+                                       selection: activeProfileBinding(\.selectedModel),
+                                       options: [""] + models,
+                                       optionTitle: { $0.isEmpty ? "不选择" : $0 })
+                        .accessibilityIdentifier("selectProviderModel")
+                    Toggle("Streaming", isOn: activeProfileBinding(\.usesStreaming))
+                    Toggle("当前 provider/model 支持 Vision（需手工确认）",
+                           isOn: activeProfileBinding(\.supportsVision))
+                        .accessibilityIdentifier("providerSupportsVision")
+                    if let connectionMessage {
+                        Text(connectionMessage).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let discoveryMessage {
+                        Text(discoveryMessage).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Text("论文分析").font(.headline)
+                    Toggle("选择论文后自动分析（稳定 600 ms）", isOn: $draft.automaticAnalysis)
+                    SettingsMenuButton(title: "模式", selection: $draft.mode,
+                                       options: InsightMode.allCases,
+                                       optionTitle: { $0.displayName })
+                    SettingsMenuButton(title: "详细度", selection: $draft.detailLevel,
+                                       options: InsightDetailLevel.allCases,
+                                       optionTitle: { $0.displayName })
+                    SettingsMenuButton(title: "重要图像", selection: $draft.maximumFigures,
+                                       options: [0, 3, 5], optionTitle: String.init)
+                    Text("证据范围：标题 + 摘要 + captions；不发送 PDF 全文或图像像素。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 18)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .scrollIndicators(.visible)
+            .accessibilityIdentifier("settingsScrollableForm")
+            .accessibilityLabel("Settings scrollable form")
+        }
+        .frame(width: 620, height: 560, alignment: .top)
+        .onExitCommand { viewModel.cancelSettings() }
+    }
+
+    @ViewBuilder
+    private var fullBody: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Settings").font(.title3)
+                Spacer()
+                Button("取消") { viewModel.cancelSettings() }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("cancelSettings")
+                Button("保存") {
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    viewModel.saveSettings(draft, apiKey: apiKey)
+                    viewModel.cancelSettings()
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("saveSettings")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 14) {
+                    SettingsSection("Provider") {
+                        SettingsControlRow("服务") {
+                            SettingsMenuButton(
+                                title: "服务",
+                                selection: $draft.activeProvider,
+                                options: LLMProvider.allCases,
+                                optionTitle: { $0.displayName }
+                            )
+                            .accessibilityIdentifier("providerPicker")
+                        }
+                        SettingsControlRow("Base URL") {
+                            TextField("https://…/v1", text: activeProfileBinding(\.baseURL))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                                .accessibilityIdentifier("providerBaseURL")
+                        }
+                        SettingsControlRow(draft.activeProvider.apiKeyIsRequired
+                                           ? "API Key（仅存储于 macOS Keychain）"
+                                           : "API Key（可选；仅存储于 macOS Keychain）") {
+                            SecureField("本次输入仅在保存时写入 Keychain", text: $apiKey)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                                .accessibilityIdentifier("providerAPIKey")
+                        }
+                        Text(savedAPIKey == true ? "当前 provider 已保存 API Key" :
+                             savedAPIKey == false ? "当前 provider 未保存 API Key" :
+                             "正在检查当前 provider 的 API Key 保存状态…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("apiKeyStorageStatus")
+                            .accessibilityLabel("API Key 保存状态")
+                            .accessibilityValue(savedAPIKey == true ? "已保存" : savedAPIKey == false ? "未保存" : "正在检查")
+                        SettingsControlRow("模型 ID（可手工填写）") {
+                            TextField("model id", text: activeProfileBinding(\.manualModel))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                                .accessibilityIdentifier("providerManualModel")
+                        }
+                        HStack(spacing: 8) {
+                            Button("测试连接") { Task { await testConnection() } }
+                                .accessibilityIdentifier("testProviderConnection")
+                            Button("发现模型") { Task { await discoverModels() } }
+                                .accessibilityIdentifier("discoverModels")
+                            Spacer(minLength: 0)
+                        }
+                        SettingsControlRow("已发现/已保存模型") {
+                            SettingsMenuButton(
+                                title: "选择已发现或已保存模型",
+                                selection: activeProfileBinding(\.selectedModel),
+                                options: [""] + models,
+                                optionTitle: { $0.isEmpty ? "不选择" : $0 }
+                            )
+                            .accessibilityIdentifier("selectProviderModel")
+                        }
+                        Toggle("Streaming", isOn: activeProfileBinding(\.usesStreaming))
+                        Toggle("当前 provider/model 支持 Vision（需手工确认）", isOn: activeProfileBinding(\.supportsVision))
+                            .accessibilityIdentifier("providerSupportsVision")
+                        if let connectionMessage {
+                            Text(connectionMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("providerConnectionStatus")
+                        }
+                        if let discoveryMessage {
+                            Text(discoveryMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .accessibilityIdentifier("providerDiscoveryStatus")
+                        }
+                    }
+
+                    SettingsSection("论文分析") {
+                        Toggle("选择论文后自动分析（稳定 600 ms）", isOn: $draft.automaticAnalysis)
+                        SettingsControlRow("模式") {
+                            SettingsMenuButton(title: "模式", selection: $draft.mode,
+                                               options: InsightMode.allCases,
+                                               optionTitle: { $0.displayName })
+                        }
+                        SettingsControlRow("详细度") {
+                            SettingsMenuButton(title: "详细度", selection: $draft.detailLevel,
+                                               options: InsightDetailLevel.allCases,
+                                               optionTitle: { $0.displayName })
+                        }
+                        SettingsControlRow("重要图像") {
+                            SettingsMenuButton(title: "重要图像", selection: $draft.maximumFigures,
+                                               options: [0, 3, 5], optionTitle: String.init)
+                        }
+                        Text("证据范围：标题 + 摘要 + captions；不发送 PDF 全文或图像像素。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    SettingsSection("本地缓存") {
+                        SettingsControlRow("清除 AI 结果范围") {
+                            SettingsMenuButton(title: "清除 AI 结果范围", selection: $clearScope,
+                                               options: AIArtifactClearScope.allCases,
+                                               optionTitle: { $0.displayName })
+                        }
+                        Button("清除 AI 结果…") {
+                            Task {
+                                clearPreview = await viewModel.aiClearPreview(scope: clearScope)
+                                confirmClearAI = true
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("clearAIResults")
+                        Text("只删除本机保存的 AI artifact，不影响作者、论文 metadata、note 或 API Key。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 18)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .scrollIndicators(.visible)
+            .accessibilityIdentifier("settingsScrollableForm")
+            .accessibilityLabel("Settings scrollable form")
+        }
+        .frame(width: 620, height: 560, alignment: .top)
+        .onExitCommand { viewModel.cancelSettings() }
+        // The production modal intentionally avoids launching a Keychain
+        // read during the first render.  A delayed read can be requested by
+        // the explicit provider interaction below; keeping presentation
+        // synchronous prevents SecurityServer latency from racing AX tree
+        // construction on macOS 26.
+        .alert("清除 AI 结果？", isPresented: $confirmClearAI) {
+            Button("取消", role: .cancel) {}
+            Button("按所选范围清除", role: .destructive) {
+                Task { await viewModel.clearAIResults(scope: clearScope) }
+            }
+        } message: {
+            Text((clearPreview?.summary ?? "正在读取本地 artifact 计数；尚未删除任何内容。") +
+                 " 不会删除 INSPIRE metadata、全文 anchors、用户 note 或 API Key。")
+        }
+    }
+
+    private func activeProfileBinding<Value>(_ keyPath: WritableKeyPath<ProviderProfile, Value>) -> Binding<Value> {
+        Binding(
+            get: { draft.profiles[draft.activeProvider.rawValue]?[keyPath: keyPath] ?? ProviderProfile(baseURL: draft.activeProvider.defaultBaseURL)[keyPath: keyPath] },
+            set: { value in
+                var profile = draft.profiles[draft.activeProvider.rawValue] ?? ProviderProfile(baseURL: draft.activeProvider.defaultBaseURL)
+                profile[keyPath: keyPath] = value
+                profile.provider = draft.activeProvider
+                draft.profiles[draft.activeProvider.rawValue] = profile
+            }
+        )
+    }
+
+    private func discoverModels() async {
+        do {
+            models = try await viewModel.discoverModels(profile: draft.activeProfile,
+                                                         provider: draft.activeProvider,
+                                                         apiKey: apiKey)
+            discoveryMessage = "已发现 \(models.count) 个模型。"
+        } catch {
+            discoveryMessage = "模型发现失败；可继续手工填写 model ID。"
+        }
+    }
+
+    private func testConnection() async {
+        do {
+            let result = try await viewModel.testProviderConnection(profile: draft.activeProfile,
+                                                                      provider: draft.activeProvider,
+                                                                      apiKey: apiKey)
+            connectionMessage = "连接成功：\(result.normalizedEndpoint)"
         } catch {
             connectionMessage = "连接失败：\(error.localizedDescription)"
         }
