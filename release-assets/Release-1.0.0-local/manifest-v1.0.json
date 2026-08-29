@@ -1,7 +1,7 @@
 {
   "schema_version": "latticelens-package-manifest-v1.1",
-  "run_id": "20260829T054500Z-final",
-  "generated_at_utc": "2026-08-29T05:45:00Z",
+  "run_id": "20260829T095542Z-final",
+  "generated_at_utc": "2026-08-29T09:55:42Z",
   "artifact_class": "same_mac_local_ad_hoc",
   "product_version": "1.0.0",
   "build_number": 100,
