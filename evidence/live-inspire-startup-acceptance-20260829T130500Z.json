@@ -1,0 +1,21 @@
+{
+  "schema_version": "latticelens-live-inspire-startup-v1",
+  "generated_at_utc": "2026-08-29T13:05:00Z",
+  "source_class": "empty_process_local_store",
+  "store_scope": "InMemoryLibraryStore; no Application Support access",
+  "client": "production InspireClient with URLSessionTransport",
+  "endpoint": "https://inspirehep.net",
+  "self_author_recid": 2010363,
+  "result": "PASS",
+  "selected_author_after_start": 2010363,
+  "first_literature_page_count": 10,
+  "assertions": [
+    "empty store refreshes the self author",
+    "startup selects the refreshed self author",
+    "startup loads the first literature page"
+  ],
+  "test_duration_seconds": 2.664,
+  "real_user_library_read": false,
+  "real_user_library_modified": false,
+  "note": "One-shot live network probe used the current production startup path with a disposable in-memory store."
+}
