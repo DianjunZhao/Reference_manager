@@ -222,7 +222,11 @@ struct AuthorIndexService: Sendable {
         let initialSnapshot = await store.snapshot()
         let previous = try await store.checkpoint(jobID: Self.candidateJobID)
         var checkpoint: SyncCheckpoint
-        if force || previous == nil || previous?.state == .completed {
+        // A checkpoint from the pre-hep-th release must not be resumed: its
+        // URL is scoped to the old hep-lat-only query and would silently omit
+        // the newly supported hep-th candidates.  Start a fresh generation
+        // while retaining the previous completed membership as a fallback.
+        if force || previous == nil || previous?.state == .completed || previous?.query != Self.candidateQuery {
             let existingMembership = initialSnapshot.authorIndexGenerations.values
                 .filter { $0.state == .completed }
                 .max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?
