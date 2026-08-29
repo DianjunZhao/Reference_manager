@@ -15,7 +15,7 @@
   "build_input_tree_sha256": "aac2b69bcb80c8a3beeb4f70305287f6905c06308630a8c2bd1f6a02609f53e4",
   "source": {
     "repository": "github/Reference_manager",
-    "commit": "cdc5c51",
+    "commit": "cdc5c5126211d0c5ca3a6e3694c2095d1cc41478",
     "build_input_manifest": "build-inputs-v5.json"
   },
   "prepackage_validation": {
