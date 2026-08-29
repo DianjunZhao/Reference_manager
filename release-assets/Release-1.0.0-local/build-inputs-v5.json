@@ -95,7 +95,7 @@
 ,
 {"path":"Sources/LatticeLens/Core/Persistence/LibraryStore.swift","sha256":"8264e90cb175d75b99a78bbeb4f0650ff409f5537334f82ba04415241fd6ebce"}
 ,
-{"path":"Sources/LatticeLens/Core/Persistence/SwiftDataLibraryStore.swift","sha256":"0a9f798e866190ff2a817676427fe2d16543c601065d4ac68e9740eaa33dd59a"}
+{"path":"Sources/LatticeLens/Core/Persistence/SwiftDataLibraryStore.swift","sha256":"46d8d7672662e72023aa4aea06f4a3e7b648c467344ca67a6012b50ffc97b8c5"}
 ,
 {"path":"Sources/LatticeLens/Core/Persistence/V4NormalizedStore.swift","sha256":"8c40bc6bce76638e544ce52e7eb655ad894ab4b5a7f8556ed5f32caa4d85208b"}
 ,
