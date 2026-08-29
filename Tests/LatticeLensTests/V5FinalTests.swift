@@ -46,7 +46,7 @@ final class V5FinalTests: XCTestCase {
     @MainActor
     func testLocalNoKeyModelDiscoveryCanReachInjectedDiscoverer() async throws {
         let discoverer = V5Discoverer()
-        let viewModel = AppViewModel(keychain: V5EmptyKeychain(), modelDiscoverer: discoverer, useFixtureDependencies: false)
+        let viewModel = AppViewModel(store: InMemoryLibraryStore(), keychain: V5EmptyKeychain(), modelDiscoverer: discoverer, useFixtureDependencies: false)
         let profile = ProviderProfile(provider: .localOpenAICompatible, baseURL: "http://127.0.0.1:11434/v1", manualModel: "fixture-local")
         let values = LLMSettings(activeProvider: .localOpenAICompatible, profiles: [LLMProvider.localOpenAICompatible.rawValue: profile])
         viewModel.saveSettings(values, apiKey: nil)
@@ -211,6 +211,39 @@ final class V5FinalTests: XCTestCase {
                              source: "fixture term \(index)", preferredZH: "测试术语 \(index)")
         }
         XCTAssertEqual(LLMSettings(terminology: terms).terminology.count, AppFixtureLargeData.terminologyCount)
+    }
+
+    /// Exercises the production OpenAI-compatible HTTP client and workflow
+    /// together.  The URLProtocol is an in-process transport substitute, not
+    /// the UI fixture client: it returns an OpenAI-compatible SSE payload that
+    /// omits [DONE] and uses content parts, then the real parser, deadline
+    /// enforcer, schema validator, and LibraryStore persistence path must
+    /// produce a durable InsightArtifact.
+    func testProductionClientEOFStreamGeneratesAndPersistsReport() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [V5LLMURLProtocol.self]
+        let client = OpenAICompatibleClient(session: URLSession(configuration: configuration))
+        let store = InMemoryLibraryStore()
+        let profile = ProviderProfile(provider: .localOpenAICompatible,
+                                      baseURL: "http://127.0.0.1:11434/v1",
+                                      manualModel: "fixture-local",
+                                      usesStreaming: true)
+        let settings = LLMSettings(activeProvider: .localOpenAICompatible,
+                                   profiles: [LLMProvider.localOpenAICompatible.rawValue: profile])
+        let paper = Paper(literatureID: 77,
+                          titles: [PaperTitle(value: "A lattice report", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "An abstract without unsupported numbers.", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: "2401.00077",
+                          arxivCategories: ["hep-lat"], doi: nil, citationCount: nil,
+                          publicationStatus: nil, updated: Date(timeIntervalSince1970: 77),
+                          figures: [], firstSeenAt: Date(timeIntervalSince1970: 77), isRead: false)
+        let workflow = InsightWorkflow(store: store, client: client,
+                                       timeouts: V4AnalysisTimeouts(connect: 1, firstContent: 1, idle: 1, hard: 5))
+        let artifact = try await workflow.generate(for: paper, settings: settings, apiKey: "") { _ in }
+        XCTAssertEqual(artifact.paperID, paper.literatureID)
+        XCTAssertEqual(artifact.insight.schemaVersion, ProductContract.insightSchemaVersion)
+        let savedSnapshot = await store.snapshot()
+        XCTAssertEqual(savedSnapshot.insights[artifact.cacheKey]?.paperID, paper.literatureID)
     }
 
     @MainActor
@@ -381,4 +414,38 @@ private final class V5EmptyKeychain: KeychainStoring, @unchecked Sendable {
     func save(_ value: String, service: String, account: String) throws {}
     func read(service: String, account: String) throws -> String? { nil }
     func delete(service: String, account: String) throws {}
+}
+
+private final class V5LLMURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let report = """
+    {"schema_version":"paper-insight-v1","source_scope":"title_abstract_figure_captions","title_zh":"格点报告","abstract_zh":"摘要","physics":{"research_question":"研究问题","background":"物理背景","method_and_data_flow":["方法"],"main_results":["主要结论"],"lattice_conventions_reported":[],"missing_information":["格点参数未提供"],"caveats":["摘要级"]},"important_figures":[],"terminology":[]}
+    """
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.path == "/v1/chat/completions"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                             headerFields: ["Content-Type": "text/event-stream"]) else {
+            client?.urlProtocol(self, didFailWithError: LLMClientError.invalidResponse)
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        // Deliberately omit [DONE] and the final blank dispatch line.  The
+        // parser must flush this valid event at EOF; schema validation remains
+        // the authority for whether the assembled report is complete.
+        let payload: [String: Any] = [
+            "choices": [["delta": ["content": [["type": "text", "text": Self.report]]]]]
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload, options: [])
+        let body = "data: \(String(decoding: data, as: UTF8.self))\n"
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

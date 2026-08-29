@@ -93,6 +93,25 @@ Sources/LatticeLens/
 - Fast 模式发送一次请求。Deep 模式严格发送两次：先从原始标题/摘要取得严格 JSON 翻译，再携带冻结翻译和原始资料生成解释。SSE 失败不会静默回退成 non-streaming 或重发。
 - `paper-insight-v1` 会校验 JSON 大小、控制字符、重复 key、schema/source scope、figure key allowlist、caption-only 模式和数值陈述的摘要/caption token 锚点；不合格响应不会覆盖原始资料或既有成功 artifact。
 
+### LLM 实际使用检查
+
+1. 在 Settings 中选择 provider，填写 Base URL 和实际 model ID；本地
+   OpenAI-compatible 服务默认使用 `http://127.0.0.1:11434/v1`，但 app 不会
+   自动启动或捆绑模型进程。
+2. 先点“测试连接”，再点“保存”；首次分析会显示发送范围并要求一次隐私确认。
+   本地 provider 可以不填 API Key，OpenAI/DeepSeek/HTTPS custom provider 必须把
+   API Key 保存到 Keychain。
+3. Streaming 可按服务能力开启。客户端同时接受标准 `delta.content`、
+   `choices[].text` 和 text-part 数组；兼容服务在 EOF 省略 `[DONE]` 时，只要已有
+   有效 JSON 事件也会继续交给严格 schema validator。截断、空响应、错误对象或
+   未锚定的数值声明仍会失败，不会静默重试或改发第二种请求。
+
+若出现 `LLM stream idle deadline exceeded`，这表示 provider 在最后一个实际字节后
+超过 idle 预算没有任何字节（不是 UI 卡死）。应先确认本地 model 进程和 model ID，
+再在设置中关闭 Streaming 做一次明确的非流式请求；若非流式也失败，应查看 provider
+自身日志或连接状态。fixture/UI 测试只证明离线替身和 schema/workflow 路径，不冒充
+真实 provider 成功。
+
 ## 本地验证
 
 ```bash

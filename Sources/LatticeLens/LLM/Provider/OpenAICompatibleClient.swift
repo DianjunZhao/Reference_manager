@@ -139,6 +139,7 @@ struct OpenAICompatibleSSEParser: Sendable {
     private var lineBuffer = Data()
     private var eventData: [Data] = []
     private var sawDone = false
+    private var sawValidPayload = false
 
     mutating func consume(_ bytes: Data) throws -> [String] {
         var completed = [String]()
@@ -169,8 +170,15 @@ struct OpenAICompatibleSSEParser: Sendable {
         return completed
     }
 
-    mutating func finish() throws {
-        guard lineBuffer.isEmpty, eventData.isEmpty, sawDone else { throw LLMClientError.malformedSSE }
+    /// Finish an SSE stream even when a compatible local server omits the
+    /// optional `[DONE]` marker or the final blank dispatch line.  We only
+    /// accept an EOF after at least one valid JSON payload; the workflow's
+    /// strict schema validator still rejects truncated/incomplete JSON.
+    mutating func finish() throws -> [String] {
+        guard lineBuffer.isEmpty else { throw LLMClientError.malformedSSE }
+        let trailing = try finishEvent()
+        guard sawDone || sawValidPayload else { throw LLMClientError.malformedSSE }
+        return trailing
     }
 
     private mutating func finishEvent() throws -> [String] {
@@ -181,15 +189,51 @@ struct OpenAICompatibleSSEParser: Sendable {
         }
         eventData.removeAll(keepingCapacity: true)
         if payload == Data("[DONE]".utf8) { sawDone = true; return [] }
-        struct Chunk: Decodable {
-            struct Choice: Decodable { struct Delta: Decodable { let content: String? }; let delta: Delta? }
-            struct ProviderError: Decodable { let message: String? }
-            let choices: [Choice]?
-            let error: ProviderError?
+        sawValidPayload = true
+        return try OpenAICompatiblePayloadDecoder.textDeltas(from: payload)
+    }
+}
+
+/// OpenAI-compatible servers do not all agree on the exact JSON type used for
+/// streamed content.  In addition to the canonical `delta.content` string,
+/// local Ollama/LM Studio builds and newer gateways may emit `choices[].text`
+/// or a content-part array such as `[{'type':'text','text':'...'}]`.
+private enum OpenAICompatiblePayloadDecoder {
+    static func textDeltas(from data: Data) throws -> [String] {
+        guard let root = try? JSONDecoder().decode(JSONValue.self, from: data),
+              let object = root.objectValue else { throw LLMClientError.malformedSSE }
+        if object["error"]?.objectValue != nil { throw LLMClientError.providerError }
+        guard let choices = object["choices"]?.arrayValue else { return [] }
+        return choices.compactMap { choice in
+            guard let value = choice.objectValue else { return nil }
+            let content = value["delta"]?.objectValue?["content"] ??
+                value["message"]?.objectValue?["content"] ?? value["text"]
+            return text(from: content)
         }
-        guard let chunk = try? JSONDecoder().decode(Chunk.self, from: payload) else { throw LLMClientError.malformedSSE }
-        if chunk.error != nil { throw LLMClientError.providerError }
-        return chunk.choices?.compactMap { $0.delta?.content } ?? []
+    }
+
+    static func completionText(from data: Data) throws -> String {
+        guard let root = try? JSONDecoder().decode(JSONValue.self, from: data),
+              let object = root.objectValue else {
+            throw LLMClientError.invalidResponse
+        }
+        if object["error"]?.objectValue != nil { throw LLMClientError.providerError }
+        guard let choices = object["choices"]?.arrayValue,
+              let first = choices.first?.objectValue else { throw LLMClientError.invalidResponse }
+        let content = first["message"]?.objectValue?["content"] ?? first["text"]
+        guard let value = text(from: content), !value.isEmpty else { throw LLMClientError.invalidResponse }
+        return value
+    }
+
+    private static func text(from value: JSONValue?) -> String? {
+        guard let value else { return nil }
+        if let string = value.stringValue { return string }
+        guard let parts = value.arrayValue else { return nil }
+        let values = parts.compactMap { part -> String? in
+            if let string = part.stringValue { return string }
+            return part.objectValue?["text"]?.stringValue
+        }
+        return values.isEmpty ? nil : values.joined()
     }
 }
 
@@ -301,7 +345,12 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
                     await onDelta(delta)
                 }
             }
-            try parser.finish()
+            for delta in try parser.finish() {
+                responseBytes += delta.lengthOfBytes(using: .utf8)
+                guard responseBytes <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("流式响应超过本地字节上限") }
+                result += delta
+                await onDelta(delta)
+            }
             return result
         } else {
             // URLSession.data(for:) does not expose a first-byte boundary, so
@@ -328,10 +377,7 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
                 guard data.count <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("非流式响应超过本地字节上限") }
             }
             guard receivedFirstByte else { throw LLMClientError.invalidResponse }
-            struct Completion: Decodable { struct Choice: Decodable { struct Message: Decodable { let content: String? }; let message: Message }; let choices: [Choice] }
-            guard let content = try JSONDecoder().decode(Completion.self, from: data).choices.first?.message.content else {
-                throw LLMClientError.invalidResponse
-            }
+            let content = try OpenAICompatiblePayloadDecoder.completionText(from: data)
             await onDelta(content)
             return content
         }

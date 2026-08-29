@@ -48,7 +48,7 @@ final class CoreContractTests: XCTestCase {
     @MainActor
     func testSettingsCredentialStatusUsesPresenceQueryWithoutReadingSecretBytes() async {
         let keychain = PresenceOnlyKeychain()
-        let viewModel = AppViewModel(keychain: keychain, useFixtureDependencies: false)
+        let viewModel = AppViewModel(store: InMemoryLibraryStore(), keychain: keychain, useFixtureDependencies: false)
 
         let isSaved = await viewModel.apiKeySavedStatus(for: .openAI)
         XCTAssertTrue(isSaved)
@@ -242,7 +242,7 @@ final class CoreContractTests: XCTestCase {
     func testModelDiscoveryUsesSavedKeychainKeyForTheSelectedProvider() async throws {
         let keychain = FixedKeychain(value: "saved-provider-key")
         let discoverer = ModelDiscovererSpy()
-        let viewModel = AppViewModel(keychain: keychain, modelDiscoverer: discoverer, useFixtureDependencies: false)
+        let viewModel = AppViewModel(store: InMemoryLibraryStore(), keychain: keychain, modelDiscoverer: discoverer, useFixtureDependencies: false)
 
         let models = try await viewModel.discoverModels(profile: viewModel.settings.activeProfile, provider: .openAI)
 
@@ -256,7 +256,7 @@ final class CoreContractTests: XCTestCase {
     @MainActor
     func testSavedCredentialReadNeverBlocksTheInteractiveMainActor() async throws {
         let keychain = DelayedReadKeychain(delay: 0.7)
-        let viewModel = AppViewModel(keychain: keychain, modelDiscoverer: ModelDiscovererSpy(), useFixtureDependencies: false)
+        let viewModel = AppViewModel(store: InMemoryLibraryStore(), keychain: keychain, modelDiscoverer: ModelDiscovererSpy(), useFixtureDependencies: false)
         let discovery = Task {
             try await viewModel.discoverModels(profile: viewModel.settings.activeProfile, provider: .openAI)
         }
@@ -361,6 +361,22 @@ final class CoreContractTests: XCTestCase {
         let paper = try await client.literatureDetail(for: 124, now: Date(timeIntervalSince1970: 0))
         XCTAssertEqual(paper.publicationYear, 2025)
         XCTAssertEqual(paper.timelineYear, 2025)
+    }
+
+    func testPublicationYearAcceptsStringAndImprintFallbackWithoutUsingMalformedValues() async throws {
+        let stringYearPayload = Data("""
+        {"id":125,"metadata":{"titles":[{"title":"String publication year"}],"publication_info":[{"year":"2026"}],"preprint_date":"2022-01-01"}}
+        """.utf8)
+        let imprintPayload = Data("""
+        {"id":126,"metadata":{"titles":[{"title":"Imprint publication date"}],"publication_info":[{"year":"unknown"}],"imprints":[{"date":"2024-06-15"}],"preprint_date":"2021-01-01"}}
+        """.utf8)
+        let client = InspireClient(transport: SequentialTransport([stringYearPayload, imprintPayload]))
+        let stringYear = try await client.literatureDetail(for: 125, now: Date(timeIntervalSince1970: 0))
+        let imprintYear = try await client.literatureDetail(for: 126, now: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(stringYear.publicationYear, 2026)
+        XCTAssertEqual(stringYear.timelineYear, 2026)
+        XCTAssertEqual(imprintYear.publicationYear, 2024)
+        XCTAssertEqual(imprintYear.timelineYear, 2024)
     }
 
     func testLocalMarkdownTeXPreservesRawSourceAndUsesOnlyNativePreview() {
@@ -527,6 +543,15 @@ final class CoreContractTests: XCTestCase {
         let payload = ": keepalive\r\nevent: message\r\nid: 1\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"格点\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n"
         XCTAssertEqual(try parser.consume(Data(payload.utf8)), ["格点"])
         XCTAssertNoThrow(try parser.finish())
+
+        // Ollama/LM Studio-compatible endpoints commonly close a valid SSE
+        // stream without the optional [DONE] marker and may encode content as
+        // an array of text parts.  Both forms must reach the strict workflow
+        // validator instead of becoming a transport failure at EOF.
+        var localParser = OpenAICompatibleSSEParser()
+        let eofPayload = "data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"格\"},{\"type\":\"text\",\"text\":\"点\"}]}}]}\n"
+        XCTAssertEqual(try localParser.consume(Data(eofPayload.utf8)), [])
+        XCTAssertEqual(try localParser.finish(), ["格点"])
 
         XCTAssertTrue(PaperInsightPrompt.systemInstruction.contains("exact root keys"))
         XCTAssertTrue(PaperInsightPrompt.systemInstruction.contains("no wrapper"))

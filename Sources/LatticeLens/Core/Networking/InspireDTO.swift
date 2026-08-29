@@ -151,6 +151,7 @@ struct InspireLiteratureHit: Decodable, Sendable {
         let earliestDate: String?
         let dois: [DOI]?
         let publicationInfo: [PublicationInfo]?
+        let imprints: [Imprint]?
         let figures: [Figure]?
         let authors: [Contributor]?
         let documents: [Document]?
@@ -162,6 +163,7 @@ struct InspireLiteratureHit: Decodable, Sendable {
             case preprintDate = "preprint_date"
             case earliestDate = "earliest_date"
             case publicationInfo = "publication_info"
+            case imprints
         }
     }
 
@@ -199,6 +201,13 @@ struct InspireLiteratureHit: Decodable, Sendable {
             year = (try? container.decodeIfPresent(Int.self, forKey: .year)) ??
                 (try? container.decodeIfPresent(String.self, forKey: .year).flatMap(Int.init))
         }
+    }
+
+    struct Imprint: Codable, Sendable {
+        /// INSPIRE uses an ISO date here (for example, `2023-01-04`).  Some
+        /// older mirrors expose only the four-digit year, so the mapper
+        /// accepts both bounded forms and ignores malformed values.
+        let date: String?
     }
 
     struct Figure: Codable, Sendable {
@@ -261,7 +270,9 @@ enum InspireMapper {
         let eprint = metadata.arxivEprints?.first
         let publicationYear = metadata.publicationInfo?
             .compactMap(\.year)
-            .first(where: { (1900...2200).contains($0) })
+            .first(where: { (1900...2200).contains($0) }) ??
+            metadata.imprints?.compactMap { parseYear($0.date) }
+                .first(where: { (1900...2200).contains($0) })
         let figures = (metadata.figures ?? []).compactMap { figure -> PaperFigure? in
             guard let key = figure.key, !key.isEmpty else { return nil }
             let url = figure.url.flatMap(URL.init(string:)).flatMap { $0.scheme?.lowercased() == "https" ? $0 : nil }
@@ -330,5 +341,19 @@ enum InspireMapper {
     private static func parseDateTime(_ value: String?) -> Date? {
         guard let value else { return nil }
         return ISO8601DateFormatter().date(from: value) ?? parseDate(value)
+    }
+
+    private static func parseYear(_ value: String?) -> Int? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count == 4 || trimmed.count >= 5 else { return nil }
+        let prefix = String(trimmed.prefix(4))
+        guard prefix.allSatisfy(\.isNumber), let year = Int(prefix) else { return nil }
+        // Do not let an arbitrary numeric mirror field become a timeline year.
+        guard (1900...2200).contains(year) else { return nil }
+        if trimmed.count > 4 {
+            guard trimmed.first(where: { !$0.isNumber }) == "-" else { return nil }
+        }
+        return year
     }
 }
