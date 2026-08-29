@@ -188,7 +188,6 @@ private struct SettingsOverlay: View {
             .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityIdentifier("settingsOverlay")
     }
 }
 
@@ -663,9 +662,12 @@ private struct PaperTimeline: View {
         // not a user request to abandon the visible paper, and treating it as
         // one would cancel/restart its LLM task.  Preserve a selection that is
         // still present in the current local projection.
-        if paperID == nil,
-           let selected = viewModel.selectedPaperID,
-           viewModel.papers.contains(where: { $0.literatureID == selected }) {
+        if paperID == nil, viewModel.selectedPaperID != nil {
+            // During an incremental metadata/detail refresh AppKit can emit a
+            // transient nil while List rebuilds its rows.  A real author
+            // switch clears selectedPaperID before publishing its own nil, so
+            // any nil seen while a paper is still selected is reconciliation
+            // noise and must not cancel an in-flight LLM request.
             return
         }
         guard paperID != viewModel.selectedPaperID else { return }

@@ -539,10 +539,10 @@ struct ProductionSettingsView: View {
     @State private var clearScope: AIArtifactClearScope = .all
     @State private var clearPreview: V4AIClearPreview?
     @State private var confirmClearAI = false
-    // Keep the first production AX probe intentionally tiny while diagnosing
-    // the macOS 26 bridge.  Once the stable control set is confirmed this
-    // switch is flipped to use the complete single-scroll implementation.
-    private let debugMinimal = true
+    // The production surface intentionally uses the stable single-scroll
+    // control set.  The richer historical sheet remains available to the
+    // fixture target, whose XCTest contract depends on that presentation.
+    private let stableProductionBody = true
 
     init(viewModel: AppViewModel) {
         self.viewModel = viewModel
@@ -551,7 +551,7 @@ struct ProductionSettingsView: View {
 
     @ViewBuilder
     var body: some View {
-        if debugMinimal {
+        if stableProductionBody {
             minimalBody
         } else {
             fullBody

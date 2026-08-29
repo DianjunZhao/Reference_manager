@@ -180,6 +180,29 @@ final class CoreContractTests: XCTestCase {
                        "leaving and returning to the same failed automatic input must not resend it")
     }
 
+    func testDeadlineReturnsBeforeSlowProviderTaskFinishes() async throws {
+        let startedAt = Date()
+        do {
+            _ = try await V4AnalysisDeadlineEnforcer.perform(
+                timeouts: V4AnalysisTimeouts(connect: 0.02, firstContent: 0.02, idle: 0.02, hard: 0.05),
+                maximumResponseBytes: 1_024,
+                onTransportState: { _ in },
+                onDelta: { _ in }
+            ) { _, _ in
+                // Simulate a provider byte stream that does not promptly
+                // observe cancellation.  The deadline gate must still return
+                // a terminal error without waiting for this operation.
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                return "{}"
+            }
+            XCTFail("a provider that never sends headers must hit the connect deadline")
+        } catch let error as V4AnalysisDeadlineError {
+            XCTAssertEqual(error, .connect)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.5,
+                          "deadline result must not wait for a slow, cancellation-insensitive provider task")
+    }
+
     func testUIFixtureFullTextAndVisionDependenciesAreAllowlistedAndOffline() async throws {
         let downloader = AppFixtureFullTextDownloader()
         let allowedURL = try XCTUnwrap(URL(string: "https://fixture.invalid/fulltext/1234567.pdf"))

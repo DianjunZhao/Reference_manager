@@ -437,8 +437,83 @@ private actor V4AnalysisDeadlineMonitor {
     }
 }
 
+/// A one-shot completion gate used by the deadline race below.  It deliberately
+/// lives outside a structured task group: URLSession's byte stream can ignore
+/// cancellation until the remote peer closes, and waiting for that child at a
+/// task-group scope exit would keep the visible UI in "waiting" forever after
+/// a deadline.  The gate resumes the caller once, cancels both children, and
+/// ignores any late child result.
+private final class V4AnalysisCompletionGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resolved = false
+    private var continuation: CheckedContinuation<String, Error>?
+    private var operationTask: Task<Void, Never>?
+    private var deadlineTask: Task<Void, Never>?
+
+    init(_ continuation: CheckedContinuation<String, Error>) {
+        self.continuation = continuation
+    }
+
+    func install(operationTask: Task<Void, Never>, deadlineTask: Task<Void, Never>) {
+        lock.lock()
+        if resolved {
+            lock.unlock()
+            operationTask.cancel()
+            deadlineTask.cancel()
+            return
+        }
+        self.operationTask = operationTask
+        self.deadlineTask = deadlineTask
+        lock.unlock()
+    }
+
+    func resolve(_ result: Result<String, Error>) {
+        lock.lock()
+        guard !resolved else {
+            lock.unlock()
+            return
+        }
+        resolved = true
+        let continuation = self.continuation
+        self.continuation = nil
+        let operationTask = self.operationTask
+        let deadlineTask = self.deadlineTask
+        self.operationTask = nil
+        self.deadlineTask = nil
+        lock.unlock()
+
+        operationTask?.cancel()
+        deadlineTask?.cancel()
+        continuation?.resume(with: result)
+    }
+
+    func cancel() {
+        resolve(.failure(CancellationError()))
+    }
+}
+
+private final class V4AnalysisCompletionGateBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var gate: V4AnalysisCompletionGate?
+
+    func install(_ gate: V4AnalysisCompletionGate) {
+        lock.lock()
+        self.gate = gate
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        let gate = self.gate
+        lock.unlock()
+        gate?.cancel()
+    }
+}
+
 /// Wraps exactly one provider call.  The wrapper has no retry or streaming
 /// fallback path, and cancellation of either child task cancels the other.
+/// A deadline returns immediately even if the underlying byte stream is slow
+/// to observe cancellation; late callbacks are rejected by the monitor.
 enum V4AnalysisDeadlineEnforcer {
     static func perform(
         timeouts: V4AnalysisTimeouts,
@@ -450,30 +525,46 @@ enum V4AnalysisDeadlineEnforcer {
     ) async throws -> String {
         guard maximumResponseBytes > 0 else { throw V4AnalysisDeadlineError.responseTooLarge }
         let monitor = V4AnalysisDeadlineMonitor(timeouts: timeouts, maximumResponseBytes: maximumResponseBytes)
-        return try await withThrowingTaskGroup(of: String.self) { group in
-            group.addTask {
-                let response = try await operation(
-                    { state in
-                        guard await monitor.recordTransport(state) else { return }
-                        await onTransportState(state)
-                    },
-                    { value in
-                        guard await monitor.recordDelta(value) else { return }
-                        await onDelta(value)
+        let gateBox = V4AnalysisCompletionGateBox()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+                let gate = V4AnalysisCompletionGate(continuation)
+                gateBox.install(gate)
+                let operationTask = Task { @Sendable in
+                    do {
+                        let response = try await operation(
+                            { state in
+                                guard await monitor.recordTransport(state) else { return }
+                                await onTransportState(state)
+                            },
+                            { value in
+                                guard await monitor.recordDelta(value) else { return }
+                                await onDelta(value)
+                            }
+                        )
+                        if let failure = await monitor.failure() {
+                            gate.resolve(.failure(failure))
+                        } else {
+                            gate.resolve(.success(response))
+                        }
+                    } catch {
+                        gate.resolve(.failure(error))
                     }
-                )
-                if let failure = await monitor.failure() { throw failure }
-                return response
+                }
+                let deadlineTask = Task { @Sendable in
+                    do {
+                        _ = try await monitor.waitForFailure()
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        gate.resolve(.failure(error))
+                    }
+                }
+                gate.install(operationTask: operationTask, deadlineTask: deadlineTask)
+                if Task.isCancelled { gate.cancel() }
             }
-            group.addTask { try await monitor.waitForFailure() }
-            do {
-                guard let first = try await group.next() else { throw LatticeLensError.cancelled }
-                group.cancelAll()
-                return first
-            } catch {
-                group.cancelAll()
-                throw error
-            }
+        } onCancel: {
+            gateBox.cancel()
         }
     }
 }
