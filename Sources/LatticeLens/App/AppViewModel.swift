@@ -1736,10 +1736,10 @@ final class AppViewModel: ObservableObject {
         }
         // Without an abstract the workflow sends only the title, obtains a
         // strict title-only translation, and creates no model physics claim.
-        startInsightTask(for: paper, cacheKey: resolvedCacheKey)
+        startInsightTask(for: paper, cacheKey: resolvedCacheKey, trigger: trigger)
     }
 
-    private func startInsightTask(for paper: Paper, cacheKey: String) {
+    private func startInsightTask(for paper: Paper, cacheKey: String, trigger: InsightRequestTrigger) {
         insightTask?.cancel()
         let session = UUID()
         insightSessionID = session
@@ -1806,7 +1806,12 @@ final class AppViewModel: ObservableObject {
                 guard self.insightSessionID == session else { return }
                 if case .failed = self.insightState {} else { self.insightState = .failed(error.localizedDescription) }
                 self.updateAnalysisRun(runID: runID, workflowState: .failed(error.localizedDescription), startedAt: started)
-                self.automaticInsightTerminalMessages[cacheKey] = "上次自动分析失败：\(error.localizedDescription)；不会自动重试。请使用“重新生成”明确重试。"
+                let triggerLabel: String
+                switch trigger {
+                case .automatic: triggerLabel = "上次自动分析失败"
+                case .manual: triggerLabel = "上次分析失败"
+                }
+                self.automaticInsightTerminalMessages[cacheKey] = "\(triggerLabel)：\(error.localizedDescription)；不会自动重试。请使用“重新生成”明确重试。"
                 self.insightStartedAt = nil
             }
         }

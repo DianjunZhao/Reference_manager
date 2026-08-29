@@ -1205,10 +1205,22 @@ private struct InsightStatusBar: View {
             }
             Button("重新生成") { viewModel.generateSelectedInsight() }
                 .disabled(viewModel.selectedPaper == nil)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .frame(minWidth: 88)
                 .accessibilityIdentifier("regenerateInsight")
                 .keyboardShortcut("r", modifiers: [.command, .shift])
         }
-        .padding(10).background(.bar)
+        // Keep the action band inside the detail column's safe area even when
+        // the host window is at the compact 820×640 floor.  A fixed minimum
+        // height and bottom inset prevent the primary action from being
+        // visually clipped against the screen edge (which also makes pointer
+        // activation unreliable on a scaled display).
+        .frame(maxWidth: .infinity, minHeight: 46, alignment: .center)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .padding(.bottom, 4)
+        .background(.bar)
     }
 
     private func elapsedSuffix(at date: Date) -> String {

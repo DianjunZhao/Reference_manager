@@ -156,14 +156,13 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     SettingsSection("Provider") {
                         SettingsControlRow("服务") {
-                            Picker("服务", selection: $draft.activeProvider) {
-                                ForEach(LLMProvider.allCases) { Text($0.displayName).tag($0) }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            SettingsMenuButton(
+                                title: "服务",
+                                selection: $draft.activeProvider,
+                                options: LLMProvider.allCases,
+                                optionTitle: { $0.displayName }
+                            )
                             .accessibilityIdentifier("providerPicker")
-                            .accessibilityLabel("服务")
                         }
                         SettingsControlRow("Base URL") {
                             TextField("https://…/v1", text: activeProfileBinding(\.baseURL))
@@ -173,6 +172,7 @@ struct SettingsView: View {
                         SettingsControlRow(draft.activeProvider.apiKeyIsRequired ? "API Key（仅存储于 macOS Keychain）" : "API Key（可选；仅存储于 macOS Keychain）") {
                             SecureField("本次输入仅在保存时写入 Keychain", text: $apiKey)
                                 .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                                 .accessibilityIdentifier("providerAPIKey")
                         }
                         if !draft.activeProvider.apiKeyIsRequired {
@@ -272,16 +272,28 @@ struct SettingsView: View {
                     SettingsSection("论文分析") {
                         Toggle("选择论文后自动分析（稳定 600 ms）", isOn: $draft.automaticAnalysis)
                         SettingsControlRow("模式") {
-                            Picker("模式", selection: $draft.mode) { ForEach(InsightMode.allCases) { Text($0.displayName).tag($0) } }
-                                .labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                            SettingsMenuButton(
+                                title: "模式",
+                                selection: $draft.mode,
+                                options: InsightMode.allCases,
+                                optionTitle: { $0.displayName }
+                            )
                         }
                         SettingsControlRow("详细度") {
-                            Picker("详细度", selection: $draft.detailLevel) { ForEach(InsightDetailLevel.allCases) { Text($0.displayName).tag($0) } }
-                                .labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                            SettingsMenuButton(
+                                title: "详细度",
+                                selection: $draft.detailLevel,
+                                options: InsightDetailLevel.allCases,
+                                optionTitle: { $0.displayName }
+                            )
                         }
                         SettingsControlRow("重要图像") {
-                            Picker("重要图像", selection: $draft.maximumFigures) { Text("0").tag(0); Text("3").tag(3); Text("5").tag(5) }
-                                .labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                            SettingsMenuButton(
+                                title: "重要图像",
+                                selection: $draft.maximumFigures,
+                                options: [0, 3, 5],
+                                optionTitle: { String($0) }
+                            )
                         }
                         SettingsControlRow("证据范围") { Text("标题 + 摘要 + captions") }
                     }
@@ -400,13 +412,12 @@ struct SettingsView: View {
                     }
                     SettingsSection("本地缓存") {
                         SettingsControlRow("清除 AI 结果范围") {
-                            Picker("清除 AI 结果范围", selection: $clearScope) {
-                        Text("Insight").tag(AIArtifactClearScope.insight)
-                        Text("Evidence insight").tag(AIArtifactClearScope.evidenceInsight)
-                        Text("Vision artifact").tag(AIArtifactClearScope.vision)
-                        Text("全部").tag(AIArtifactClearScope.all)
-                            }
-                            .labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity, alignment: .leading)
+                            SettingsMenuButton(
+                                title: "清除 AI 结果范围",
+                                selection: $clearScope,
+                                options: AIArtifactClearScope.allCases,
+                                optionTitle: { $0.displayName }
+                            )
                         }
                     Button("清除 AI 结果…", role: .destructive) {
                         Task {
@@ -547,6 +558,61 @@ private struct SettingsControlRow<Control: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A native `Picker` inside a macOS sheet can lose its hit target when the
+/// surrounding view is a vertically scrolling GroupBox.  A Menu keeps one
+/// explicit button as the hit target and renders the options in AppKit's
+/// standard pop-up menu, while retaining a stable accessibility surface.
+private struct SettingsMenuButton<Option: Hashable>: View {
+    let title: String
+    @Binding var selection: Option
+    let options: [Option]
+    let optionTitle: (Option) -> String
+
+    var body: some View {
+        Menu {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    selection = option
+                } label: {
+                    HStack(spacing: 6) {
+                        if option == selection {
+                            Image(systemName: "checkmark")
+                        }
+                        Text(optionTitle(option))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Text(optionTitle(selection))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.bordered)
+        .accessibilityLabel(title)
+        .accessibilityValue(optionTitle(selection))
+    }
+}
+
+private extension AIArtifactClearScope {
+    var displayName: String {
+        switch self {
+        case .insight: "Insight"
+        case .evidenceInsight: "Evidence insight"
+        case .vision: "Vision artifact"
+        case .all: "全部"
+        }
     }
 }
 
