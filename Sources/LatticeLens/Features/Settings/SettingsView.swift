@@ -535,28 +535,19 @@ struct ProductionSettingsView: View {
     @State private var models: [String] = []
     @State private var discoveryMessage: String?
     @State private var connectionMessage: String?
-    @State private var savedAPIKey: Bool?
     @State private var clearScope: AIArtifactClearScope = .all
     @State private var clearPreview: V4AIClearPreview?
     @State private var confirmClearAI = false
-    // The production surface intentionally uses the stable single-scroll
-    // control set.  The richer historical sheet remains available to the
-    // fixture target, whose XCTest contract depends on that presentation.
-    private let stableProductionBody = true
 
     init(viewModel: AppViewModel) {
         self.viewModel = viewModel
         _draft = State(initialValue: viewModel.settings)
     }
 
-    @ViewBuilder
-    var body: some View {
-        if stableProductionBody {
-            minimalBody
-        } else {
-            fullBody
-        }
-    }
+    /// The production surface uses one stable vertical scroll container.  The
+    /// richer historical SettingsView remains the fixture sheet whose XCTest
+    /// contract depends on the native sheet presentation.
+    var body: some View { minimalBody }
 
     private var minimalBody: some View {
         VStack(spacing: 0) {
@@ -636,6 +627,21 @@ struct ProductionSettingsView: View {
                                        options: [0, 3, 5], optionTitle: String.init)
                     Text("证据范围：标题 + 摘要 + captions；不发送 PDF 全文或图像像素。")
                         .font(.caption).foregroundStyle(.secondary)
+                    Divider()
+                    Text("本地缓存").font(.headline)
+                    SettingsMenuButton(title: "清除 AI 结果范围", selection: $clearScope,
+                                       options: AIArtifactClearScope.allCases,
+                                       optionTitle: { $0.displayName })
+                    Button("清除 AI 结果…") {
+                        Task {
+                            clearPreview = await viewModel.aiClearPreview(scope: clearScope)
+                            confirmClearAI = true
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("clearAIResults")
+                    Text("只删除本机保存的 AI artifact，不影响作者、论文 metadata、note 或 API Key。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 18)
@@ -647,157 +653,6 @@ struct ProductionSettingsView: View {
         }
         .frame(width: 620, height: 560, alignment: .top)
         .onExitCommand { viewModel.cancelSettings() }
-    }
-
-    @ViewBuilder
-    private var fullBody: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Settings").font(.title3)
-                Spacer()
-                Button("取消") { viewModel.cancelSettings() }
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityIdentifier("cancelSettings")
-                Button("保存") {
-                    NSApp.keyWindow?.makeFirstResponder(nil)
-                    viewModel.saveSettings(draft, apiKey: apiKey)
-                    viewModel.cancelSettings()
-                }
-                .keyboardShortcut(.defaultAction)
-                .accessibilityIdentifier("saveSettings")
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
-
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 14) {
-                    SettingsSection("Provider") {
-                        SettingsControlRow("服务") {
-                            SettingsMenuButton(
-                                title: "服务",
-                                selection: $draft.activeProvider,
-                                options: LLMProvider.allCases,
-                                optionTitle: { $0.displayName }
-                            )
-                            .accessibilityIdentifier("providerPicker")
-                        }
-                        SettingsControlRow("Base URL") {
-                            TextField("https://…/v1", text: activeProfileBinding(\.baseURL))
-                                .textFieldStyle(.roundedBorder)
-                                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                                .accessibilityIdentifier("providerBaseURL")
-                        }
-                        SettingsControlRow(draft.activeProvider.apiKeyIsRequired
-                                           ? "API Key（仅存储于 macOS Keychain）"
-                                           : "API Key（可选；仅存储于 macOS Keychain）") {
-                            SecureField("本次输入仅在保存时写入 Keychain", text: $apiKey)
-                                .textFieldStyle(.roundedBorder)
-                                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-                                .accessibilityIdentifier("providerAPIKey")
-                        }
-                        Text(savedAPIKey == true ? "当前 provider 已保存 API Key" :
-                             savedAPIKey == false ? "当前 provider 未保存 API Key" :
-                             "正在检查当前 provider 的 API Key 保存状态…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("apiKeyStorageStatus")
-                            .accessibilityLabel("API Key 保存状态")
-                            .accessibilityValue(savedAPIKey == true ? "已保存" : savedAPIKey == false ? "未保存" : "正在检查")
-                        SettingsControlRow("模型 ID（可手工填写）") {
-                            TextField("model id", text: activeProfileBinding(\.manualModel))
-                                .textFieldStyle(.roundedBorder)
-                                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                                .accessibilityIdentifier("providerManualModel")
-                        }
-                        HStack(spacing: 8) {
-                            Button("测试连接") { Task { await testConnection() } }
-                                .accessibilityIdentifier("testProviderConnection")
-                            Button("发现模型") { Task { await discoverModels() } }
-                                .accessibilityIdentifier("discoverModels")
-                            Spacer(minLength: 0)
-                        }
-                        SettingsControlRow("已发现/已保存模型") {
-                            SettingsMenuButton(
-                                title: "选择已发现或已保存模型",
-                                selection: activeProfileBinding(\.selectedModel),
-                                options: [""] + models,
-                                optionTitle: { $0.isEmpty ? "不选择" : $0 }
-                            )
-                            .accessibilityIdentifier("selectProviderModel")
-                        }
-                        Toggle("Streaming", isOn: activeProfileBinding(\.usesStreaming))
-                        Toggle("当前 provider/model 支持 Vision（需手工确认）", isOn: activeProfileBinding(\.supportsVision))
-                            .accessibilityIdentifier("providerSupportsVision")
-                        if let connectionMessage {
-                            Text(connectionMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier("providerConnectionStatus")
-                        }
-                        if let discoveryMessage {
-                            Text(discoveryMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier("providerDiscoveryStatus")
-                        }
-                    }
-
-                    SettingsSection("论文分析") {
-                        Toggle("选择论文后自动分析（稳定 600 ms）", isOn: $draft.automaticAnalysis)
-                        SettingsControlRow("模式") {
-                            SettingsMenuButton(title: "模式", selection: $draft.mode,
-                                               options: InsightMode.allCases,
-                                               optionTitle: { $0.displayName })
-                        }
-                        SettingsControlRow("详细度") {
-                            SettingsMenuButton(title: "详细度", selection: $draft.detailLevel,
-                                               options: InsightDetailLevel.allCases,
-                                               optionTitle: { $0.displayName })
-                        }
-                        SettingsControlRow("重要图像") {
-                            SettingsMenuButton(title: "重要图像", selection: $draft.maximumFigures,
-                                               options: [0, 3, 5], optionTitle: String.init)
-                        }
-                        Text("证据范围：标题 + 摘要 + captions；不发送 PDF 全文或图像像素。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    SettingsSection("本地缓存") {
-                        SettingsControlRow("清除 AI 结果范围") {
-                            SettingsMenuButton(title: "清除 AI 结果范围", selection: $clearScope,
-                                               options: AIArtifactClearScope.allCases,
-                                               optionTitle: { $0.displayName })
-                        }
-                        Button("清除 AI 结果…") {
-                            Task {
-                                clearPreview = await viewModel.aiClearPreview(scope: clearScope)
-                                confirmClearAI = true
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("clearAIResults")
-                        Text("只删除本机保存的 AI artifact，不影响作者、论文 metadata、note 或 API Key。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 18)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .scrollIndicators(.visible)
-            .accessibilityIdentifier("settingsScrollableForm")
-            .accessibilityLabel("Settings scrollable form")
-        }
-        .frame(width: 620, height: 560, alignment: .top)
-        .onExitCommand { viewModel.cancelSettings() }
-        // The production modal intentionally avoids launching a Keychain
-        // read during the first render.  A delayed read can be requested by
-        // the explicit provider interaction below; keeping presentation
-        // synchronous prevents SecurityServer latency from racing AX tree
-        // construction on macOS 26.
         .alert("清除 AI 结果？", isPresented: $confirmClearAI) {
             Button("取消", role: .cancel) {}
             Button("按所选范围清除", role: .destructive) {

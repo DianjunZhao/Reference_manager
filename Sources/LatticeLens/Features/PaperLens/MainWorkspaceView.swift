@@ -660,8 +660,8 @@ private struct PaperTimeline: View {
         // During an incremental paper-sync commit AppKit can transiently send
         // a nil List selection while it reconciles the inserted rows.  It is
         // not a user request to abandon the visible paper, and treating it as
-        // one would cancel/restart its LLM task.  Preserve a selection that is
-        // still present in the current local projection.
+        // one would cancel/restart its LLM task.  Preserve the current paper
+        // until an explicit author switch has cleared selectedPaperID.
         if paperID == nil, viewModel.selectedPaperID != nil {
             // During an incremental metadata/detail refresh AppKit can emit a
             // transient nil while List rebuilds its rows.  A real author
