@@ -362,8 +362,26 @@ private struct SourceTab: View {
                 // read/favorite/note/tag/collection action should not require
                 // scrolling past remote record metadata first.
                 ReferenceControls(viewModel: viewModel)
-                GroupBox("titles") { ForEach(paper.titles) { Text("[\($0.source ?? "unknown")] \($0.value)").textSelection(.enabled) } }
-                GroupBox("abstracts") { ForEach(paper.abstracts) { Text("[\($0.source ?? "unknown")] \($0.value)").textSelection(.enabled) } }
+                GroupBox("文献标题") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(paper.titles) { title in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("[\(title.source ?? "unknown")]").font(.caption).foregroundStyle(.secondary)
+                                LocalMarkdownTeXText(source: title.value)
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
+                GroupBox("摘要") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(paper.abstracts) { abstract in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("[\(abstract.source ?? "unknown")]").font(.caption).foregroundStyle(.secondary)
+                                LocalMarkdownTeXText(source: abstract.value)
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }
                 GroupBox("Bibliographic metadata") {
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
                         SourceRow(name: "INSPIRE record id", value: String(paper.literatureID))
@@ -376,15 +394,19 @@ private struct SourceTab: View {
                         SourceRow(name: "figures", value: String(paper.figures.count))
                     }
                 }
-                GroupBox("authors (INSPIRE order)") {
-                    if paper.contributors.isEmpty {
-                        Text("INSPIRE search record 未提供作者顺序。").foregroundStyle(.secondary)
-                    } else {
-                        ForEach(paper.contributors.sorted { $0.position < $1.position }) { contributor in
-                            Text("\(contributor.position + 1). \(contributor.fullName)\(contributor.recid.map { " · recid \($0)" } ?? "")")
-                                .textSelection(.enabled)
+                GroupBox("作者（INSPIRE 顺序）") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if paper.contributors.isEmpty {
+                            Text("INSPIRE search record 未提供作者顺序。").foregroundStyle(.secondary)
+                        } else {
+                            ForEach(paper.contributors.sorted { $0.position < $1.position }) { contributor in
+                                Text("\(contributor.position + 1). \(contributor.fullName)\(contributor.recid.map { " · recid \($0)" } ?? "")")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                            }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 GroupBox("documents / fulltext") {
                     if paper.documents.isEmpty {
@@ -588,6 +610,8 @@ private struct EvidenceTab: View {
             if let artifact = viewModel.evidenceInsightArtifact {
                 EvidenceArtifactSummary(artifact: artifact)
                     .padding(.horizontal)
+                EvidenceClaimSection(title: "重要公式推导", claims: artifact.insight.physics.importantFormulaDerivations)
+                .padding(.horizontal)
             }
             if let annotationStatus = viewModel.annotationStatusMessage {
                 Text(annotationStatus)
@@ -665,7 +689,7 @@ private struct EvidenceAnchorRow: View {
                 if let page = anchor.page { Text("PDF p.\(page)").font(.caption).foregroundStyle(.secondary) }
                 if let section = anchor.section { Text(section).font(.caption).lineLimit(1).foregroundStyle(.secondary) }
             }
-            Text(anchor.quote)
+            LocalMarkdownTeXText(source: anchor.quote)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -707,7 +731,7 @@ private struct EvidenceClaimSection: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(claims) { claim in
                         VStack(alignment: .leading, spacing: 5) {
-                            HStack { Text(claim.epistemicStatus.rawValue).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(.quaternary, in: Capsule()); Text(claim.textZH) }
+                            HStack(alignment: .top) { Text(claim.epistemicStatus.rawValue).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(.quaternary, in: Capsule()); LocalMarkdownTeXText(source: claim.textZH) }
                             if !claim.evidenceIDs.isEmpty { Text(claim.evidenceIDs.joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled) }
                         }
                     }
@@ -730,7 +754,7 @@ struct PDFAnchorPreview: View {
                 // As with the nested Compare inspector, identify a concrete
                 // visible child instead of relying solely on a sheet root.
                 .accessibilityIdentifier("pdfAnchorPreviewPageTitle-\(anchor.page ?? 0)")
-            Text(anchor.quote).font(.caption).textSelection(.enabled).lineLimit(4)
+            LocalMarkdownTeXText(source: anchor.quote).font(.caption).lineLimit(4)
             if let document, let filename = document.localFilename {
                 PDFPageView(url: FullTextService.defaultCacheDirectory.appendingPathComponent(filename), page: anchor.page ?? 1,
                             textSelection: $selection)

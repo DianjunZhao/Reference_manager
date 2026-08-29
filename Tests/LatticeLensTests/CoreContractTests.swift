@@ -104,6 +104,20 @@ final class CoreContractTests: XCTestCase {
                        "fresh store must load the first INSPIRE page after self-author refresh")
     }
 
+    func testAuthorCandidatePaginationPartitionsBeyondInspireResultWindow() async throws {
+        // INSPIRE rejects page 41 for a 250-row author query.  The client must
+        // switch to the next disjoint control-number partition instead of
+        // persisting a URL that will deterministically return HTTP 400.
+        let page = #"{"hits":{"hits":[],"total":10001},"links":{"next":"https://inspirehep.net/api/authors/?q=old&page=41&size=250"}}"#
+        let transport = SequentialTransport([Data(page.utf8)])
+        let client = InspireClient(transport: transport)
+        let result = try await client.authorCandidatesPage()
+        let next = try XCTUnwrap(result.nextURL)
+        let query = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+    }
+
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
         let store = InMemoryLibraryStore()
         let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,
@@ -410,6 +424,8 @@ final class CoreContractTests: XCTestCase {
         ])
         XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview("\\alpha + \\frac{a}{b}"), "α + (a)/(b)")
         XCTAssertEqual(LocalMarkdownTeX.segments(in: "price \\$100"), [.markdown("price \\$100")])
+        XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="inline">\alpha</math>"#), [.inlineTeX("\\alpha")])
+        XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="block">\frac{a}{b}</math>"#), [.displayTeX("\\frac{a}{b}")])
     }
 
     func testInspireGETRetriesOnlyBoundedRetryableResponsesAndHonorsRetryAfter() async throws {

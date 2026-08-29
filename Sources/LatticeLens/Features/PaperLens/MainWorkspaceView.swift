@@ -40,9 +40,11 @@ struct MainWorkspaceView: View {
                     Button {
                         viewModel.presentSyncCenter = true
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: viewModel.syncStatusSymbol)
                                 .accessibilityHidden(true)
+                                .imageScale(.small)
+                                .alignmentGuide(.firstTextBaseline) { dimensions in dimensions[VerticalAlignment.center] }
                             Text("INSPIRE")
                             Text(viewModel.syncToolbarStatus)
                                 .lineLimit(1)

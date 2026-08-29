@@ -24,14 +24,11 @@ The included 1.0 artifact is a same-Mac, ad-hoc local build.  It is neither
 Developer-ID signed nor notarized, and the UI evidence is the selected
 two-case scrolling delta gate, not a full 26-case UI regression suite.
 
-The final seal in `evidence/validation-v5-20260828T130035Z-14442.json` binds
-the archived local-release source tree hash
-`17fa101852400699a9a9f3dd1740e1608aaaf0d34e047caa12f71192d50a7df5` to the
-release manifest hash
-`db7c4f483f1e03aac710fe09b8fe02bbec76c6dac4678beec0dfdce67c315449`.  The
-DMG SHA-256 is `a88bccbddfc134c5f826343779ec5196cc2c8ec0ef8cc2b97049f56236f40c06`.
-Any source commit made after that seal, including responsiveness fixes, is
-intentionally not represented by that historical manifest or DMG.
+The current package manifest is
+`release-assets/Release-1.0.0-local/manifest-v1.0.json`; its DMG SHA-256 is
+recorded in that manifest and in `SHA256SUMS.txt`.  Historical validation and
+release directories remain outside this current handoff and must not be used
+as provenance for the rebuilt package.
 
 No license has been supplied with this export; choose and add one before
 publishing the repository.

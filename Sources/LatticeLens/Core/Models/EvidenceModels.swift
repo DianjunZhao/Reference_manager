@@ -148,6 +148,10 @@ enum EvidenceSourceKind: String, Codable, CaseIterable, Sendable {
     case abstract
     case caption
     case pdf
+
+    var displayNameZH: String {
+        switch self { case .abstract: "摘要"; case .caption: "图注"; case .pdf: "PDF 全文" }
+    }
 }
 
 struct EvidenceAnchor: Codable, Hashable, Identifiable, Sendable {
@@ -201,6 +205,10 @@ struct InsightPhysicsV2: Codable, Hashable, Sendable {
     let reasonableInferences: [EvidenceClaim]
     let missingInformation: [EvidenceClaim]
     let caveats: [EvidenceClaim]
+    /// Formula-focused derivations generated only from the retrieved PDF
+    /// anchors.  Older cached v2 artifacts may omit this field; decoding then
+    /// yields an empty list and remains backward compatible.
+    let importantFormulaDerivations: [EvidenceClaim]
 
     enum CodingKeys: String, CodingKey {
         case researchQuestion = "research_question"
@@ -209,6 +217,31 @@ struct InsightPhysicsV2: Codable, Hashable, Sendable {
         case reasonableInferences = "reasonable_inferences"
         case missingInformation = "missing_information"
         case caveats
+        case importantFormulaDerivations = "important_formula_derivations"
+    }
+
+    init(researchQuestion: EvidenceClaim, methodAndDataFlow: [EvidenceClaim], mainResults: [EvidenceClaim],
+         reasonableInferences: [EvidenceClaim], missingInformation: [EvidenceClaim], caveats: [EvidenceClaim],
+         importantFormulaDerivations: [EvidenceClaim] = []) {
+        self.researchQuestion = researchQuestion
+        self.methodAndDataFlow = methodAndDataFlow
+        self.mainResults = mainResults
+        self.reasonableInferences = reasonableInferences
+        self.missingInformation = missingInformation
+        self.caveats = caveats
+        self.importantFormulaDerivations = importantFormulaDerivations
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            researchQuestion: try values.decode(EvidenceClaim.self, forKey: .researchQuestion),
+            methodAndDataFlow: try values.decode([EvidenceClaim].self, forKey: .methodAndDataFlow),
+            mainResults: try values.decode([EvidenceClaim].self, forKey: .mainResults),
+            reasonableInferences: try values.decode([EvidenceClaim].self, forKey: .reasonableInferences),
+            missingInformation: try values.decode([EvidenceClaim].self, forKey: .missingInformation),
+            caveats: try values.decode([EvidenceClaim].self, forKey: .caveats),
+            importantFormulaDerivations: try values.decodeIfPresent([EvidenceClaim].self, forKey: .importantFormulaDerivations) ?? [])
     }
 }
 

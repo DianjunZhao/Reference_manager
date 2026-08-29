@@ -195,6 +195,10 @@ struct AuthorIndexService: Sendable {
     /// Exact category union used by both candidate and h-index generations.
     /// Keeping it in one contract also makes the durable checkpoint auditable.
     static let candidateQuery = "arxiv_categories:hep-lat OR arxiv_categories:hep-th"
+    /// Durable checkpoint identity, bumped when pagination mechanics change.
+    /// This is metadata only; the network client builds the actual partitioned
+    /// INSPIRE queries and never sends this suffix to the service.
+    static let candidateQueryCheckpoint = candidateQuery + " [pagination:control-number-v1]"
     static let candidateJobID = "author-candidates:hep-lat-or-hep-th"
     static let hIndexJobID = "author-h-index:hep-lat-or-hep-th"
 
@@ -226,14 +230,15 @@ struct AuthorIndexService: Sendable {
         // URL is scoped to the old hep-lat-only query and would silently omit
         // the newly supported hep-th candidates.  Start a fresh generation
         // while retaining the previous completed membership as a fallback.
-        if force || previous == nil || previous?.state == .completed || previous?.query != Self.candidateQuery {
+        let usesPartitionedPagination = previous?.nextURL?.query?.contains("control_number") ?? true
+        if force || previous == nil || previous?.state == .completed || previous?.query != Self.candidateQueryCheckpoint || !usesPartitionedPagination {
             let existingMembership = initialSnapshot.authorIndexGenerations.values
                 .filter { $0.state == .completed }
                 .max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?
                 .activeMembership
                 ?? Set(initialSnapshot.authors.values.filter(\.isHIndexCandidate).map(\.recid))
             checkpoint = SyncCheckpoint(jobID: Self.candidateJobID, jobKind: "author-candidates",
-                                        query: Self.candidateQuery, activeMembership: existingMembership)
+                                        query: Self.candidateQueryCheckpoint, activeMembership: existingMembership)
         } else {
             checkpoint = previous!
             checkpoint.state = .active
@@ -323,7 +328,7 @@ struct AuthorIndexService: Sendable {
             }
             .sorted { $0.recid < $1.recid }
         var checkpoint = canResume ? prior! : SyncCheckpoint(jobID: Self.hIndexJobID, jobKind: "author-h-index",
-                                        query: Self.candidateQuery, generationID: generation?.id ?? UUID().uuidString,
+                                        query: Self.candidateQueryCheckpoint, generationID: generation?.id ?? UUID().uuidString,
                                         nextURL: nil, successfulRecords: 0, failedRecords: 0,
                                         pendingIDs: candidates.map { $0.recid })
         // Promote exactly the persisted retry set into the new in-flight

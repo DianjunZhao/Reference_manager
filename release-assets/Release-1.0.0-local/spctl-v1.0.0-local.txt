@@ -1,1 +1,2 @@
-/Users/zhaodianjun/Desktop/Reference_manager/github/.codex-task-tmp-v5-package-20260829T135504Z-29502-yFyQhb/DerivedData/Build/Products/Release/LatticeLens.app: rejected
+/Users/zhaodianjun/Desktop/Reference_manager/Release-1.0.0-local/LatticeLens-1.0.0-local.dmg: rejected
+source=Insufficient Context

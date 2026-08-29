@@ -15,6 +15,20 @@ enum RadarEventKind: String, Codable, CaseIterable, Sendable {
     case fieldAdded
     case fieldRemoved
     case fieldModified
+
+    var displayNameZH: String {
+        switch self {
+        case .newPaper: "新论文"
+        case .recordRevised: "记录修订"
+        case .citationChanged: "引用变化"
+        case .newDocument: "新增全文"
+        case .newFigure: "新增图像"
+        case .publicationChanged: "发表状态变化"
+        case .fieldAdded: "字段新增"
+        case .fieldRemoved: "字段移除"
+        case .fieldModified: "字段修改"
+        }
+    }
 }
 
 struct AuthorIndexGeneration: Codable, Hashable, Identifiable, Sendable {
@@ -71,6 +85,10 @@ enum SavedQueryRefreshPolicy: String, Codable, CaseIterable, Sendable {
     case onLaunch
     case daily
     case weekly
+
+    var displayNameZH: String {
+        switch self { case .manual: "手动"; case .onLaunch: "启动时"; case .daily: "每天"; case .weekly: "每周" }
+    }
 }
 
 struct SavedInspireQuery: Codable, Hashable, Identifiable, Sendable {
@@ -238,6 +256,17 @@ enum PhysicsCellStatus: String, Codable, CaseIterable, Sendable {
     /// truth-table boundary.
     case caveat
     case stale
+
+    var displayNameZH: String {
+        switch self {
+        case .direct: "直接证据"
+        case .inference: "合理推断"
+        case .crossPaperInference: "跨论文推断"
+        case .missing: "缺失"
+        case .caveat: "限制"
+        case .stale: "已过期"
+        }
+    }
 }
 
 struct PhysicsContractCell: Codable, Hashable, Identifiable, Sendable {
@@ -303,6 +332,16 @@ enum V3ExportFormat: String, Codable, CaseIterable, Sendable {
     case ris
     case cslJSON
     case provenanceJSON
+
+    var displayNameZH: String {
+        switch self {
+        case .bibtex: "BibTeX"
+        case .markdownNotebook: "Markdown 笔记本"
+        case .ris: "RIS"
+        case .cslJSON: "CSL-JSON"
+        case .provenanceJSON: "来源 JSON"
+        }
+    }
 }
 
 enum AIArtifactClearScope: String, CaseIterable, Hashable, Sendable {

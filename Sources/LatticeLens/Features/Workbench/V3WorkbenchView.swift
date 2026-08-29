@@ -38,7 +38,7 @@ struct V3WorkbenchView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("Evidence Workbench", systemImage: "rectangle.3.group")
+                Label("证据工作台 Evidence Workbench", systemImage: "rectangle.3.group")
                     .font(.title3)
                     // Keep the Workbench's stable region identifier on the
                     // title itself.  On current macOS, assigning it to the
@@ -47,18 +47,18 @@ struct V3WorkbenchView: View {
                     // `createNotebookEntry`) with `v3Workbench`.
                     .accessibilityIdentifier("v3Workbench")
                 Spacer()
-                Text("local snapshot · \(viewModel.workbenchSnapshot.v3SchemaVersion)")
+                Text("本地快照 · \(viewModel.workbenchSnapshot.v3SchemaVersion)")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("刷新") { Task { await viewModel.refreshWorkbench() } }
                     .accessibilityIdentifier("workbenchRefresh")
                 Button("完成") { dismiss() }
             }
             .padding()
-            Picker("Workbench", selection: $tab) {
-                Text("Research Radar").tag(0)
-                Text("Compare").tag(1)
-                Text("Notebook / Export").tag(2)
-                Text("Graph").tag(3)
+            Picker("工作台", selection: $tab) {
+                Text("研究雷达").tag(0)
+                Text("对照").tag(1)
+                Text("笔记本与导出").tag(2)
+                Text("关系图").tag(3)
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("workbenchTabPicker")
@@ -107,7 +107,7 @@ private struct RadarWorkbenchTab: View {
     var body: some View {
         HSplitView {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Saved INSPIRE queries").font(.headline)
+                Text("已保存的 INSPIRE 查询").font(.headline)
                 TextField("名称", text: $queryName)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("radarQueryName")
@@ -115,7 +115,7 @@ private struct RadarWorkbenchTab: View {
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("radarQueryText")
                 Picker("刷新策略", selection: $policy) {
-                    ForEach(SavedQueryRefreshPolicy.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    ForEach(SavedQueryRefreshPolicy.allCases, id: \.self) { Text($0.displayNameZH).tag($0) }
                 }
                 .accessibilityIdentifier("radarRefreshPolicy")
                 Button("保存 query") { viewModel.saveRadarQuery(name: queryName, query: queryText, policy: policy) }
@@ -168,7 +168,7 @@ private struct RadarWorkbenchTab: View {
             .frame(minWidth: 280, maxWidth: 340)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Radar events").font(.headline)
+                    Text("Radar 事件").font(.headline)
                     Spacer()
                     Text("仅来自两次带时间戳的 INSPIRE snapshot diff")
                         .font(.caption).foregroundStyle(.secondary)
@@ -196,8 +196,8 @@ private struct RadarEventRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label(event.eventKind.rawValue, systemImage: event.isAcknowledged ? "checkmark.circle" : "bell.badge")
-                Text("paper \(event.paperID)").font(.caption).foregroundStyle(.secondary)
+                Label(event.eventKind.displayNameZH, systemImage: event.isAcknowledged ? "checkmark.circle" : "bell.badge")
+                Text("论文 \(event.paperID)").font(.caption).foregroundStyle(.secondary)
                 Text(event.isAcknowledged ? "已确认" : "待确认")
                     .font(.caption2)
                     .accessibilityIdentifier("radarEventAcknowledgement-\(event.id.uuidString)")
@@ -412,8 +412,8 @@ private struct PhysicsMatrix: View {
         ScrollView([.horizontal, .vertical]) {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
                 GridRow {
-                    Text("physics contract").bold().frame(width: 140, alignment: .leading)
-                    ForEach(paperIDs, id: \.self) { Text("paper \($0)").bold().frame(width: 120, alignment: .leading) }
+                    Text("物理约束矩阵").bold().frame(width: 140, alignment: .leading)
+                    ForEach(paperIDs, id: \.self) { Text("论文 \($0)").bold().frame(width: 120, alignment: .leading) }
                 }
                 ForEach(rowKeys, id: \.self) { rowKey in
                     GridRow {
@@ -421,7 +421,7 @@ private struct PhysicsMatrix: View {
                         ForEach(paperIDs, id: \.self) { paperID in
                             let cell = cells.first { $0.rowKey == rowKey && $0.paperID == paperID }
                             let displayValue = [cell?.value, cell?.unit].compactMap { $0 }.joined(separator: " ")
-                            let state = cell?.status.rawValue ?? "missing"
+                            let state = cell?.status.displayNameZH ?? "缺失"
                             Button {
                                 if let cell { inspect(cell) }
                             } label: {
@@ -430,7 +430,7 @@ private struct PhysicsMatrix: View {
                                         .accessibilityIdentifier("physicsCellValue-\(rowKey)-\(paperID)")
                                     Text(state).font(.caption2)
                                         .accessibilityIdentifier("physicsCellState-\(rowKey)-\(paperID)")
-                                    if !(cell?.evidenceAnchorIDs.isEmpty ?? true) { Label("anchor", systemImage: "link") }
+                                    if !(cell?.evidenceAnchorIDs.isEmpty ?? true) { Label("证据锚点", systemImage: "link") }
                                 }
                                 // Keep a two-paper Compare matrix legible in
                                 // the 1120 pt minimum-width workbench. Larger
@@ -468,7 +468,7 @@ private struct PhysicsCellInspector: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Physics cell")
+                Text("物理单元")
                     .font(.title3)
                     // A VStack used as the root of a nested SwiftUI sheet is
                     // not consistently surfaced as an AX element on macOS.
@@ -481,8 +481,8 @@ private struct PhysicsCellInspector: View {
                 Button("关闭") { close() }
             }
             Text(cell.rowKey).font(.headline)
-            Text("paper \(cell.paperID) · \(cell.status.rawValue) · \(cell.value ?? "unknown") \(cell.unit ?? "")")
-            Text("extraction: \(cell.extractionVersion)").font(.caption).foregroundStyle(.secondary)
+            Text("论文 \(cell.paperID) · \(cell.status.displayNameZH) · \(cell.value ?? "未知") \(cell.unit ?? "")")
+            Text("提取版本：\(cell.extractionVersion)").font(.caption).foregroundStyle(.secondary)
             if cell.evidenceAnchorIDs.isEmpty {
                 Label("无 anchor：该值保持 missing/unknown，不能回查。", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -490,7 +490,7 @@ private struct PhysicsCellInspector: View {
                 ForEach(cell.evidenceAnchorIDs, id: \.self) { id in
                     if let anchor = snapshot.evidenceAnchors[id] {
                         VStack(alignment: .leading) {
-                            Button("\(anchor.sourceKind.rawValue) \(anchor.page.map { "p\($0)" } ?? "metadata")") {
+                            Button("\(anchor.sourceKind.displayNameZH) \(anchor.page.map { "p\($0)" } ?? "元数据")") {
                                 openAnchor(anchor)
                             }
                             .buttonStyle(.link)
@@ -596,11 +596,11 @@ private struct NotebookWorkbenchTab: View {
 
     private var notebookIndex: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Evidence Notebook / portable export").font(.headline)
+            Text("证据笔记本 / 可移植导出").font(.headline)
             Text("仅导出用户选择的本地 records；默认不写入本机 PDF 绝对路径。RIS/CSL 缺失字段保持缺失。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Picker("格式", selection: $format) { ForEach(V3ExportFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+                Picker("格式", selection: $format) { ForEach(V3ExportFormat.allCases, id: \.self) { Text($0.displayNameZH).tag($0) } }
                 Button("导出…") { prepareExport() }
                     .disabled(selectedPaperIDs.isEmpty)
                     .accessibilityIdentifier("workbenchExport")
@@ -686,7 +686,7 @@ private struct NotebookWorkbenchTab: View {
                 GroupBox("Export provenance") {
                     ForEach(viewModel.workbenchSnapshot.exportRecords.values.sorted { $0.createdAt > $1.createdAt }) { record in
                         HStack {
-                            Text(record.format.rawValue)
+                            Text(record.format.displayNameZH)
                             Text(record.payloadHash.prefix(12)).font(.caption2).foregroundStyle(.secondary)
                             Spacer()
                             Text(record.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption2)
@@ -695,7 +695,7 @@ private struct NotebookWorkbenchTab: View {
                 }
             }
             if !viewModel.workbenchSnapshot.importConflicts.isEmpty {
-                GroupBox("Import conflicts · review required") {
+                GroupBox("导入冲突 · 需要审阅") {
                     ForEach(viewModel.workbenchSnapshot.importConflicts.values.sorted { $0.paperID < $1.paperID }, id: \.importedID) { conflict in
                         HStack {
                             Text("paper \(conflict.paperID): \(conflict.fields.joined(separator: ", "))")
@@ -738,7 +738,7 @@ private struct NotebookWorkbenchTab: View {
             }
             let annotations = viewModel.workbenchSnapshot.userEvidenceAnchors.values.sorted { $0.updatedAt > $1.updatedAt }
             if !annotations.isEmpty {
-                GroupBox("Local annotations") {
+                GroupBox("本地标注") {
                     List(annotations) { annotation in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
@@ -752,7 +752,7 @@ private struct NotebookWorkbenchTab: View {
                                     .buttonStyle(.link)
                                     .accessibilityIdentifier("deleteAnnotation-\(annotation.id.uuidString)")
                             }
-                            Text("paper \(annotation.paperID) · \(annotation.sourceKind.rawValue) \(annotation.page.map { "p\($0)" } ?? "metadata") · range \(annotation.characterRangeStart.map(String.init) ?? "—")–\(annotation.characterRangeEnd.map(String.init) ?? "—")")
+                        Text("论文 \(annotation.paperID) · \(annotation.sourceKind.displayNameZH) \(annotation.page.map { "p\($0)" } ?? "元数据") · 范围 \(annotation.characterRangeStart.map(String.init) ?? "—")–\(annotation.characterRangeEnd.map(String.init) ?? "—")")
                                 .font(.caption2).foregroundStyle(.secondary)
                             Text(annotation.quote).lineLimit(2).textSelection(.enabled)
                         }

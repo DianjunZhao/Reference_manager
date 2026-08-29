@@ -13,6 +13,7 @@ enum LocalMarkdownTeX {
     }
 
     static func segments(in source: String) -> [Segment] {
+        let source = normalizedMathMarkup(source)
         guard !source.isEmpty else { return [.markdown("")] }
         var output: [Segment] = []
         var markdownStart = source.startIndex
@@ -47,6 +48,50 @@ enum LocalMarkdownTeX {
         }
         appendMarkdown(until: source.endIndex)
         return output.isEmpty ? [.markdown(source)] : output
+    }
+
+    /// LLM providers and imported metadata occasionally serialize TeX as an
+    /// XML-like marker (`<math display="inline">…</math>`).  That marker is
+    /// transport syntax, not reader-facing content; normalize it before the
+    /// native renderer sees the string.  We also accept standard TeX
+    /// delimiters so formulas in titles, captions, evidence and notes share
+    /// one rendering path.
+    private static func normalizedMathMarkup(_ source: String) -> String {
+        var value = source
+        let patterns: [(String, Bool)] = [
+            (#"(?is)<math\s+display\s*=\s*['\"]inline['\"]\s*>(.*?)</math>"#, false),
+            (#"(?is)<math\s+display\s*=\s*['\"]block['\"]\s*>(.*?)</math>"#, true),
+            (#"(?is)<math\s*>(.*?)</math>"#, false),
+            (#"(?is)<tex\s*>(.*?)</tex>"#, false)
+        ]
+        for (pattern, display) in patterns {
+            value = replaceMathTags(in: value, pattern: pattern, display: display)
+        }
+        value = replaceMathTags(in: value, pattern: #"(?s)\\\((.*?)\\\)"#, display: false)
+        value = replaceMathTags(in: value, pattern: #"(?s)\\\[(.*?)\\\]"#, display: true)
+        return value
+    }
+
+    /// `String.replacingOccurrences` treats every `$` in a regex replacement
+    /// as a capture reference. Build the replacement from match ranges so the
+    /// literal TeX delimiters remain exactly one/two dollar signs.
+    private static func replaceMathTags(in source: String, pattern: String, display: Bool) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return source }
+        let fullRange = NSRange(source.startIndex..., in: source)
+        let matches = regex.matches(in: source, range: fullRange)
+        guard !matches.isEmpty else { return source }
+        var output = ""
+        var cursor = source.startIndex
+        for match in matches {
+            guard let whole = Range(match.range, in: source),
+                  let capture = Range(match.range(at: 1), in: source) else { continue }
+            output += source[cursor..<whole.lowerBound]
+            let body = source[capture]
+            output += display ? "$$\(body)$$" : "$\(body)$"
+            cursor = whole.upperBound
+        }
+        output += source[cursor..<source.endIndex]
+        return output
     }
 
     static func nativeTeXPreview(_ raw: String) -> String {

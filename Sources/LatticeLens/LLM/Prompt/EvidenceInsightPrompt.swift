@@ -15,7 +15,13 @@ enum EvidenceInsightPrompt {
     pixels; figures in this request are caption-only. Do not invent lattice
     spacing, volume, action, renormalization, Fourier/source-sink convention,
     statistics, fit ranges, numerical values, units, or uncertainties when the
-    provided anchors do not state them.
+    provided anchors do not state them. In physics.important_formula_derivations,
+    return up to 8 of the paper's most important displayed equations or
+    definitions as concise Chinese derivations. Each item must be a direct
+    evidence claim whose text_zh preserves the TeX formula between $...$ (or
+    $$...$$) delimiters, explains the algebraic step-by-step relation, and
+    cites the exact PDF anchor(s). Never invent an equation that is absent from
+    the supplied chunks.
     """
 
     static func userPayload(

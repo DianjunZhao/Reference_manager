@@ -140,13 +140,78 @@ struct InspireClient: Sendable {
     }
 
     func authorCandidatesPage(nextURL: URL? = nil) async throws -> (authors: [Author], nextURL: URL?, total: Int) {
-        let url = try nextURL.map { try validatedNextURL($0, expectedPath: "/api/authors") } ?? makeURL(path: "/api/authors", query: [
-            URLQueryItem(name: "q", value: AuthorIndexService.candidateQuery),
+        let url: URL
+        if let nextURL {
+            url = try validatedNextURL(nextURL, expectedPath: "/api/authors")
+        } else {
+            url = try authorCandidateURL(partition: 0, page: 1)
+        }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let pageNumber = Int(components?.queryItems?.first(where: { $0.name == "page" })?.value ?? "1") ?? 1
+        let queryValue = components?.queryItems?.first(where: { $0.name == "q" })?.value
+        let isPartitioned = queryValue?.contains("control_number") == true
+        let partition = authorCandidatePartition(for: queryValue)
+        let responsePage = try decoder.decode(InspireSearchPage<InspireAuthorHit>.self, from: await get(url))
+        let authors = try responsePage.hits.hits.map(InspireMapper.author)
+
+        // INSPIRE rejects offsets beyond its 10,000-result window.  The
+        // hep-lat/hep-th union currently contains more than that, so never
+        // follow the server's page-41 link.  Advance to a disjoint
+        // control-number range instead; each range remains below the API
+        // window and the durable checkpoint still stores an ordinary trusted
+        // INSPIRE URL.
+        let pageSize = 250
+        let exhaustedWindow = pageNumber >= 40 && responsePage.hits.total > pageNumber * pageSize
+        let advertisedNextPage = responsePage.links?.next.flatMap { URL(string: $0) }
+            .flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+            .flatMap { Int($0.queryItems?.first(where: { $0.name == "page" })?.value ?? "") }
+        let nextBeyondWindow = advertisedNextPage.map { $0 > 40 } ?? false
+        let serverNext = (exhaustedWindow || nextBeyondWindow) ? nil :
+            try trustedNextURL(responsePage.links?.next, expectedPath: "/api/authors")
+        let next: URL?
+        if let serverNext {
+            next = serverNext
+        } else if isPartitioned && partition + 1 < Self.authorCandidatePartitions.count {
+            next = try authorCandidateURL(partition: partition + 1, page: 1)
+        } else {
+            next = nil
+        }
+        return (authors, next, responsePage.hits.total)
+    }
+
+    /// Disjoint INSPIRE author control-number ranges.  The largest range is
+    /// intentionally below the service's 10,000-result offset ceiling; the
+    /// final range is kept explicit so a future increase in record IDs cannot
+    /// silently reintroduce an unbounded page walk.
+    private static let authorCandidatePartitions: [(Int, Int)] = [
+        (0, 999_999), (1_000_000, 1_249_999), (1_250_000, 1_499_999),
+        (1_500_000, 1_749_999), (1_750_000, 1_999_999),
+        (2_000_000, 2_999_999), (3_000_000, 3_999_999)
+    ]
+
+    private func authorCandidateURL(partition: Int, page: Int) throws -> URL {
+        guard Self.authorCandidatePartitions.indices.contains(partition) else { throw LatticeLensError.paginationLimitExceeded }
+        let range = Self.authorCandidatePartitions[partition]
+        let query = "(arxiv_categories:hep-lat OR arxiv_categories:hep-th) AND control_number:[\(range.0) TO \(range.1)]"
+        return try makeURL(path: "/api/authors", query: [
+            URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "size", value: "250"),
-            URLQueryItem(name: "page", value: "1")
+            URLQueryItem(name: "page", value: String(max(1, page)))
         ])
-        let page = try decoder.decode(InspireSearchPage<InspireAuthorHit>.self, from: await get(url))
-        return (try page.hits.hits.map(InspireMapper.author), try trustedNextURL(page.links?.next, expectedPath: "/api/authors"), page.hits.total)
+    }
+
+    private func authorCandidatePartition(for query: String?) -> Int {
+        guard let query else { return 0 }
+        for (index, range) in Self.authorCandidatePartitions.enumerated() {
+            if query.contains("control_number:[\(range.0) TO \(range.1)]") ||
+               query.contains("control_number:[\(range.0)%20TO%20\(range.1)]") {
+                return index
+            }
+        }
+        // A pre-partition checkpoint has no control-number clause.  Treat it
+        // as the first partition; AuthorIndexService invalidates such a
+        // checkpoint before calling us, so this is only a defensive bound.
+        return 0
     }
 
     func hIndex(for authorRecid: Int, now: Date = Date()) async throws -> HIndexSnapshot {

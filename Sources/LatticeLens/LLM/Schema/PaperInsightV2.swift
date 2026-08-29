@@ -106,7 +106,8 @@ enum PaperInsightV2Validator {
             throw LatticeLensError.schemaViolation("v2 图像选择越出本地 allowlist")
         }
         let claims = [insight.physics.researchQuestion] + insight.physics.methodAndDataFlow + insight.physics.mainResults +
-            insight.physics.reasonableInferences + insight.physics.missingInformation + insight.physics.caveats
+            insight.physics.reasonableInferences + insight.physics.missingInformation + insight.physics.caveats +
+            insight.physics.importantFormulaDerivations
         for claim in claims {
             switch claim.epistemicStatus {
             case .direct, .inference:
@@ -129,7 +130,11 @@ enum PaperInsightV2Validator {
     private static func validateShape(_ raw: JSONValue) throws {
         let root = try object(raw, keys: ["schema_version", "source_scope", "title_zh", "abstract_zh", "physics", "important_figures", "terminology"], path: "root")
         for key in ["schema_version", "source_scope", "title_zh", "abstract_zh"] { try nonempty(try value(root, key, "root"), path: key) }
-        let physics = try object(try value(root, "physics", "root"), keys: ["research_question", "method_and_data_flow", "main_results", "reasonable_inferences", "missing_information", "caveats"], path: "physics")
+        let physics = try objectAllowingOptional(
+            try value(root, "physics", "root"),
+            requiredKeys: ["research_question", "method_and_data_flow", "main_results", "reasonable_inferences", "missing_information", "caveats"],
+            optionalKeys: ["important_formula_derivations"],
+            path: "physics")
         try claim(try value(physics, "research_question", "physics"), path: "physics.research_question", requiredStatus: .direct)
         for key in ["method_and_data_flow", "main_results", "reasonable_inferences", "missing_information", "caveats"] {
             let items = try array(try value(physics, key, "physics"), maximum: 32, path: "physics.\(key)")
@@ -140,6 +145,12 @@ enum PaperInsightV2Validator {
             default: nil // caveats may be direct, inference, or missing
             }
             for (index, item) in items.enumerated() { try claim(item, path: "physics.\(key)[\(index)]", requiredStatus: required) }
+        }
+        if let formulas = physics["important_formula_derivations"] {
+            let items = try array(formulas, maximum: 8, path: "physics.important_formula_derivations")
+            for (index, item) in items.enumerated() {
+                try claim(item, path: "physics.important_formula_derivations[\(index)]", requiredStatus: .direct)
+            }
         }
         let figures = try array(try value(root, "important_figures", "root"), maximum: 5, path: "important_figures")
         for (index, figure) in figures.enumerated() {
@@ -226,6 +237,15 @@ enum PaperInsightV2Validator {
 
     private static func object(_ raw: JSONValue, keys: Set<String>, path: String) throws -> [String: JSONValue] {
         guard let object = raw.objectValue, Set(object.keys) == keys else { throw LatticeLensError.schemaViolation("\(path) 包含未知或缺失 key") }
+        return object
+    }
+
+    private static func objectAllowingOptional(_ raw: JSONValue, requiredKeys: Set<String>, optionalKeys: Set<String>, path: String) throws -> [String: JSONValue] {
+        guard let object = raw.objectValue else { throw LatticeLensError.schemaViolation("\(path) 不是对象") }
+        let keys = Set(object.keys)
+        guard requiredKeys.isSubset(of: keys), keys.subtracting(requiredKeys).isSubset(of: optionalKeys) else {
+            throw LatticeLensError.schemaViolation("\(path) 包含未知或缺失 key")
+        }
         return object
     }
 
