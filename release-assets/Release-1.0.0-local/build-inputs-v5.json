@@ -1,4 +1,4 @@
-{"schema_version":"latticelens-build-input-v5-current","source_commit":"e4c69566b09ecb7590ece350753ce3043bab516a","files":[
+{"schema_version":"latticelens-build-input-v5","files":[
 {"path":"AppIcon-contact-sheet.png","sha256":"3f6a2533befae57d813e086f02261b7102b8ae0678d9ea21634e80ebb95742d1"}
 ,
 {"path":"AppIcon-master.svg","sha256":"94ce9cf63ac40bae1c9875a70111317231c5ccc35e7450fdd827c6aa1971a155"}
@@ -37,7 +37,7 @@
 ,
 {"path":"Package.swift","sha256":"a0833c0871393e699b04fb9bf86fc5827c11844741e65df1c972d4183c1d9275"}
 ,
-{"path":"README.md","sha256":"6b5e3c5b3bb5eeacb221f26796a538ef33e82c717c1be57f410cbea12a5995fd"}
+{"path":"README.md","sha256":"1212ed3724ca4987bbcfe807325a5420bf9700081eac2b20c0284c038db97d3b"}
 ,
 {"path":"Scripts/apply_v1_cleanup.sh","sha256":"75d63e6fe4f77bf5ec038ce2c604fd602cef179df4d4e348a6869f27b9664d0b"}
 ,
@@ -91,7 +91,7 @@
 ,
 {"path":"Sources/LatticeLens/Core/Networking/InspireClient.swift","sha256":"bf9920af44b48e6b6760f3dbb6fc1cc53b63cb7d18d2640662afc8173a811f65"}
 ,
-{"path":"Sources/LatticeLens/Core/Networking/InspireDTO.swift","sha256":"6b1a63788410351bda5b4bd34accd1bd2fde5757f36589ada7138a36d71f81de"}
+{"path":"Sources/LatticeLens/Core/Networking/InspireDTO.swift","sha256":"169fb6ed533e6c022cdb02e91938e5071da10357588d0f663c7c93fee454ba9a"}
 ,
 {"path":"Sources/LatticeLens/Core/Persistence/LibraryStore.swift","sha256":"8264e90cb175d75b99a78bbeb4f0650ff409f5537334f82ba04415241fd6ebce"}
 ,
@@ -131,7 +131,7 @@
 ,
 {"path":"Sources/LatticeLens/LLM/Provider/LLMSettings.swift","sha256":"e61089e21938e564645c6fadd6c28dd6093023681fc056b62f388eead843f876"}
 ,
-{"path":"Sources/LatticeLens/LLM/Provider/OpenAICompatibleClient.swift","sha256":"fc859163614ecf6c71fe27b31937cac915edb6c21669b484b824dd3ee2ffd6cc"}
+{"path":"Sources/LatticeLens/LLM/Provider/OpenAICompatibleClient.swift","sha256":"a9f264a86261a64f5a332779f64bf24d085b0b47f83e81ae295e7a14e6877865"}
 ,
 {"path":"Sources/LatticeLens/LLM/Schema/PaperInsight.swift","sha256":"b0376a028617f0a777a404ad0e073e130b2a5ae251fe8e1cc4ee36017fcc5467"}
 ,
@@ -143,7 +143,7 @@
 ,
 {"path":"Sources/LatticeLens/LLM/Workflow/VisionWorkflow.swift","sha256":"6b47eb1e6b256a694f88cad987dd11d99657782a84f8d016dfc2eb8853365846"}
 ,
-{"path":"Tests/LatticeLensTests/CoreContractTests.swift","sha256":"a3ed217ac650e729497cda8e773221afa74bbce5e53c00a65bbc98e1d071e15d"}
+{"path":"Tests/LatticeLensTests/CoreContractTests.swift","sha256":"cc6b80f9ff010028bc583d9ee1b9139356468539f0be192ef81888bfd26f7026"}
 ,
 {"path":"Tests/LatticeLensTests/EvidenceWorkflowTests.swift","sha256":"7cac5c9e969d9a479f0cdc1a87f8612268efaf2b4b847f7b5c70b150d7eeba28"}
 ,
@@ -167,7 +167,7 @@
 ,
 {"path":"Tests/LatticeLensTests/V4LocalTests.swift","sha256":"87d92ffe72fad7b400bb77dcce4e9d614cf2321b8365c64a5b2c46804edd94c3"}
 ,
-{"path":"Tests/LatticeLensTests/V5FinalTests.swift","sha256":"96c5faed54a6b5d7538a49c0cc20c1083f4a5ffc8eef3e2db6ecc69cb9680e2c"}
+{"path":"Tests/LatticeLensTests/V5FinalTests.swift","sha256":"557e280a218e8a38e91e28aa0f65cd8017dedea6d7c0ee8e040e0cf4ab62f808"}
 ,
 {"path":"Tests/LatticeLensUITests/AccessibilityFixtureTests.swift","sha256":"c8d92bce34444fd9bffe69a9ca28dd1bc65dc68c3d84e49b323bcc6e0e8ffcdd"}
 ,

@@ -3,8 +3,8 @@
   "product_version": "1.0.0",
   "build_number": 100,
   "local_only": true,
-  "run_id": "20260828T123739Z-5925",
-  "build_input_tree_sha256": "17fa101852400699a9a9f3dd1740e1608aaaf0d34e047caa12f71192d50a7df5",
+  "run_id": "20260829T103500Z-f0be322",
+  "build_input_tree_sha256": "4ff0bf6fa1b75c4b6228d77565a598462931098eba46ce8e2aeb3e291740721c",
   "prepackage_eligible": true,
   "ui_evidence": {
     "scope": "selected_ui_delta_once_per_case",

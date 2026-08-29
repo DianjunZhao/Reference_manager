@@ -1,53 +1,52 @@
 {
-  "schema_version": "latticelens-package-manifest-v1.1",
-  "run_id": "20260829T100819Z-final2",
-  "generated_at_utc": "2026-08-29T10:08:19Z",
+  "schema_version": "latticelens-package-manifest-v1.0",
+  "run_id": "20260829T103708Z-81639",
+  "generated_at_utc": "2026-08-29T10:40:00Z",
   "artifact_class": "same_mac_local_ad_hoc",
   "product_version": "1.0.0",
   "build_number": 100,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "dmg_smoke": "passed",
+  "spctl_status": "rejected_or_unavailable",
+  "build_input_tree_sha256": "4ff0bf6fa1b75c4b6228d77565a598462931098eba46ce8e2aeb3e291740721c",
   "source": {
     "repository": "github/Reference_manager",
-    "commit": "e4c69566b09ecb7590ece350753ce3043bab516a",
-    "working_tree_clean": true,
-    "build_input_manifest": "build-inputs-v5.json",
-    "build_input_tree_sha256": "4656408343ff836e4116338b18e3cce492f32a0030fd8fea5493fa6213b2a276"
+    "commit": "f0be3228a8af585435a88f709dfcef661b657243",
+    "build_input_manifest": "build-inputs-v5.json"
   },
-  "build": {
-    "scheme": "LatticeLens",
-    "configuration": "Release",
-    "destination": "generic/platform=macOS",
-    "architectures": "x86_64 arm64",
-    "code_signing": "ad_hoc_local",
-    "developer_id": false,
-    "notarized": false
+  "prepackage_validation": {
+    "source_project_path": "release-assets/Release-1.0.0-local/compact-validation/prepackage-validation-v5.json",
+    "copied_file": "compact-validation/prepackage-validation-v5.json",
+    "sha256": "4a3142528bba18c88db4c87b5564423ecf2f42b5288d181799135bfa8227874c"
+  },
+  "benchmark_evidence": {
+    "source_project_path": "release-assets/Release-1.0.0-local/compact-validation/benchmark-v5.json",
+    "copied_file": "compact-validation/benchmark-v5.json",
+    "sha256": "ebff5780483910e298aa9b744ed755369bd058498ad38f7d9c15ddbf1a092f09"
   },
   "app": {
     "bundle": "LatticeLens.app",
-    "bundle_id": "org.latticelens.app",
-    "executable_sha256": "05ea50cb7f6afd07e81ce34713c454bec0b7cd551db39ffd782b12d608fa9f30",
-    "version": "1.0.0",
-    "build_number": 100
-  },
-  "verification": {
-    "release_build": "passed",
-    "dmg_create": "passed",
-    "hdiutil_verify": "passed",
-    "mounted_bundle": "passed",
-    "fixture_offline_smoke": "passed",
-    "install_boundary": "not_installed_to_Applications"
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "8e9f8680b5e3ecf1be40a92677f39119fc143e82b8b9a1903623cf8c68020403",
+    "icon_resource": "Contents/Resources/AppIcon.icns",
+    "dsym_uuids": "690F58F5-ECC1-3180-BF07-BDF111483ACA (arm64)\nA9C3AB30-FB5B-3331-B024-CE9ADAC82A29 (x86_64)"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.0-local.dmg",
-      "sha256": "7499db41fda0f9e69361d77d189fa6848903ea4a3184cfafbb326a57d12582c0"
+      "sha256": "154f241b327e742bf10f49156b15fb05d713aaee0eaf86a68345d5f89481ad30"
     },
     "dsym": {
       "file": "LatticeLens-1.0.0.dSYM.zip",
-      "sha256": "1440f043f219f86937fc50ed1f19e5fe63662152ef92dbc5b835f00bf21fa09d"
+      "sha256": "2cae20f9b26359eb1f8b85d95944b7199712ab7897f2560dfaa2e8d2329ba066"
     }
   },
   "supersedes": {
-    "previous_dmg_sha256": "79847539fad7b29b90e5fc83f864865ec9d85e88eb5509be17ffd7ab85d92cea"
+    "previous_dmg_sha256": "7499db41fda0f9e69361d77d189fa6848903ea4a3184cfafbb326a57d12582c0"
   },
-  "evidence_boundary": "Rebuilt from the current source commit. Historical v5 validation ledgers are not re-used as current-source proof."
+  "install_boundary": "DMG smoke used only a project-local inspection copy with fixture/no-network launch; it did not write /Applications or a user library."
 }
