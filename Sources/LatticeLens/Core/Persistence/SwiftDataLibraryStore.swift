@@ -1094,26 +1094,45 @@ enum LibraryStoreFactory {
                 _ = try V8MigrationCoordinator.migrateV7ToV8(sourceURL: v7Source, activeV8URL: storeURL,
                                                               backupRoot: storeURL.deletingLastPathComponent().appendingPathComponent("LatticeLens-StoreBackups", isDirectory: true))
             }
-            let configuration = ModelConfiguration(schema: schema, url: storeURL)
-            let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV9.self,
-                                               configurations: configuration)
-            let context = ModelContext(container)
-            if try context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty {
-                // No V7 source means this is a genuinely new V8-core/V9
-                // library.  It is initialized from empty typed rows only;
-                // V7 generic rows are never introduced into a new active
-                // store.
-                try V8TypedStoreCodec.materialize(LibrarySnapshot(schemaVersion: 8, v3SchemaVersion: 3), in: context, sourceSchemaVersion: 8)
+            do {
+                let configuration = ModelConfiguration(schema: schema, url: storeURL)
+                let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV9.self,
+                                                   configurations: configuration)
+                let context = ModelContext(container)
+                if try context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty {
+                    // No V7 source means this is a genuinely new V8-core/V9
+                    // library.  It is initialized from empty typed rows only;
+                    // V7 generic rows are never introduced into a new active
+                    // store.
+                    try V8TypedStoreCodec.materialize(LibrarySnapshot(schemaVersion: 8, v3SchemaVersion: 3), in: context, sourceSchemaVersion: 8)
+                }
+                // V9 adds only a rebuildable token/reverse-token projection over
+                // the active V8 rows.  Do this after a successful lightweight
+                // schema migration, never by decoding a legacy store in place.
+                if try !V9TypedSearchIndex.isCurrent(in: context) {
+                    try V9TypedSearchIndex.rebuild(in: context)
+                }
+                return V8TypedLibraryStore(modelContainer: container)
+            } catch {
+                // A V8 store written by an earlier release may be perfectly
+                // readable while the V8→V9 lightweight migration is rejected
+                // by the installed SwiftData runtime (notably after adding
+                // unique token rows).  V9 is only a rebuildable search
+                // projection, so retain the verified V8 domain store and use
+                // its bounded compatibility search until a later repair can
+                // rebuild V9.  Never turn this recoverable case into a blank
+                // read-only workspace.
+                let compatibilitySchema = Schema(versionedSchema: LatticeLensSchemaV8.self)
+                let compatibilityConfiguration = ModelConfiguration(schema: compatibilitySchema, url: storeURL)
+                let compatibilityContainer = try ModelContainer(for: compatibilitySchema,
+                                                                  configurations: compatibilityConfiguration)
+                guard try !compatibilityContainer.mainContext.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty else {
+                    throw error
+                }
+                return V8TypedLibraryStore(modelContainer: compatibilityContainer)
             }
-            // V9 adds only a rebuildable token/reverse-token projection over
-            // the active V8 rows.  Do this after a successful lightweight
-            // schema migration, never by decoding a legacy store in place.
-            if try !V9TypedSearchIndex.isCurrent(in: context) {
-                try V9TypedSearchIndex.rebuild(in: context)
-            }
-            return V8TypedLibraryStore(modelContainer: container)
         } catch {
-            return V8MigrationBlockedStore(reason: "V9 typed store/index 无法打开或迁移；原 V7 source 和已验证 backup 未被覆盖。\(type(of: error))")
+            return V8MigrationBlockedStore(reason: "V9/V8 typed store 无法打开或迁移；原 V7 source 和已验证 backup 未被覆盖。\(type(of: error))")
         }
     }
 
