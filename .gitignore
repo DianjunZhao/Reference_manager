@@ -26,3 +26,6 @@ __pycache__/
 /Release-*/
 !/release-assets/
 !/release-assets/**
+# Timestamped local release backups stay on the workstation as audit history;
+# only the current release-assets directory is published.
+/release-assets/Release-1.0.0-local-previous-*/
