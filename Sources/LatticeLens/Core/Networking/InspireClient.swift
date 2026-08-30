@@ -224,7 +224,14 @@ struct InspireClient: Sendable {
         // `TO`.  Decode once, then canonicalize all whitespace before matching
         // the durable control-number range.  This also handles a checkpoint
         // copied from a proxy that percent-encoded the query value twice.
-        let decodedQuery = query.removingPercentEncoding ?? query
+        var decodedQuery = query
+        // A copied checkpoint may have passed through two URL encoders.  Two
+        // bounded passes are enough for that interoperability case while
+        // avoiding any unbounded interpretation of an untrusted URL.
+        for _ in 0..<2 {
+            guard let next = decodedQuery.removingPercentEncoding, next != decodedQuery else { break }
+            decodedQuery = next
+        }
         let normalizedQuery = decodedQuery
             .replacingOccurrences(of: "+", with: " ")
             .split { $0 == " " || $0 == "\t" || $0 == "\n" || $0 == "\r" }

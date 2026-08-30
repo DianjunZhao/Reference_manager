@@ -154,6 +154,15 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
     }
 
+    func testAuthorCandidatePaginationRecognizesDoubleEncodedCheckpoint() async throws {
+        let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%2528arxiv_categories%253Ahep-lat%2520OR%2520arxiv_categories%253Ahep-th%2529%2520AND%2520control_number%253A%255B1000000%2520TO%25201249999%255D&size=250&page=41"))
+        let client = InspireClient(transport: SequentialTransport([]))
+        let result = try await client.authorCandidatesPage(nextURL: staleURL)
+        let query = URLComponents(url: try XCTUnwrap(result.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1250000 TO 1499999]") == true)
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+    }
+
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
         let store = InMemoryLibraryStore()
         let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,
