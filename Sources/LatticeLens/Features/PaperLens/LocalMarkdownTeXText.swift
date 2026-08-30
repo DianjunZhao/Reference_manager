@@ -120,7 +120,8 @@ enum LocalMarkdownTeX {
             "\\Gamma": "Γ", "\\Delta": "Δ", "\\Lambda": "Λ", "\\Pi": "Π",
             "\\Sigma": "Σ", "\\Phi": "Φ", "\\Omega": "Ω", "\\times": "×",
             "\\cdot": "·", "\\pm": "±", "\\leq": "≤", "\\geq": "≥",
-            "\\rightarrow": "→", "\\leftarrow": "←", "\\infty": "∞", "\\partial": "∂"
+            "\\rightarrow": "→", "\\leftarrow": "←", "\\infty": "∞", "\\partial": "∂",
+            "\\sum": "∑", "\\prod": "∏", "\\int": "∫", "\\nabla": "∇"
         ]
         for (source, replacement) in replacements { value = value.replacingOccurrences(of: source, with: replacement) }
         value = value.replacingOccurrences(of: "\\left", with: "")
@@ -128,10 +129,102 @@ enum LocalMarkdownTeX {
         value = value.replacingOccurrences(of: "\\,", with: " ")
         value = value.replacingOccurrences(of: "\\!", with: "")
         value = value.replacingOccurrences(of: "\\quad", with: "  ")
-        value = value.replacingOccurrences(of: #"\\(?:mathrm|text|operatorname)\{([^{}]*)\}"#, with: "$1", options: .regularExpression)
-        value = value.replacingOccurrences(of: #"\\frac\{([^{}]*)\}\{([^{}]*)\}"#, with: "($1)/($2)", options: .regularExpression)
+        value = replaceBracedCommand(in: value, command: "frac") { arguments in
+            guard arguments.count == 2 else { return arguments.joined() }
+            let numerator = arguments[0], denominator = arguments[1]
+            let n = nativeTeXPreview(numerator)
+            let d = nativeTeXPreview(denominator)
+            // Unicode fraction slash is rendered by the system math-capable
+            // font and remains selectable/searchable; unlike the old
+            // `(a)/(b)` fallback it conveys a genuine numerator/denominator.
+            let left = n.count == 1 ? n : "⟮\(n)⟯"
+            let right = d.count == 1 ? d : "⟮\(d)⟯"
+            return "\(left)⁄\(right)"
+        }
+        value = replaceBracedCommand(in: value, command: "sqrt") { arguments in
+            guard let radicand = arguments.first else { return "√" }
+            return "√\(radicand.count == 1 ? radicand : "(\(radicand))")"
+        }
+        for command in ["mathrm", "text", "operatorname", "mathbf", "mathit"] {
+            value = replaceBracedCommand(in: value, command: command) { $0.first ?? "" }
+        }
+        value = replaceScripts(in: value)
+        value = value.replacingOccurrences(of: "{", with: "").replacingOccurrences(of: "}", with: "")
         return value
     }
+
+    /// Replace a TeX command whose arguments are brace-delimited.  A small
+    /// scanner is used instead of a regular expression so nested fractions and
+    /// radicals are handled deterministically without a web/math engine.
+    private static func replaceBracedCommand(in source: String, command: String,
+                                             transform: ([String]) -> String) -> String {
+        let needle = "\\\(command)"
+        var result = "", cursor = source.startIndex
+        while let range = source.range(of: needle, range: cursor..<source.endIndex) {
+            result += source[cursor..<range.lowerBound]
+            var scan = range.upperBound
+            var arguments: [String] = []
+            while arguments.count < (command == "frac" ? 2 : 1) {
+                while scan < source.endIndex, source[scan].isWhitespace { scan = source.index(after: scan) }
+                guard scan < source.endIndex, source[scan] == "{",
+                      let parsed = balancedGroup(in: source, opening: scan) else {
+                    arguments.removeAll(); break
+                }
+                arguments.append(parsed.body)
+                scan = parsed.end
+            }
+            guard !arguments.isEmpty else {
+                result += source[range.lowerBound..<range.upperBound]
+                cursor = range.upperBound
+                continue
+            }
+            result += transform(arguments)
+            cursor = scan
+        }
+        result += source[cursor..<source.endIndex]
+        return result
+    }
+
+    private static func balancedGroup(in source: String, opening: String.Index) -> (body: String, end: String.Index)? {
+        guard source[opening] == "{" else { return nil }
+        var depth = 0, cursor = opening
+        while cursor < source.endIndex {
+            if source[cursor] == "{" { depth += 1 }
+            if source[cursor] == "}" {
+                depth -= 1
+                if depth == 0 {
+                    let bodyStart = source.index(after: opening)
+                    return (String(source[bodyStart..<cursor]), source.index(after: cursor))
+                }
+            }
+            cursor = source.index(after: cursor)
+        }
+        return nil
+    }
+
+    private static func replaceScripts(in source: String) -> String {
+        var output = "", cursor = source.startIndex
+        while cursor < source.endIndex {
+            guard source[cursor] == "^" || source[cursor] == "_" else {
+                output.append(source[cursor]); cursor = source.index(after: cursor); continue
+            }
+            let marker = source[cursor]
+            var scan = source.index(after: cursor)
+            let script: String
+            if scan < source.endIndex, source[scan] == "{", let group = balancedGroup(in: source, opening: scan) {
+                script = group.body; scan = group.end
+            } else if scan < source.endIndex {
+                script = String(source[scan]); scan = source.index(after: scan)
+            } else { output.append(marker); break }
+            let mapped = script.map { marker == "^" ? superscript[$0] ?? $0 : subscriptMap[$0] ?? $0 }
+            output += String(mapped)
+            cursor = scan
+        }
+        return output
+    }
+
+    private static let superscript: [Character: Character] = ["0":"⁰", "1":"¹", "2":"²", "3":"³", "4":"⁴", "5":"⁵", "6":"⁶", "7":"⁷", "8":"⁸", "9":"⁹", "+":"⁺", "-":"⁻", "=":"⁼", "(":"⁽", ")":"⁾", "n":"ⁿ", "i":"ⁱ"]
+    private static let subscriptMap: [Character: Character] = ["0":"₀", "1":"₁", "2":"₂", "3":"₃", "4":"₄", "5":"₅", "6":"₆", "7":"₇", "8":"₈", "9":"₉", "+":"₊", "-":"₋", "=":"₌", "(":"₍", ")":"₎", "a":"ₐ", "e":"ₑ", "h":"ₕ", "i":"ᵢ", "j":"ⱼ", "k":"ₖ", "l":"ₗ", "m":"ₘ", "n":"ₙ", "o":"ₒ", "p":"ₚ", "r":"ᵣ", "s":"ₛ", "t":"ₜ", "u":"ᵤ", "v":"ᵥ", "x":"ₓ"]
 
     private static func closingDollar(in source: String, from start: String.Index, display: Bool) -> String.Index? {
         var cursor = start
@@ -175,7 +268,7 @@ struct LocalMarkdownTeXInlineText: View {
             case .markdown(let value):
                 return partial + Text(value)
             case .inlineTeX(let raw), .displayTeX(let raw):
-                return partial + Text(LocalMarkdownTeX.nativeTeXPreview(raw)).font(.body.monospaced())
+                return partial + Text(LocalMarkdownTeX.nativeTeXPreview(raw)).font(.body)
             }
         }
     }
@@ -214,7 +307,8 @@ private struct TeXPreview: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(LocalMarkdownTeX.nativeTeXPreview(raw))
-                .font(display ? .title3.monospaced() : .body.monospaced())
+                .font(display ? .title3 : .body)
+                .fontDesign(.serif)
                 .textSelection(.enabled)
         }
         .padding(display ? 10 : 0)

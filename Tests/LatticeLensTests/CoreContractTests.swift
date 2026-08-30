@@ -518,7 +518,9 @@ final class CoreContractTests: XCTestCase {
             .displayTeX("\\frac{a}{b}"),
             .markdown(" after")
         ])
-        XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview("\\alpha + \\frac{a}{b}"), "α + (a)/(b)")
+        XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview("\\alpha + \\frac{a}{b}"), "α + a⁄b")
+        XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview("\\sqrt{x^2 + m_{\u{03C0}}^2}"), "√(x² + mπ²)")
+        XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview("\\frac{1 + \\frac{a}{b}}{\\sqrt{c}}"), "⟮1 + a⁄b⟯⁄⟮√c⟯")
         XCTAssertEqual(LocalMarkdownTeX.segments(in: "price \\$100"), [.markdown("price \\$100")])
         XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="inline">\alpha</math>"#), [.inlineTeX("\\alpha")])
         XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="block">\frac{a}{b}</math>"#), [.displayTeX("\\frac{a}{b}")])
