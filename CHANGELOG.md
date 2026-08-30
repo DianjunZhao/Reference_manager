@@ -5,6 +5,15 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Rebuilt the local 1.0.0 (100) DMG from commit `2db81d5`. Author-index
+  pagination now repairs persisted page-41 checkpoints, HTTP 400 citation
+  summary responses fall back to the auditable local most-cited calculation,
+  and independently verified h>20 rows remain visible while a generation is
+  interrupted. INSPIRE MathML is normalized in titles/timeline/Paper Lens,
+  and the Evidence tab now foregrounds LLM-generated, anchor-bound formula
+  derivations. The rebuilt package passed the mounted fixture/no-network
+  smoke; UI automation remains host-blocked and is not claimed here.
+
 - Completed a provenance-valid full local automatic candidate on 2026-08-28:
   `validation-v5-20260828T023235Z-134.json` binds all automatic product gates
   to non-empty build-input hash
