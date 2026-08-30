@@ -218,7 +218,13 @@ private struct V4ResearchHomeView: View {
             GroupBox("Reading Inbox") {
                 let inbox = viewModel.papers.filter { !$0.isRead }.prefix(8)
                 if inbox.isEmpty { Text("当前没有来自本地 library 的未读论文。").foregroundStyle(.secondary) }
-                else { ForEach(Array(inbox)) { paper in Text(paper.displayTitle).lineLimit(1).accessibilityIdentifier("inboxPaper-\(paper.literatureID)") } }
+                else {
+                    ForEach(Array(inbox)) { paper in
+                        LocalMarkdownTeXInlineText(source: paper.displayTitle)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("inboxPaper-\(paper.literatureID)")
+                    }
+                }
             }
             GroupBox("最近工作区 / 导出") {
                 Text("workspaces \(home.recentWorkspaceIDs.count) · exports \(home.recentExportIDs.count)")

@@ -223,7 +223,11 @@ private struct RadarEventRow: View {
                 .padding(6).background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
                 .accessibilityIdentifier("radarFieldDiff-\(change.paperID)-\(change.field)")
             }
-            Text(paper?.displayTitle ?? "本地未找到论文 metadata").lineLimit(2)
+            if let paper {
+                LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(2)
+            } else {
+                Text("本地未找到论文 metadata").lineLimit(2)
+            }
             Text("changed: \(event.changedFields.filter { V4RadarFieldChange.decodeStorageMarker($0) == nil }.joined(separator: ", ")) · observed \(event.observedAt.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 8) {
@@ -275,7 +279,7 @@ private struct CompareWorkbenchTab: View {
                         }
                         .accessibilityIdentifier("toggleComparePaper-\(paper.literatureID)")
                         .accessibilityValue(selectedPaperIDs.contains(paper.literatureID) ? "selected" : "unselected")
-                        Text(paper.displayTitle).lineLimit(2)
+                        LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(2)
                     }
                 }
                 TextField("workspace name", text: $workspaceName).textFieldStyle(.roundedBorder)
@@ -680,7 +684,7 @@ private struct NotebookWorkbenchTab: View {
                 }
             }
             List(papers, selection: $selectedPaperIDs) { paper in
-                Text(paper.displayTitle).lineLimit(2).tag(paper.literatureID)
+                LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(2).tag(paper.literatureID)
             }
             if !viewModel.workbenchSnapshot.exportRecords.isEmpty {
                 GroupBox("Export provenance") {
@@ -895,7 +899,11 @@ private struct NotebookEntryEditor: View {
                     GroupBox("Paper") {
                         VStack(alignment: .leading, spacing: 6) {
                             if let selectedPaper {
-                                Text("当前：\(selectedPaper.displayTitle) [\(selectedPaper.literatureID)]")
+                                HStack(spacing: 4) {
+                                    Text("当前：")
+                                    LocalMarkdownTeXInlineText(source: selectedPaper.displayTitle)
+                                    Text("[\(selectedPaper.literatureID)]")
+                                }
                                     .font(.caption)
                                     // Publish a stable state announcement so
                                     // assistive clients can verify that the
@@ -933,7 +941,8 @@ private struct NotebookEntryEditor: View {
                                         Button { selectPaper(paper) } label: {
                                             HStack {
                                                 Image(systemName: selectedPaperID == paper.literatureID ? "checkmark.circle.fill" : "circle")
-                                                Text("[\(paper.literatureID)] \(paper.displayTitle)").lineLimit(1)
+                                                Text("[\(paper.literatureID)]")
+                                                LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(1)
                                                 Spacer()
                                             }
                                         }
@@ -1201,7 +1210,10 @@ private struct GraphWorkbenchTab: View {
                 Picker("paper", selection: $rootPaperID) {
                     Text("不选").tag(Optional<Int>.none)
                     ForEach(viewModel.workbenchSnapshot.papers.values.sorted { $0.literatureID < $1.literatureID }) { paper in
-                        Text("\(paper.literatureID) · \(paper.displayTitle)").tag(Optional(paper.literatureID))
+                        HStack(spacing: 4) {
+                            Text("\(paper.literatureID) ·")
+                            LocalMarkdownTeXInlineText(source: paper.displayTitle)
+                        }.tag(Optional(paper.literatureID))
                     }
                 }
                 Picker("author recid", selection: $rootAuthorID) {

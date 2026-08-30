@@ -128,6 +128,19 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
     }
 
+    func testAuthorCandidatePaginationRecognizesPlusEncodedControlNumberPartition() async throws {
+        // URLComponents exposes `+` literally in query-item values.  A page
+        // 40 link from the second partition must therefore advance to the
+        // third partition instead of restarting partition 2 indefinitely.
+        let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat+OR+arxiv_categories%3Ahep-th%29+AND+control_number%3A%5B1000000+TO+1249999%5D&size=250&page=41"))
+        let client = InspireClient(transport: SequentialTransport([]))
+        let result = try await client.authorCandidatesPage(nextURL: staleURL)
+        let next = try XCTUnwrap(result.nextURL)
+        let query = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1250000 TO 1499999]") == true)
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+    }
+
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
         let store = InMemoryLibraryStore()
         let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,

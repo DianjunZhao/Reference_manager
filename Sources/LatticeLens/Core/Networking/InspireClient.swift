@@ -218,9 +218,14 @@ struct InspireClient: Sendable {
 
     private func authorCandidatePartition(for query: String?) -> Int {
         guard let query else { return 0 }
+        // URLComponents keeps `+` as a literal plus in query-item values
+        // (rather than decoding it to a space).  INSPIRE's pagination links
+        // commonly encode the spaces around `OR`, `AND`, and `TO` this way,
+        // so normalize it before matching the durable control-number range.
+        let normalizedQuery = query.replacingOccurrences(of: "+", with: " ")
         for (index, range) in Self.authorCandidatePartitions.enumerated() {
-            if query.contains("control_number:[\(range.0) TO \(range.1)]") ||
-               query.contains("control_number:[\(range.0)%20TO%20\(range.1)]") {
+            if normalizedQuery.contains("control_number:[\(range.0) TO \(range.1)]") ||
+               normalizedQuery.contains("control_number:[\(range.0)%20TO%20\(range.1)]") {
                 return index
             }
         }
