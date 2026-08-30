@@ -358,6 +358,22 @@ final class AppViewModel: ObservableObject {
         }
         if let selectedAuthorID {
             await loadPapers(for: selectedAuthorID, syncIfNeeded: true)
+            // On a genuinely new installation `loadPapers` starts a bounded
+            // first-page task and returns immediately.  That used to let the
+            // SwiftUI task finish while the timeline was still empty, which
+            // looked like a refresh that did nothing until an indeterminate
+            // later moment.  Keep the launch boundary asynchronous (the
+            // window can render the progress row), but do not report startup
+            // complete until that first task has either published rows or
+            // reached a terminal state.  A slow/offline provider still exits
+            // after the bounded wait and leaves the retryable status visible.
+            if papers.isEmpty {
+                for _ in 0..<100 {
+                    guard self.selectedAuthorID == selectedAuthorID else { break }
+                    if !papers.isEmpty || paperSyncTasks[selectedAuthorID] == nil { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
             // A warm library can legitimately skip the network refresh when
             // its last successful sync is still fresh.  Do not leave the
             // toolbar in the misleading "未同步" state in that case: the

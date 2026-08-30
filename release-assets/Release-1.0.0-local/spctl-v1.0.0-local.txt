@@ -1,1 +1,1 @@
-/Users/zhaodianjun/Desktop/Reference_manager/github/.build/rebuild-release-20260830T071046Z/DerivedData/Build/Products/Release/LatticeLens.app: rejected (ad hoc local signature; Developer ID/notarization not claimed)
+/Users/zhaodianjun/Desktop/Reference_manager/github/.codex-task-tmp-v5-package-20260830T074428Z-42221-qonZyT/DerivedData/Build/Products/Release/LatticeLens.app: rejected

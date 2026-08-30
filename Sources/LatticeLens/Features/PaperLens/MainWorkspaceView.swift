@@ -673,6 +673,26 @@ private struct PaperTimeline: View {
             List(selection: Binding(get: { viewModel.selectedPaperID }, set: { paperID in
                 schedulePaperSelection(paperID)
             })) {
+                if viewModel.filteredPapers.isEmpty && viewModel.globalPaperSearch.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(emptyTimelineTitle, systemImage: emptyTimelineSymbol)
+                            .font(.headline)
+                        Text(emptyTimelineMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if viewModel.selectedAuthor != nil,
+                           viewModel.syncStatus.phase != .syncingMetadata,
+                           viewModel.syncStatus.phase != .loadingLocal {
+                            Button("立即同步") { viewModel.syncSelectedAuthor() }
+                                .accessibilityIdentifier("syncEmptyTimeline")
+                        }
+                    }
+                    .padding(.vertical, 20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("paperEmptyState")
+                }
                 if !viewModel.globalPaperSearch.isEmpty {
                     Section("全局搜索") {
                         ForEach(viewModel.globalPaperResults) { paper in
@@ -728,6 +748,33 @@ private struct PaperTimeline: View {
         guard let h = author.hIndex else { return "\(viewModel.papers.count) papers · h-index 未验证" }
         let published = h.published.map { " · h(published) \($0)" } ?? " · h(published) 未提供"
         return "\(viewModel.papers.count) papers · h(all) \(h.all)\(published)"
+    }
+
+    private var emptyTimelineTitle: String {
+        switch viewModel.syncStatus.phase {
+        case .syncingMetadata, .loadingLocal: "正在加载文献"
+        case .failed, .stale, .cancelled: "当前作者暂无可显示的本地文献"
+        default: "暂无文献"
+        }
+    }
+
+    private var emptyTimelineSymbol: String {
+        switch viewModel.syncStatus.phase {
+        case .syncingMetadata, .loadingLocal: "arrow.triangle.2.circlepath"
+        case .failed, .stale, .cancelled: "exclamationmark.triangle"
+        default: "tray"
+        }
+    }
+
+    private var emptyTimelineMessage: String {
+        switch viewModel.syncStatus.phase {
+        case .syncingMetadata, .loadingLocal:
+            return viewModel.syncStatus.message
+        case .failed, .stale, .cancelled:
+            return "同步没有写入新记录；可以重试，已有其他作者的本地资料不会受影响。"
+        default:
+            return "选择其他作者，或点击“立即同步”从 INSPIRE 获取首个页面。"
+        }
     }
 }
 
