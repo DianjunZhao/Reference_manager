@@ -86,7 +86,7 @@ enum LocalMarkdownTeX {
             guard let whole = Range(match.range, in: source),
                   let capture = Range(match.range(at: 1), in: source) else { continue }
             output += source[cursor..<whole.lowerBound]
-            let body = source[capture]
+            let body = normalizedMathBody(String(source[capture]))
             output += display ? "$$\(body)$$" : "$\(body)$"
             cursor = whole.upperBound
         }
@@ -94,8 +94,24 @@ enum LocalMarkdownTeX {
         return output
     }
 
+    /// INSPIRE sometimes embeds MathML elements inside its `<math>` wrapper
+    /// (`<mi>`, `<mrow>`, `<mn>`, ...).  Those XML tags are transport
+    /// structure, not reader-facing text.  Strip only the bounded MathML
+    /// element names here while preserving the mathematical characters and
+    /// entities, so a title never renders the literal `<mi>…</mi>` markup.
+    private static func normalizedMathBody(_ body: String) -> String {
+        var value = body.replacingOccurrences(of: #"(?is)<[^>]+>"#, with: "", options: .regularExpression)
+        let entities: [(String, String)] = [
+            ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+            ("&nbsp;", " "), ("&#x2212;", "−"), ("&#x03B1;", "α"),
+            ("&#x03B2;", "β"), ("&#x03B3;", "γ"), ("&#x03B4;", "δ")
+        ]
+        for (entity, replacement) in entities { value = value.replacingOccurrences(of: entity, with: replacement) }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func nativeTeXPreview(_ raw: String) -> String {
-        var value = raw
+        var value = normalizedMathBody(raw)
         let replacements = [
             "\\alpha": "α", "\\beta": "β", "\\gamma": "γ", "\\delta": "δ",
             "\\epsilon": "ε", "\\kappa": "κ", "\\lambda": "λ", "\\mu": "μ",
@@ -144,6 +160,27 @@ enum LocalMarkdownTeX {
         }
         return count.isMultiple(of: 2) == false
     }
+}
+
+/// Compact inline variant used by list rows and headers.  It shares the same
+/// normalization as the full reader but composes into one wrapping `Text`, so
+/// a long INSPIRE title remains a normal two-line row instead of a vertical
+/// stack of formula disclosures.
+struct LocalMarkdownTeXInlineText: View {
+    let source: String
+
+    private var composed: Text {
+        LocalMarkdownTeX.segments(in: source).reduce(Text("")) { partial, segment in
+            switch segment {
+            case .markdown(let value):
+                return partial + Text(value)
+            case .inlineTeX(let raw), .displayTeX(let raw):
+                return partial + Text(LocalMarkdownTeX.nativeTeXPreview(raw)).font(.body.monospaced())
+            }
+        }
+    }
+
+    var body: some View { composed.textSelection(.enabled) }
 }
 
 struct LocalMarkdownTeXText: View {

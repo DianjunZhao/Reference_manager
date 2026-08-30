@@ -113,7 +113,7 @@ private struct PaperHeader: View {
     @ObservedObject var viewModel: AppViewModel
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(paper.displayTitle).font(.title3).textSelection(.enabled)
+            LocalMarkdownTeXInlineText(source: paper.displayTitle).font(.title3)
             if let arxiv = paper.arxivID { Text("arXiv:\(arxiv)") }
             HStack(spacing: 8) {
                 if let category = paper.arxivCategories.first { Text(category) }
@@ -573,6 +573,25 @@ private struct EvidenceTab: View {
                 Text(message).font(.caption).foregroundStyle(.secondary).padding(.horizontal)
                     .accessibilityIdentifier("fullTextStatus")
             }
+            GroupBox("重要公式推导（LLM）") {
+                if let artifact = viewModel.evidenceInsightArtifact {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("以下推导仅来自已提取的 PDF chunks，并逐条绑定可回查的 page anchor；不会把摘要级猜测当作公式。")
+                            .font(.caption).foregroundStyle(.secondary)
+                        EvidenceClaimSection(title: "公式与推导步骤", claims: artifact.insight.physics.importantFormulaDerivations)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("本标签专门展示论文重要公式及其逐步推导。请先下载并提取本地 PDF，再点击“生成全文证据解读”；LLM 结果会保留原始公式和 page anchor。")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if viewModel.selectedFullTextDocument?.extractionState == .extracted {
+                            Text("PDF 已就绪，点击上方按钮生成公式推导。")
+                                .font(.caption)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal)
             if viewModel.selectedFullTextDocument == nil {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("尚未下载全文：当前只可浏览 abstract/caption anchors。")
@@ -610,8 +629,6 @@ private struct EvidenceTab: View {
             if let artifact = viewModel.evidenceInsightArtifact {
                 EvidenceArtifactSummary(artifact: artifact)
                     .padding(.horizontal)
-                EvidenceClaimSection(title: "重要公式推导", claims: artifact.insight.physics.importantFormulaDerivations)
-                .padding(.horizontal)
             }
             if let annotationStatus = viewModel.annotationStatusMessage {
                 Text(annotationStatus)

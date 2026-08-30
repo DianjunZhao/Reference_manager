@@ -711,7 +711,7 @@ private struct PaperRow: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 if !paper.isRead { Circle().fill(.blue).frame(width: 7, height: 7).accessibilityLabel("新增未读") }
-                Text(paper.displayTitle).lineLimit(2)
+                LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(2)
             }
             HStack(spacing: 6) {
                 if let arxiv = paper.arxivID { Text("arXiv:\(arxiv)") }

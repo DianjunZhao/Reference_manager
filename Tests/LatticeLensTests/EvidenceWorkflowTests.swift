@@ -73,6 +73,8 @@ final class EvidenceWorkflowTests: XCTestCase {
         let artifact = try await workflow.generate(for: paper, settings: settings, apiKey: "fixture") { _ in }
         XCTAssertEqual(artifact.insight.sourceScope, PaperInsightV2Validator.sourceScope)
         XCTAssertFalse(artifact.insight.physics.mainResults.isEmpty)
+        XCTAssertEqual(artifact.insight.physics.importantFormulaDerivations.count, 1)
+        XCTAssertTrue(artifact.insight.physics.importantFormulaDerivations[0].textZH.contains("0.09"))
     }
 
     func testMetadataAnchorsAreDeterministicAndSurviveFullTextDeletion() async throws {

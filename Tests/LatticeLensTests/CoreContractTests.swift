@@ -118,6 +118,16 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
     }
 
+    func testAuthorCandidatePaginationRepairsPersistedPartitionPage41WithoutARequest() async throws {
+        let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B0%20TO%20999999%5D&size=250&page=41"))
+        let client = InspireClient(transport: SequentialTransport([]))
+        let result = try await client.authorCandidatesPage(nextURL: staleURL)
+        XCTAssertTrue(result.authors.isEmpty)
+        let query = URLComponents(url: try XCTUnwrap(result.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+    }
+
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
         let store = InMemoryLibraryStore()
         let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,
@@ -340,7 +350,38 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(projection.visibleAuthors(search: "").map(\.recid), [ProductContract.selfAuthorRecid, tracked.recid, hepTh.recid])
         tracked.isTracked = false
         let unpinned = LibraryAuthorSidebarProjection(authors: [hepTh, tracked], activeMembership: [31])
-        XCTAssertEqual(unpinned.visibleAuthors(search: "").map(\.recid), [hepTh.recid])
+        XCTAssertEqual(unpinned.visibleAuthors(search: "").map(\.recid), [hepTh.recid, tracked.recid],
+                       "已验证 h>20 的作者不应因旧 membership 边界被隐藏")
+    }
+
+    func testQualifiedAuthorOutsideInterruptedMembershipRemainsVisible() {
+        var newlyVerified = author(recid: 32, name: "Beta, Newly Verified")
+        newlyVerified.arxivCategories = ["hep-th"]
+        newlyVerified.hIndex = hIndex(author: 32, all: 24)
+        newlyVerified.hIndexState = .qualified
+        let projection = LibraryAuthorSidebarProjection(authors: [newlyVerified], activeMembership: [31])
+        XCTAssertEqual(projection.visibleAuthors(search: "").map(\.recid), [newlyVerified.recid],
+                       "部分 generation 不能遮住已经独立验证为 h>20 的 hep-th 作者")
+    }
+
+    func testHIndexHTTP400FallsBackToLocalMostCitedComputation() async throws {
+        let page = Data("""
+        {"hits":{"total":3,"hits":[
+          {"id":1,"metadata":{"titles":[{"title":"one"}],"citation_count":3}},
+          {"id":2,"metadata":{"titles":[{"title":"two"}],"citation_count":2}},
+          {"id":3,"metadata":{"titles":[{"title":"three"}],"citation_count":1}}
+        ]},"links":{}}
+        """.utf8)
+        let transport = ScriptedHTTPTransport([
+            .init(data: Data(), statusCode: 400, headers: nil),
+            .init(data: page, statusCode: 200, headers: nil)
+        ])
+        let provider = HIndexProvider(client: InspireClient(transport: transport))
+        let snapshot = try await provider.snapshot(for: 32)
+        XCTAssertEqual(snapshot.source, "locally-computed")
+        XCTAssertEqual(snapshot.all, 2)
+        XCTAssertEqual(snapshot.inputPaperCount, 3)
+        XCTAssertEqual(snapshot.pageCount, 1)
     }
 
     func testNameSearchNormalizesDiacriticsHyphenAndNativeName() {
@@ -426,6 +467,8 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(LocalMarkdownTeX.segments(in: "price \\$100"), [.markdown("price \\$100")])
         XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="inline">\alpha</math>"#), [.inlineTeX("\\alpha")])
         XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="block">\frac{a}{b}</math>"#), [.displayTeX("\\frac{a}{b}")])
+        XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview("<mi>ξ</mi><mo>+</mo><mn>1</mn>"), "ξ+1")
+        XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="inline"><mi>ξ</mi></math>"#), [.inlineTeX("ξ")])
     }
 
     func testInspireGETRetriesOnlyBoundedRetryableResponsesAndHonorsRetryAfter() async throws {

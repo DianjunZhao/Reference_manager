@@ -12,8 +12,16 @@ struct LibraryAuthorSidebarProjection: Sendable {
             .filter { author in
                 author.isSelf || (author.matches(search: search) &&
                     ((author.isTracked && author.hIndexState != .rejected) ||
-                     ((activeMembership == nil || activeMembership!.contains(author.recid)) &&
-                      author.isVisibleInQualifiedList)))
+                     // A qualified row is independently verified by its
+                     // h-index snapshot.  Keep it visible even when the
+                     // latest candidate generation is still partial or its
+                     // membership promotion was interrupted; otherwise a
+                     // failed page/400 could hide a valid hep-th author
+                     // forever behind the previous generation.  The active
+                     // membership remains useful for compatibility rows whose
+                     // snapshot predates the generation boundary.
+                     ((activeMembership == nil || activeMembership!.contains(author.recid) ||
+                       author.hIndexState == .qualified) && author.isVisibleInQualifiedList)))
             }
             .sorted { lhs, rhs in
                 if lhs.isSelf != rhs.isSelf { return lhs.isSelf }

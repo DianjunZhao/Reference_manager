@@ -34,6 +34,17 @@ struct HIndexProvider: Sendable {
                 // the bounded local fallback.  429/transport failures remain
                 // retryable and never fan out into an expensive crawl.
                 return try await client.locallyComputedHIndex(for: authorRecid)
+            case .httpStatus(400):
+                // INSPIRE occasionally rejects citation-summary for an
+                // individual author (the response is a deterministic 400,
+                // not a transient rate-limit).  Treat that author exactly
+                // like the documented endpoint-evolution path: compute the
+                // same h(all) definition from its most-cited literature
+                // pages and keep the generation eligible for publication.
+                // Without this branch one 400 leaves a retryable ID and the
+                // completion gate rejects the entire author generation,
+                // making every newly discovered hep-th author invisible.
+                return try await client.locallyComputedHIndex(for: authorRecid)
             default:
                 throw error
             }

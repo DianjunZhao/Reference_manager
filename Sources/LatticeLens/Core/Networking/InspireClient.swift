@@ -151,6 +151,22 @@ struct InspireClient: Sendable {
         let queryValue = components?.queryItems?.first(where: { $0.name == "q" })?.value
         let isPartitioned = queryValue?.contains("control_number") == true
         let partition = authorCandidatePartition(for: queryValue)
+
+        // A checkpoint written by an older build may already contain the
+        // server's page-41 URL.  INSPIRE rejects that URL with HTTP 400 before
+        // returning a JSON page, so repair it locally instead of sending the
+        // known-invalid request.  The current writer normally prevents this
+        // state; this guard is for interrupted upgrades and hand-copied
+        // checkpoints.
+        if pageNumber > 40 {
+            if isPartitioned, partition + 1 < Self.authorCandidatePartitions.count {
+                return ([], try authorCandidateURL(partition: partition + 1, page: 1), 0)
+            }
+            if !isPartitioned {
+                return ([], try authorCandidateURL(partition: 0, page: 1), 0)
+            }
+            return ([], nil, 0)
+        }
         let responsePage = try decoder.decode(InspireSearchPage<InspireAuthorHit>.self, from: await get(url))
         let authors = try responsePage.hits.hits.map(InspireMapper.author)
 
