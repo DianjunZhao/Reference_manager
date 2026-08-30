@@ -1,3 +1,5 @@
 248213e48a414fbc8775c4cc45fb8b445093d35db0f4d8b0278d58bf0daf98a9  LatticeLens-1.0.0-local.dmg
 3fc3d911468129025c6ea18fcbbcc6cc4a82885d8bed33138296b66dd30780de  LatticeLens-1.0.0.dSYM.zip
 37f991030d44700fe294ad0ae117dae9fe4c87cd2386a15208889f41e2c29d24  manifest-v1.0.json
+edfac19b15b7ae072c463b97acb7bc685646c523ea206bae90fc6b6dcd43e0d3  LatticeLens-1.0.0-local.zip
+dc9162fe514629f5f1c4271a2ec91fc7663e3a14b55f8298e71d9e700c9fcb81  LatticeLens.app/Contents/MacOS/LatticeLens
