@@ -1,8 +1,8 @@
 {
   "schema_version": "latticelens-package-manifest-v1.0",
-  "generated_at_utc": "2026-08-30T09:09:08Z",
+  "run_id": "20260830T101415Z-68719",
+  "generated_at_utc": "2026-08-30T10:18:12Z",
   "artifact_class": "same_mac_local_ad_hoc",
-  "validation_class": "targeted_native_tex_renderer_rebuild",
   "product_version": "1.0.0",
   "build_number": 100,
   "minimum_macos": "14.0",
@@ -12,39 +12,33 @@
   "notarized": false,
   "dmg_smoke": "passed",
   "spctl_status": "rejected_or_unavailable",
-  "source_commit": "4ac49e6686e3d5b79975e678e91738b7f3f914fc",
-  "build_input_tree_sha256": "74b7feb8379df378bb7d23306840692e7f63a99098b2e26efca85df9ba63d2d7",
-  "hotfix": {
-    "name": "bounded native Unicode TeX renderer",
-    "behavior": "renders supported Greek letters, fractions, roots, scripts and operators as selectable local math text without WebView or MathJax",
-    "verification": "CoreContractTests targeted renderer plus one fixture UI paper-selection test"
+  "build_input_tree_sha256": "48d575135cdeac2258668103a3bc75156d0aa17b1b92c3ccc44070707e4e4693",
+  "prepackage_validation": {
+    "source_project_path": ".codex-prepackage-validation-current.json",
+    "copied_file": "compact-validation/.codex-prepackage-validation-current.json",
+    "sha256": "ec56d8b53e26cdef4546ecf7032f578371693c6ea77423b006b9606087ec7efc"
   },
-  "automated_verification": {
-    "renderer_unit_tests_executed": 1,
-    "renderer_unit_tests_failed": 0,
-    "ui_fixture_tests_executed": 1,
-    "ui_fixture_tests_failed": 0,
-    "release_build": true,
-    "dmg_mount_arch_signature_smoke": true,
-    "blank_startup_refresh_test_executed": 1,
-    "blank_startup_refresh_test_failed": 0
+  "benchmark_evidence": {
+    "source_project_path": ".codex-benchmark-v5.json",
+    "copied_file": "compact-validation/.codex-benchmark-v5.json",
+    "sha256": "4770a6e888917e174aa6d92f007b05eec9a5bce078dfd7c9faef3acf489c4489"
   },
   "app": {
     "bundle": "LatticeLens.app",
-    "architectures": "arm64 x86_64",
-    "executable_sha256": "03b98a530ae108883b75a2772c4090a09969c0b1941235c894cafd22e27db34d",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "dc9162fe514629f5f1c4271a2ec91fc7663e3a14b55f8298e71d9e700c9fcb81",
     "icon_resource": "Contents/Resources/AppIcon.icns",
-    "build_scope": "current source native TeX renderer rebuild"
+    "dsym_uuids": "A4A78C2A-2BD9-38CB-BAA4-19B6A5C8986E (x86_64)\nDD7FB13E-9DB8-3E81-A6BD-1D6FB149FF44 (arm64)"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.0-local.dmg",
-      "sha256": "e46806ade37613a4e6c70cd216b325e21d349c6bdbf52b1bd6b4d63f4a3e0b82"
+      "sha256": "248213e48a414fbc8775c4cc45fb8b445093d35db0f4d8b0278d58bf0daf98a9"
     },
     "dsym": {
       "file": "LatticeLens-1.0.0.dSYM.zip",
-      "sha256": "4155563aa6e13e5f3c7a8418a4c4bb63cc6ba3d2d5bbf15537c23f33b8cb294b"
+      "sha256": "3fc3d911468129025c6ea18fcbbcc6cc4a82885d8bed33138296b66dd30780de"
     }
   },
-  "install_boundary": "DMG build and smoke use only project-local artifacts; no /Applications install and no user library access."
+  "install_boundary": "DMG smoke used only a project-local inspection copy with fixture/no-network launch; it did not write /Applications or a user library."
 }

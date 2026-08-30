@@ -686,6 +686,10 @@ private struct PaperTimeline: View {
                             Button("立即同步") { viewModel.syncSelectedAuthor() }
                                 .accessibilityIdentifier("syncEmptyTimeline")
                         }
+                        if viewModel.selectedAuthor == nil, viewModel.syncStatus.phase == .failed {
+                            Button("重试加载我的作者记录") { Task { await viewModel.start() } }
+                                .accessibilityIdentifier("retryInitialLoad")
+                        }
                     }
                     .padding(.vertical, 20)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -769,6 +773,8 @@ private struct PaperTimeline: View {
         switch viewModel.syncStatus.phase {
         case .syncingMetadata, .loadingLocal:
             return viewModel.syncStatus.message
+        case .failed where viewModel.selectedAuthor == nil:
+            return "无法加载我的 INSPIRE 作者记录；可以重试。"
         case .failed, .stale, .cancelled:
             return "同步没有写入新记录；可以重试，已有其他作者的本地资料不会受影响。"
         default:

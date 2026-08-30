@@ -313,6 +313,15 @@ final class AppViewModel: ObservableObject {
     /// First paint uses only local state. Network work is scheduled after the
     /// view can render and never blocks offline browsing.
     func start() async {
+        // Keep a visible state while the first local projection or the pinned
+        // self-author request is in flight.  On a new installation there is
+        // no selected author yet, so without this status the empty timeline
+        // looks indistinguishable from a refresh that did nothing.
+        if syncStatus.phase == .idle {
+            syncStatus = SyncStatus(phase: .loadingLocal, message: "正在读取本地资料",
+                                    completedPages: 0, successfulRecords: 0, failedRecords: 0,
+                                    lastUpdatedAt: Date())
+        }
         if case .readOnlyFailure(let reason) = await store.initializationState() {
             errorMessage = "本地资料库只读：\(reason)"
         }
@@ -347,7 +356,12 @@ final class AppViewModel: ObservableObject {
             return
         }
         await reloadAuthors()
-        if authors.first(where: { $0.isSelf }) == nil { await refreshPinnedSelf() }
+        if authors.first(where: { $0.isSelf }) == nil {
+            syncStatus = SyncStatus(phase: .syncingMetadata, message: "正在加载我的 INSPIRE 作者记录",
+                                    completedPages: 0, successfulRecords: 0, failedRecords: 0,
+                                    lastUpdatedAt: Date())
+            guard await refreshPinnedSelfWithRetry() else { return }
+        }
         // A new library is empty on the first pass through `reloadAuthors()`;
         // `refreshPinnedSelf()` then publishes the durable self record.  Pick
         // the author only after that refresh as well, otherwise the optional
@@ -462,12 +476,36 @@ final class AppViewModel: ObservableObject {
     }
 
     func refreshPinnedSelf() async {
-        do {
-            try await authorIndex.refreshPinnedSelf()
-            await reloadAuthors()
-        } catch {
-            errorMessage = "无法加载我的作者记录：\(error.localizedDescription)"
+        _ = await refreshPinnedSelfWithRetry()
+    }
+
+    /// A transient DNS/503 during first launch used to leave the app with no
+    /// author selected and no retry path.  Retry the small pinned-author
+    /// request once, then fail visibly so the user can invoke `start()` again
+    /// from the empty-state action.  This never retries a long literature or
+    /// h-index job and therefore keeps startup bounded.
+    @discardableResult
+    private func refreshPinnedSelfWithRetry() async -> Bool {
+        var lastError: Error?
+        for attempt in 0..<2 {
+            guard !Task.isCancelled else { return false }
+            do {
+                try await authorIndex.refreshPinnedSelf()
+                await reloadAuthors()
+                return true
+            } catch {
+                lastError = error
+                if attempt == 0 {
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
         }
+        let reason = lastError?.localizedDescription ?? "未知错误"
+        syncStatus = SyncStatus(phase: .failed, message: "无法加载我的作者记录；可点击重试",
+                                completedPages: 0, successfulRecords: 0, failedRecords: 1,
+                                lastUpdatedAt: Date())
+        errorMessage = "无法加载我的作者记录：\(reason)"
+        return false
     }
 
     func buildAuthorIndex(force: Bool = false) {
