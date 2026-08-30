@@ -439,6 +439,24 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(snapshot.computationFormulaVersion, "h-index-counts-v1-capped-10000")
     }
 
+    func testHIndex429DoesNotTriggerExpensiveLocalFallback() async throws {
+        let transport = ScriptedHTTPTransport([
+            .init(data: Data(), statusCode: 429, headers: nil),
+            .init(data: Data(), statusCode: 429, headers: nil),
+            .init(data: Data(), statusCode: 429, headers: nil)
+        ])
+        let provider = HIndexProvider(client: InspireClient(transport: transport,
+                                                              retrySleeper: { _ in }))
+        do {
+            _ = try await provider.snapshot(for: 32)
+            XCTFail("429 rate limiting must remain retryable rather than start a literature crawl")
+        } catch let error as LatticeLensError {
+            XCTAssertEqual(error, .httpStatus(429))
+        }
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 3)
+    }
+
     func testNameSearchNormalizesDiacriticsHyphenAndNativeName() {
         let candidate = Author(recid: 3, preferredName: "Álvarez, Ana-Maria", nativeNames: ["阿娜"], bai: "A.Alvarez.1",
                                arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .unknown, isTracked: false, lastSyncedAt: nil)

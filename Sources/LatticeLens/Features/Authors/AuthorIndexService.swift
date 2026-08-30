@@ -34,7 +34,7 @@ struct HIndexProvider: Sendable {
                 // the bounded local fallback.  429/transport failures remain
                 // retryable and never fan out into an expensive crawl.
                 return try await client.locallyComputedHIndex(for: authorRecid)
-            case .httpStatus(let status) where (400..<500).contains(status):
+            case .httpStatus(let status) where (400..<500).contains(status) && status != 429:
                 // INSPIRE occasionally rejects citation-summary for an
                 // individual author (the response is a deterministic 400,
                 // not a transient rate-limit).  Treat that author exactly
