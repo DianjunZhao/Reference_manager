@@ -25,7 +25,9 @@
     "ui_fixture_tests_executed": 1,
     "ui_fixture_tests_failed": 0,
     "release_build": true,
-    "dmg_mount_arch_signature_smoke": true
+    "dmg_mount_arch_signature_smoke": true,
+    "blank_startup_refresh_test_executed": 1,
+    "blank_startup_refresh_test_failed": 0
   },
   "app": {
     "bundle": "LatticeLens.app",
