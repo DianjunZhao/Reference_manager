@@ -3,8 +3,8 @@
   "product_version": "1.0.0",
   "build_number": 100,
   "local_only": true,
-  "run_id": "incremental-20260830T125000Z",
-  "build_input_tree_sha256": "f2c96389a109bffec7c575b9f0d5a624c3ba86caf88b207164a9b274a51873cb",
+  "run_id": "20260830T055051Z-24633",
+  "build_input_tree_sha256": "e008fede22fb7591bb2dce230410f62f6c66b3c5c1cb7090289a9b457079d03f",
   "prepackage_eligible": true,
   "ui_evidence": {
     "scope": "selected_ui_delta_once_per_case",
@@ -26,88 +26,19 @@
     "compare": true,
     "notebook": true,
     "bundle": true,
-    "icon_version_resources": true
+    "icon_version_resources": true,
+    "dmg_smoke": false,
+    "cleanup": false
   },
   "migration_evidence": {
     "source_origin": "synthetic_v7_benchmark",
     "source_store_name": "synthetic-v7-benchmark-disposable.store",
-    "sha256": "c7109f4ea2d954a58b7e1f07d9b4cf5dbbc315431fe9c6b4182e62ef31c041fa"
+    "sha256": "7adaa223574607ef735f463ef176d100bf409cd016b625440e1e325c4df8a678"
   },
   "benchmarks": {
-    "legacy_v6_warm_search_p95_ms": 23,
-    "legacy_v6_disk_cold_open_p95_ms": 25,
-    "legacy_v6_disk_single_row_mutation_p95_ms": 2,
-    "compatibility_v7_warm_search_p95_ms": 29,
-    "v9_final_typed": {
-      "authors": 2000,
-      "backup_ms": 32,
-      "backup_verified": true,
-      "chunks": 10000,
-      "cold_open_p50_ms": 2,
-      "cold_open_p95_ms": 3,
-      "cold_open_samples_ms": [
-        3,
-        2,
-        2
-      ],
-      "collections": 100,
-      "expected_source_authors": 2000,
-      "expected_source_chunks": 10000,
-      "expected_source_links": 100000,
-      "expected_source_papers": 20000,
-      "full_text_documents": 100,
-      "links": 100000,
-      "papers": 20000,
-      "radar_events": 500,
-      "single_row_mutation_p50_ms": 0,
-      "single_row_mutation_p95_ms": 1,
-      "source_store_name": "benchmark-v7-active.store",
-      "store": "SwiftData-disk-backed-V9-final-typed-indexed",
-      "store_family_bytes": 40058880,
-      "tags": 100,
-      "user_annotations": 200,
-      "v7_to_v8_staged_migration_ms": 13064,
-      "v9_index_build_ms": 15817,
-      "warm_search_breakdown": {
-        "candidate_paper_fetch_p95_ms": 3,
-        "candidate_paper_row_count_p95": 100,
-        "decoded_paper_count_p95": 100,
-        "paper_decode_p95_ms": 1,
-        "posting_candidate_count_p95": 20000,
-        "posting_decode_and_intersection_p95_ms": 21,
-        "posting_lookup_p95_ms": 0,
-        "posting_row_count_p95": 1,
-        "query_term_count_p95": 1,
-        "result_sort_p95_ms": 0,
-        "sample_count": 21
-      },
-      "warm_search_p50_ms": 40,
-      "warm_search_p95_ms": 43,
-      "warm_search_result_count": 100
-    }
-  },
-  "incremental_revalidation": {
-    "reason": "post-fix targeted revalidation",
-    "tests": [
-      "CoreContractTests/testAuthorCandidatePaginationRecognizesPlusEncodedControlNumberPartition",
-      "CoreContractTests/testFirstPaintUsesBoundedStoreProjectionsInsteadOfWholeSnapshot",
-      "LatticeLensUITests/testFixtureAuthorSearchPaperSelectionAndFiveTabs"
-    ],
-    "status": "passed"
-  },
-  "verification_mode": "incremental_author_pagination_repair",
-  "source_changes": [
-    "InspireClient author checkpoint decoding: bounded double URL-decode and whitespace canonicalization",
-    "V2 recovery fixture updated to partitioned checkpoint",
-    "full SwiftPM suite and live INSPIRE author pagination revalidated"
-  ],
-  "revalidated": {
-    "swiftpm_tests": 144,
-    "swiftpm_failures": 0,
-    "swiftpm_authorized_skips": 2,
-    "live_author_pagination_pages": 72,
-    "live_author_pagination_authors": 17478,
-    "live_author_pagination_finished": true
-  },
-  "carried_forward_gates": "All other mandatory gates carried from prior full validation for unchanged code paths; UI runner retry remained environment-blocked"
+    "warm_search_p95_ms": 52,
+    "disk_cold_open_p95_ms": 41,
+    "disk_single_row_mutation_p95_ms": 5,
+    "v7_warm_search_p95_ms": 56
+  }
 }

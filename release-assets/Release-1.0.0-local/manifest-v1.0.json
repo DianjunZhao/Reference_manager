@@ -1,7 +1,7 @@
 {
   "schema_version": "latticelens-package-manifest-v1.0",
-  "run_id": "20260830T044846Z-15502",
-  "generated_at_utc": "2026-08-30T04:52:29Z",
+  "run_id": "20260830T061812Z-29041",
+  "generated_at_utc": "2026-08-30T06:22:58Z",
   "artifact_class": "same_mac_local_ad_hoc",
   "product_version": "1.0.0",
   "build_number": 100,
@@ -12,11 +12,11 @@
   "notarized": false,
   "dmg_smoke": "passed",
   "spctl_status": "rejected_or_unavailable",
-  "build_input_tree_sha256": "f2c96389a109bffec7c575b9f0d5a624c3ba86caf88b207164a9b274a51873cb",
+  "build_input_tree_sha256": "e008fede22fb7591bb2dce230410f62f6c66b3c5c1cb7090289a9b457079d03f",
   "prepackage_validation": {
     "source_project_path": ".codex-prepackage-validation-current.json",
     "copied_file": "compact-validation/.codex-prepackage-validation-current.json",
-    "sha256": "10e04fd50c81296f2c2bc764718ff514baa0d931b0d3cc0c6f1138352480dc27"
+    "sha256": "18bca508e24a3ff762545d7623bbd82f52512d817172459c220b3b902cacd3a6"
   },
   "benchmark_evidence": {
     "source_project_path": ".codex-benchmark-v5.json",
@@ -26,18 +26,18 @@
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "44ff8b05263e83e0e43b97222ed38cc301cd707ca74fbb05a4264ea4c8da896d",
+    "executable_sha256": "4da5e699cc5b7d84fc4adad94b7d96679a28008c1ad9bbbf6222a9cc3e942899",
     "icon_resource": "Contents/Resources/AppIcon.icns",
-    "dsym_uuids": "3ACE2283-083F-3E6A-A27F-EE80D1093DE4 (arm64)\nF66E5EF8-51E2-3A1C-8A9B-26701ADB016A (x86_64)"
+    "dsym_uuids": "4AF3AE29-6285-3BA1-ACD8-6DD35DA7B89C (x86_64)\n62E38CB7-7694-3986-9EA6-542B427B35C9 (arm64)"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.0-local.dmg",
-      "sha256": "b58c5af1afd9a43c0ccfaee670966a5b6c769ceb160022cc9a0aafbfe4912d3c"
+      "sha256": "f1a4f516c4ef8ed040e5ac60ce5b282483826ce9578b33ac576ab0472c03107b"
     },
     "dsym": {
       "file": "LatticeLens-1.0.0.dSYM.zip",
-      "sha256": "b477092df8d3ea0f32663feef01054512b4440621b4e6e578f866176a2818392"
+      "sha256": "b96dd1938c9731bde6d3c7c1bfcd1bfe2e4047df72c11f19a3fae58ee44536e4"
     }
   },
   "install_boundary": "DMG smoke used only a project-local inspection copy with fixture/no-network launch; it did not write /Applications or a user library."

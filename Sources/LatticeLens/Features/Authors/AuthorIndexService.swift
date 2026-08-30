@@ -34,7 +34,7 @@ struct HIndexProvider: Sendable {
                 // the bounded local fallback.  429/transport failures remain
                 // retryable and never fan out into an expensive crawl.
                 return try await client.locallyComputedHIndex(for: authorRecid)
-            case .httpStatus(400):
+            case .httpStatus(let status) where (400..<500).contains(status):
                 // INSPIRE occasionally rejects citation-summary for an
                 // individual author (the response is a deterministic 400,
                 // not a transient rate-limit).  Treat that author exactly
@@ -55,7 +55,7 @@ struct HIndexProvider: Sendable {
 struct HIndexQueue: Sendable {
     let maximumConcurrentRequests: Int
 
-    init(maximumConcurrentRequests: Int = 2) {
+    init(maximumConcurrentRequests: Int = 4) {
         self.maximumConcurrentRequests = max(1, maximumConcurrentRequests)
     }
 
@@ -162,6 +162,25 @@ private actor HIndexCheckpointWriter {
         }
     }
 
+    /// Keep every successful h-index row visible while preserving only the
+    /// unresolved IDs for an explicit retry.  One deterministic 4xx must not
+    /// turn an otherwise useful author index into a global failure state.
+    func pause() async throws {
+        checkpoint.state = .paused
+        checkpoint.updatedAt = Date()
+        let snapshot = await store.snapshot()
+        if let generationID, var generation = snapshot.authorIndexGenerations[generationID] {
+            generation.state = .active
+            generation.hQueuePending = checkpoint.resumableIDs.count
+            generation.lastCheckpointAt = checkpoint.updatedAt
+            try await store.commitAuthorIndexState(checkpoint: checkpoint, generation: generation)
+        } else {
+            try await store.save(checkpoint: checkpoint)
+        }
+    }
+
+    func hasResumableWork() -> Bool { !checkpoint.resumableIDs.isEmpty }
+
     func complete() async throws {
         guard checkpoint.isCompletionEligible else {
             // Persist the incomplete state before rejecting promotion.  This
@@ -236,6 +255,33 @@ struct AuthorIndexService: Sendable {
     func rebuildCandidateIndex(force: Bool = false) async throws -> AuthorIndexProgress {
         let initialSnapshot = await store.snapshot()
         let previous = try await store.checkpoint(jobID: Self.candidateJobID)
+        // Candidate pagination and h-index verification are two durable
+        // phases of one generation.  A process can finish the candidate
+        // pages, then pause with only h-index retry IDs left.  In that state
+        // starting pagination from page one again makes the visible refresh
+        // button appear inert (and needlessly re-requests tens of pages).
+        // Re-open the active generation directly and let refreshHIndices()
+        // consume its persisted retry queue.
+        if !force,
+           let previous,
+           previous.state == .completed,
+           let activeGeneration = initialSnapshot.authorIndexGenerations[previous.generationID],
+           activeGeneration.state == .active,
+           let hIndexCheckpoint = try await store.checkpoint(jobID: Self.hIndexJobID),
+           hIndexCheckpoint.generationID == previous.generationID,
+           V4CheckpointRecovery.shouldResume(hIndexCheckpoint),
+           !hIndexCheckpoint.resumableIDs.isEmpty {
+            var resumedCheckpoint = previous
+            resumedCheckpoint.state = .active
+            resumedCheckpoint.updatedAt = Date()
+            var resumedGeneration = activeGeneration
+            resumedGeneration.state = .active
+            resumedGeneration.completedAt = nil
+            resumedGeneration.lastCheckpointAt = resumedCheckpoint.updatedAt
+            resumedGeneration.hQueuePending = hIndexCheckpoint.resumableIDs.count
+            try await store.commitAuthorIndexState(checkpoint: resumedCheckpoint, generation: resumedGeneration)
+            return await indexProgress(state: .active, pages: resumedCheckpoint.completedPages)
+        }
         var checkpoint: SyncCheckpoint
         // A checkpoint from the pre-hep-th release must not be resumed: its
         // URL is scoped to the old hep-lat-only query and would silently omit
@@ -363,6 +409,10 @@ struct AuthorIndexService: Sendable {
         do {
             try await hIndexQueue.refresh(candidates, client: client) { outcome in
                 try await writer.record(outcome)
+            }
+            if await writer.hasResumableWork() {
+                try await writer.pause()
+                return await indexProgress(state: .paused, pages: 0)
             }
             try await writer.complete()
             return await indexProgress(state: .completed, pages: 0)

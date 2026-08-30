@@ -358,7 +358,12 @@ final class AppViewModel: ObservableObject {
         }
         if let selectedAuthorID { await loadPapers(for: selectedAuthorID, syncIfNeeded: true) }
         Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(350))
+            // Let the first local projection and the window's event loop
+            // settle before background tracked-author refreshes.  Starting
+            // several network jobs during first paint made the app feel
+            // frozen on a cold SwiftData open and could compete with the
+            // selected author's own first page.
+            try? await Task.sleep(for: .seconds(2))
             await self?.refreshTrackedAuthorsInForeground()
         }
     }
@@ -1500,7 +1505,11 @@ final class AppViewModel: ObservableObject {
             let progress = try await authorIndex.refreshHIndices(force: force)
             guard !Task.isCancelled, authorIndexSessionID == session else { return }
             authorIndexProgress = progress
-            authorIndexStatus = SyncStatus(phase: .ready, message: "作者索引已更新", completedPages: progress.completedPages,
+            let isPartial = progress.state == .paused
+            authorIndexStatus = SyncStatus(phase: isPartial ? .partial : .ready,
+                                           message: isPartial
+                                               ? "作者索引已部分完成；合格作者已保留，可继续重试失败项"
+                                               : "作者索引已更新", completedPages: progress.completedPages,
                                            successfulRecords: progress.verified, failedRecords: progress.failed, lastUpdatedAt: Date(),
                                            remainingRecords: progress.remaining)
             await reloadAuthors()

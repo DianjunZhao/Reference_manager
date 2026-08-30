@@ -32,6 +32,55 @@ final class V2RecoveryTests: XCTestCase {
         XCTAssertNotNil(resumedSnapshot.authors[22])
     }
 
+    func testCandidateResumeSkipsCompletedPagesWhenOnlyHIndexRetryRemains() async throws {
+        let store = InMemoryLibraryStore()
+        let author = makeAuthor(recid: 91, name: "Retry, Author")
+        try await store.upsert(authors: [author])
+        let generationID = "generation-with-h-retry"
+        let candidate = SyncCheckpoint(jobID: AuthorIndexService.candidateJobID,
+                                       jobKind: "author-candidates",
+                                       query: AuthorIndexService.candidateQueryCheckpoint,
+                                       generationID: generationID,
+                                       nextURL: nil,
+                                       completedPages: 40,
+                                       successfulRecords: 1,
+                                       activeMembership: [],
+                                       stagingMembership: [author.recid],
+                                       state: .completed)
+        let generation = AuthorIndexGeneration(id: generationID,
+                                               query: candidate.query,
+                                               startedAt: candidate.startedAt,
+                                               completedAt: nil,
+                                               state: .active,
+                                               activeMembership: [],
+                                               stagingMembership: [author.recid],
+                                               pageCount: candidate.completedPages,
+                                               hQueueCompleted: 0,
+                                               hQueuePending: 1,
+                                               hQueueFailed: 1,
+                                               hQueueCancelled: 0,
+                                               lastCheckpointAt: candidate.updatedAt)
+        try await store.save(checkpoint: candidate)
+        try await store.applyV3(.saveGeneration(generation))
+        let hIndex = SyncCheckpoint(jobID: AuthorIndexService.hIndexJobID,
+                                    jobKind: "author-h-index",
+                                    query: AuthorIndexService.candidateQueryCheckpoint,
+                                    generationID: generationID,
+                                    pendingIDs: [author.recid],
+                                    state: .failed)
+        try await store.save(checkpoint: hIndex)
+
+        let service = AuthorIndexService(client: InspireClient(transport: SequentialTransport([])), store: store)
+        let progress = try await service.rebuildCandidateIndex()
+        XCTAssertEqual(progress.completedPages, 40)
+        let resumed = try await store.checkpoint(jobID: AuthorIndexService.candidateJobID)
+        XCTAssertEqual(resumed?.state, .active)
+        XCTAssertEqual(resumed?.completedPages, 40)
+        let snapshot = await store.snapshot()
+        XCTAssertEqual(snapshot.authorIndexGenerations[generationID]?.hQueuePending, 1)
+        XCTAssertEqual(snapshot.authorIndexGenerations[generationID]?.state, .active)
+    }
+
     func testCandidateRefreshRetainsExistingVerifiedHIndex() async throws {
         let store = InMemoryLibraryStore()
         let oldH = HIndexSnapshot(authorRecid: 21, all: 31, published: 30, excludesSelfCitations: false,

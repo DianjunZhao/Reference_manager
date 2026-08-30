@@ -430,7 +430,7 @@ private struct AuthorSidebar: View {
                         Button("取消索引") { viewModel.cancelAuthorIndex() }
                             .buttonStyle(.link)
                             .accessibilityIdentifier("cancelAuthorIndex")
-                    } else if viewModel.authorIndexStatus.phase == .cancelled || viewModel.authorIndexStatus.phase == .stale || viewModel.authorIndexStatus.phase == .failed {
+                    } else if viewModel.authorIndexStatus.phase == .cancelled || viewModel.authorIndexStatus.phase == .partial || viewModel.authorIndexStatus.phase == .stale || viewModel.authorIndexStatus.phase == .failed {
                         Button("继续索引") { viewModel.buildAuthorIndex() }
                             .buttonStyle(.link)
                             .accessibilityIdentifier("resumeAuthorIndex")

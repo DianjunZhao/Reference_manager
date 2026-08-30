@@ -5,6 +5,13 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Rebuilt the local 1.0.0 (100) DMG from the current source after fixing the
+  refresh-resume path: when candidate pagination is complete but h-index retry
+  IDs remain, “继续索引” now reopens the active generation and processes only
+  those IDs instead of restarting pagination. The current package passed the
+  full SwiftPM suite (145 executed, 0 failures, 2 explicit skips), current
+  Xcode normal/large UI gates, and mounted fixture/no-network smoke.
+
 - Rebuilt the local 1.0.0 (100) DMG from commit `2db81d5`. Author-index
   pagination now repairs persisted page-41 checkpoints, HTTP 400 citation
   summary responses fall back to the auditable local most-cited calculation,
