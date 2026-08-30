@@ -1298,6 +1298,11 @@ enum V8MigrationCoordinator {
 @ModelActor
 actor V8TypedLibraryStore: LibraryStoring {
     private var availabilityFailure: String?
+    /// Row-level decode problems are recoverable: the readable rows remain
+    /// visible and the next explicit sync must be allowed to repair them.
+    /// Keep this separate from `availabilityFailure`, which is reserved for
+    /// structural store failures that genuinely require read-only mode.
+    private var availabilityWarning: String?
     private var lastKnownGoodSnapshot: LibrarySnapshot?
     /// V8-only test/migration containers remain valid compatibility inputs.
     /// The normal application factory opens V9, where these entities exist.
@@ -1338,7 +1343,7 @@ actor V8TypedLibraryStore: LibraryStoring {
             let value = try checkedSnapshot(); lastKnownGoodSnapshot = value
             return LibrarySnapshotReadResult(state: .ready, snapshot: value, message: nil)
         } catch {
-            let reason = availabilityFailure ?? "V8 typed store 读取失败；保留最后一次有效资料库"
+            let reason = availabilityFailure ?? availabilityWarning ?? "V8 typed store 读取失败；保留最后一次有效资料库"
             if let lastKnownGoodSnapshot { return LibrarySnapshotReadResult(state: .readOnlyFailure, snapshot: lastKnownGoodSnapshot, message: reason) }
             var failure = LibrarySnapshot(); failure.readErrorMessage = reason
             return LibrarySnapshotReadResult(state: .readOnlyFailure, snapshot: failure, message: reason)
@@ -1358,7 +1363,7 @@ actor V8TypedLibraryStore: LibraryStoring {
             let authors = rows.compactMap { row -> Author? in
                 do { return try row.decoded() }
                 catch {
-                    availabilityFailure = "V8 typed store 存在无法解码的作者行；已跳过该行"
+                    availabilityWarning = "V8 typed store 存在无法解码的作者行；已跳过该行"
                     return nil
                 }
             }
@@ -1375,7 +1380,7 @@ actor V8TypedLibraryStore: LibraryStoring {
                     let generation = try JSONDecoder.latticeLens.decode(AuthorIndexGeneration.self, from: row.generationData)
                     if generation.state == .completed { completed.append(generation) }
                 } catch {
-                    availabilityFailure = "V8 typed store 存在无法解码的作者索引 checkpoint；已保留可读作者行"
+                    availabilityWarning = "V8 typed store 存在无法解码的作者索引 checkpoint；已保留可读作者行"
                 }
             }
             let activeMembership = completed.max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?.activeMembership
@@ -1408,7 +1413,7 @@ actor V8TypedLibraryStore: LibraryStoring {
                     // other paper for this author.  Keep the readable rows
                     // visible and let the next explicit sync repair the bad
                     // record instead of presenting a blank timeline.
-                    availabilityFailure = "V8 typed store 存在无法解码的论文行；已跳过该行"
+                    availabilityWarning = "V8 typed store 存在无法解码的论文行；已跳过该行"
                 }
             }
             return values.sorted { lhs, rhs in
@@ -1951,7 +1956,16 @@ actor V8TypedLibraryStore: LibraryStoring {
     private func checkedSnapshot() throws -> LibrarySnapshot {
         if let availabilityFailure { throw LatticeLensError.persistenceUnavailable(availabilityFailure) }
         do { return try V8TypedStoreCodec.snapshot(from: modelContext) }
-        catch { availabilityFailure = "V8 typed store 读取/解码失败；后续写入已停止"; throw LatticeLensError.persistenceUnavailable(availabilityFailure!) }
+        catch {
+            // Compatibility snapshots decode many independent legacy payloads
+            // at once.  A malformed optional row can make that projection
+            // unavailable, but it must not poison the typed store: bounded
+            // row reads still work and an explicit refresh must be able to
+            // replace the bad record.  Structural failures are still surfaced
+            // to the caller through the read-only snapshot result.
+            availabilityWarning = "V8 typed store 存在无法解码的兼容行；已保留可读投影，刷新可继续修复"
+            throw LatticeLensError.persistenceUnavailable(availabilityWarning!)
+        }
     }
 
     private func requireWritable() throws { if let availabilityFailure { throw LatticeLensError.persistenceUnavailable(availabilityFailure) } }

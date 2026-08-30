@@ -155,6 +155,37 @@ final class V4LocalTests: XCTestCase {
         XCTAssertFalse(V4CheckpointRecovery.shouldResume(checkpoint))
     }
 
+    /// A malformed legacy checkpoint is a recoverable row-level problem.  It
+    /// must not poison the whole V8 store into read-only mode, otherwise the
+    /// next paper refresh cannot repair the bad data and the UI appears blank.
+    @MainActor
+    func testMalformedAuthorGenerationDoesNotBlockRefreshWrites() async throws {
+        let schema = Schema(versionedSchema: LatticeLensSchemaV8.self)
+        let container = try ModelContainer(for: schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        context.insert(StoredV8StoreMarker(semanticHash: "fixture"))
+        let seedGeneration = AuthorIndexGeneration(id: "bad", query: "fixture", startedAt: Date(), completedAt: Date(),
+                                                   state: .completed, activeMembership: [], stagingMembership: [], pageCount: 0,
+                                                   hQueueCompleted: 0, hQueuePending: 0, hQueueFailed: 0, hQueueCancelled: 0,
+                                                   lastCheckpointAt: nil)
+        let malformed = try StoredV8AuthorIndexGeneration(seedGeneration)
+        malformed.generationData = Data("not-json".utf8)
+        context.insert(malformed)
+        try context.save()
+
+        let store = V8TypedLibraryStore(modelContainer: container)
+        let projection = await store.authorSidebarProjection()
+        XCTAssertTrue(projection.authors.isEmpty)
+        let compatibilityRead = await store.snapshotResult()
+        XCTAssertEqual(compatibilityRead.state, .readOnlyFailure,
+                       "兼容 snapshot 应明确报告坏行，但不能把 typed store 变成不可写")
+
+        let author = Author(recid: 77, preferredName: "Fixture, Researcher", nativeNames: [], bai: nil,
+                            arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .qualified,
+                            isTracked: false, lastSyncedAt: nil)
+        try await store.upsert(authors: [author])
+    }
+
     func testRadarDiffClassifiesAddedRemovedAndModifiedWithFieldHashes() {
         let old = makePaper(11)
         var changed = old
