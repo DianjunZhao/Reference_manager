@@ -645,6 +645,26 @@ private struct PaperTimeline: View {
                     .padding(.horizontal)
                     .accessibilityIdentifier("authorSyncBatchSummary")
             }
+            if viewModel.syncStatus.phase == .syncingMetadata || viewModel.syncStatus.phase == .loadingLocal {
+                // An empty first page is a normal transient state on a new
+                // install or after selecting an author.  Keep the durable
+                // timeline list below, but expose a visible, accessible
+                // progress row so a network refresh cannot look like a dead
+                // button while the bounded request is in flight.
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(viewModel.syncStatus.message)
+                        .lineLimit(2)
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("paperSyncProgress")
+                .accessibilityLabel("文献同步进度")
+                .accessibilityValue(viewModel.syncStatus.message)
+            }
             Picker("过滤", selection: $viewModel.paperFilter) {
                 ForEach(PaperFilter.allCases) { Text($0.displayName).tag($0) }
             }

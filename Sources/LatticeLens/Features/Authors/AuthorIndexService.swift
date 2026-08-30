@@ -1,9 +1,9 @@
 import Foundation
 
 struct AuthorIndexProgress: Sendable, Equatable {
-    let verified: Int
+    var verified: Int
     let candidates: Int
-    let failed: Int
+    var failed: Int
     var qualified: Int = 0
     var rejected: Int = 0
     var completedPages: Int = 0
@@ -98,9 +98,19 @@ private actor HIndexCheckpointWriter {
     private let store: any LibraryStoring
     private let generationID: String?
     private var checkpoint: SyncCheckpoint
+    private var progressValue: AuthorIndexProgress
+    private var states: [Int: HIndexState]
+    private var authorsWithHIndex: Set<Int>
+    private var deliveredOutcomes = 0
 
-    init(store: any LibraryStoring, checkpoint: SyncCheckpoint, generationID: String? = nil) {
-        self.store = store; self.checkpoint = checkpoint; self.generationID = generationID
+    init(store: any LibraryStoring, checkpoint: SyncCheckpoint, generationID: String? = nil,
+         baseline: AuthorIndexProgress, initialAuthors: [Author]) {
+        self.store = store
+        self.checkpoint = checkpoint
+        self.generationID = generationID
+        self.progressValue = baseline
+        self.states = Dictionary(uniqueKeysWithValues: initialAuthors.map { ($0.recid, $0.hIndexState) })
+        self.authorsWithHIndex = Set(initialAuthors.compactMap { $0.hIndex == nil ? nil : $0.recid })
     }
 
     func record(_ outcome: HIndexOutcome) async throws {
@@ -109,16 +119,53 @@ private actor HIndexCheckpointWriter {
         switch outcome {
         case .success(let recid, let hIndex):
             guard var updated = snapshot.authors[recid] else { return }
+            let priorState = states[recid] ?? updated.hIndexState
+            if !authorsWithHIndex.contains(recid) {
+                authorsWithHIndex.insert(recid)
+                progressValue = AuthorIndexProgress(
+                    verified: progressValue.verified + 1,
+                    candidates: progressValue.candidates,
+                    failed: progressValue.failed,
+                    qualified: progressValue.qualified,
+                    rejected: progressValue.rejected,
+                    completedPages: progressValue.completedPages,
+                    remaining: progressValue.remaining,
+                    state: progressValue.state
+                )
+            }
+            if priorState == .qualified { progressValue.qualified = max(0, progressValue.qualified - 1) }
+            if priorState == .rejected { progressValue.rejected = max(0, progressValue.rejected - 1) }
+            if priorState == .failed { progressValue.failed = max(0, progressValue.failed - 1) }
             updated.hIndex = hIndex
             updated.hIndexState = hIndex.isQualified ? .qualified : .rejected
+            if updated.hIndexState == .qualified { progressValue.qualified += 1 }
+            if updated.hIndexState == .rejected { progressValue.rejected += 1 }
+            states[recid] = updated.hIndexState
             updatedAuthor = updated
             checkpoint.successfulRecords += 1
             checkpoint.pendingIDs.removeAll { $0 == recid }
             checkpoint.retryableIDs.removeAll { $0 == recid }
         case .failure(let recid):
             guard var updated = snapshot.authors[recid] else { return }
+            let priorState = states[recid] ?? updated.hIndexState
+            if priorState == .qualified { progressValue.qualified = max(0, progressValue.qualified - 1) }
+            if priorState == .rejected { progressValue.rejected = max(0, progressValue.rejected - 1) }
+            if priorState == .failed {
+                progressValue = AuthorIndexProgress(
+                    verified: progressValue.verified,
+                    candidates: progressValue.candidates,
+                    failed: max(0, progressValue.failed - 1),
+                    qualified: progressValue.qualified,
+                    rejected: progressValue.rejected,
+                    completedPages: progressValue.completedPages,
+                    remaining: progressValue.remaining,
+                    state: progressValue.state
+                )
+            }
             // A failed refresh must retain a prior usable snapshot as stale.
             updated.hIndexState = updated.hIndex == nil ? .failed : .stale
+            if updated.hIndexState == .failed { progressValue.failed += 1 }
+            states[recid] = updated.hIndexState
             updatedAuthor = updated
             checkpoint.failedRecords += 1
             if !checkpoint.failedIDs.contains(recid) { checkpoint.failedIDs.append(recid) }
@@ -128,6 +175,8 @@ private actor HIndexCheckpointWriter {
             checkpoint.cancelledIDs.append(recid)
             checkpoint.pendingIDs.removeAll { $0 == recid }
         }
+        progressValue.remaining = checkpoint.resumableIDs.count
+        deliveredOutcomes += 1
         guard let author = updatedAuthor else { return }
         checkpoint.updatedAt = Date()
         if let generationID, var generation = snapshot.authorIndexGenerations[generationID] {
@@ -146,6 +195,11 @@ private actor HIndexCheckpointWriter {
             try await store.upsert(authors: [author])
             try await store.save(checkpoint: checkpoint)
         }
+    }
+
+    func progressIfDue() -> AuthorIndexProgress? {
+        guard deliveredOutcomes == 1 || deliveredOutcomes % 8 == 0 else { return nil }
+        return progressValue
     }
 
     func cancel() async throws {
@@ -252,7 +306,14 @@ struct AuthorIndexService: Sendable {
     /// Resume a partial/failed/cancelled candidate job from the durable next
     /// URL. `force` starts a new generation without clearing the old h-index
     /// snapshots, so the A-Z list never flashes empty during a rebuild.
-    func rebuildCandidateIndex(force: Bool = false) async throws -> AuthorIndexProgress {
+    /// Rebuilds the candidate generation and optionally reports durable page
+    /// progress.  The callback is deliberately invoked only after the page,
+    /// checkpoint, and staging-generation commit succeeds, so UI progress can
+    /// never get ahead of the rows that survive a relaunch.
+    func rebuildCandidateIndex(
+        force: Bool = false,
+        onProgress: (@MainActor @Sendable (AuthorIndexProgress) async -> Void)? = nil
+    ) async throws -> AuthorIndexProgress {
         let initialSnapshot = await store.snapshot()
         let previous = try await store.checkpoint(jobID: Self.candidateJobID)
         // Candidate pagination and h-index verification are two durable
@@ -344,6 +405,9 @@ struct AuthorIndexService: Sendable {
                 generation.hQueueCancelled = checkpoint.cancelledIDs.count
                 generation.lastCheckpointAt = checkpoint.lastCheckpointAt
                 try await store.commitAuthorIndexPage(authors: page.authors, checkpoint: checkpoint, generation: generation)
+                if let onProgress {
+                    await onProgress(await indexProgress(state: .active, pages: checkpoint.completedPages))
+                }
             } while checkpoint.nextURL != nil
             return await indexProgress(state: .active, pages: checkpoint.completedPages)
         } catch is CancellationError {
@@ -367,7 +431,13 @@ struct AuthorIndexService: Sendable {
 
     /// Processes only pending/stale/failed records by default. Each completed
     /// network outcome is durable before the queue advances.
-    func refreshHIndices(force: Bool = false) async throws -> AuthorIndexProgress {
+    /// Verifies candidate h-index values and optionally reports each durable
+    /// outcome.  Reporting after `writer.record` keeps the displayed counts
+    /// aligned with the persisted retry queue and author rows.
+    func refreshHIndices(
+        force: Bool = false,
+        onProgress: (@MainActor @Sendable (AuthorIndexProgress) async -> Void)? = nil
+    ) async throws -> AuthorIndexProgress {
         let snapshot = await store.snapshot()
         let generation = snapshot.authorIndexGenerations.values
             .filter { $0.state == .active }
@@ -404,11 +474,23 @@ struct AuthorIndexService: Sendable {
         } else {
             try await store.save(checkpoint: checkpoint)
         }
-        let writer = HIndexCheckpointWriter(store: store, checkpoint: checkpoint,
-                                            generationID: generation?.id == checkpoint.generationID ? checkpoint.generationID : nil)
+        let baseline = await indexProgress(state: .active, pages: 0)
+        let writer = HIndexCheckpointWriter(
+            store: store,
+            checkpoint: checkpoint,
+            generationID: generation?.id == checkpoint.generationID ? checkpoint.generationID : nil,
+            baseline: baseline,
+            initialAuthors: candidates
+        )
         do {
             try await hIndexQueue.refresh(candidates, client: client) { outcome in
                 try await writer.record(outcome)
+                // Updating the durable checkpoint remains per outcome; throttle
+                // the UI projection to keep a large h-index crawl from
+                // rebuilding the entire sidebar on every response.
+                if let onProgress, let progress = await writer.progressIfDue() {
+                    await onProgress(progress)
+                }
             }
             if await writer.hasResumableWork() {
                 try await writer.pause()

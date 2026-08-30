@@ -356,7 +356,23 @@ final class AppViewModel: ObservableObject {
         if selectedAuthorID == nil {
             selectedAuthorID = authors.first(where: \.isSelf)?.recid ?? authors.first?.recid
         }
-        if let selectedAuthorID { await loadPapers(for: selectedAuthorID, syncIfNeeded: true) }
+        if let selectedAuthorID {
+            await loadPapers(for: selectedAuthorID, syncIfNeeded: true)
+            // A warm library can legitimately skip the network refresh when
+            // its last successful sync is still fresh.  Do not leave the
+            // toolbar in the misleading "未同步" state in that case: the
+            // local timeline is already available and the explicit Sync
+            // action remains the way to request a fresh remote pass.
+            if !papers.isEmpty, syncStatus.phase == .idle {
+                syncStatus = SyncStatus(phase: .ready,
+                                        message: "已加载本地 \(papers.count) 篇文献",
+                                        completedPages: 0,
+                                        successfulRecords: papers.count,
+                                        failedRecords: 0,
+                                        lastUpdatedAt: Date(),
+                                        remainingRecords: nil)
+            }
+        }
         Task { [weak self] in
             // Let the first local projection and the window's event loop
             // settle before background tracked-author refreshes.  Starting
@@ -1501,8 +1517,38 @@ final class AppViewModel: ObservableObject {
     private func runAuthorIndex(force: Bool, session: UUID) async {
         do {
             await refreshPinnedSelf()
-            _ = try await authorIndex.rebuildCandidateIndex(force: force)
-            let progress = try await authorIndex.refreshHIndices(force: force)
+            _ = try await authorIndex.rebuildCandidateIndex(force: force) { [weak self] progress in
+                guard let self, !Task.isCancelled, self.authorIndexSessionID == session else { return }
+                self.authorIndexProgress = progress
+                self.authorIndexStatus = SyncStatus(
+                    phase: .syncingMetadata,
+                    message: "已发现 \(progress.candidates) 名候选；正在验证 h-index（第 \(progress.completedPages) 页）",
+                    completedPages: progress.completedPages,
+                    successfulRecords: progress.verified,
+                    failedRecords: progress.failed,
+                    lastUpdatedAt: Date(),
+                    remainingRecords: progress.remaining
+                )
+                // Candidate rows are committed before h-index verification.
+                // Refresh the sidebar projection here so a long crawl never
+                // looks like a dead refresh button; only qualified rows are
+                // exposed by the projection until their h-index is verified.
+                await self.reloadAuthors()
+            }
+            let progress = try await authorIndex.refreshHIndices(force: force) { [weak self] progress in
+                guard let self, !Task.isCancelled, self.authorIndexSessionID == session else { return }
+                self.authorIndexProgress = progress
+                self.authorIndexStatus = SyncStatus(
+                    phase: .syncingMetadata,
+                    message: "正在验证 h-index：已核验 \(progress.verified) / 候选 \(progress.candidates)，合格 \(progress.qualified)",
+                    completedPages: progress.completedPages,
+                    successfulRecords: progress.verified,
+                    failedRecords: progress.failed,
+                    lastUpdatedAt: Date(),
+                    remainingRecords: progress.remaining
+                )
+                await self.reloadAuthors()
+            }
             guard !Task.isCancelled, authorIndexSessionID == session else { return }
             authorIndexProgress = progress
             let isPartial = progress.state == .paused
