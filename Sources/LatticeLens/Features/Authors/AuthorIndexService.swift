@@ -55,7 +55,12 @@ struct HIndexProvider: Sendable {
 struct HIndexQueue: Sendable {
     let maximumConcurrentRequests: Int
 
-    init(maximumConcurrentRequests: Int = 4) {
+    // INSPIRE's citation-summary endpoint is sensitive to bursty fan-out.
+    // The v1 contract deliberately caps this queue at two concurrent
+    // requests so a large hep-lat/hep-th generation keeps making progress
+    // instead of turning transient service throttling into a seemingly empty
+    // author index.
+    init(maximumConcurrentRequests: Int = 2) {
         self.maximumConcurrentRequests = max(1, maximumConcurrentRequests)
     }
 

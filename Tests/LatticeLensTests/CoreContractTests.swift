@@ -585,6 +585,20 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testInspireUnvalidatedBodyUsesShortProcessLocalTTL() async throws {
+        let transport = ScriptedHTTPTransport([
+            .init(data: try fixtureData("authors-page-1"), statusCode: 200, headers: nil),
+            .init(data: try fixtureData("authors-page-2"), statusCode: 200, headers: nil)
+        ])
+        let client = InspireClient(transport: transport, unvalidatedBodyTTL: 60)
+        let first = try await client.authorCandidatesPage()
+        let second = try await client.authorCandidatesPage()
+        XCTAssertEqual(first.authors.map(\.recid), second.authors.map(\.recid))
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 1,
+                       "无 ETag 的短 TTL body 应避免重复刷新阻塞首屏")
+    }
+
     func testRetryAfterHTTPDateIsParsedWithinTheBoundedBudget() throws {
         let url = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors"))
         let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 503, httpVersion: nil,

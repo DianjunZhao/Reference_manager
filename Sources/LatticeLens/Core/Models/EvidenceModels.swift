@@ -169,6 +169,14 @@ enum EpistemicStatus: String, Codable, CaseIterable, Sendable {
     case direct
     case inference
     case missing
+
+    var displayNameZH: String {
+        switch self {
+        case .direct: "原文直接支持"
+        case .inference: "基于原文的推断"
+        case .missing: "原文未提供"
+        }
+    }
 }
 
 struct EvidenceClaim: Codable, Hashable, Identifiable, Sendable {

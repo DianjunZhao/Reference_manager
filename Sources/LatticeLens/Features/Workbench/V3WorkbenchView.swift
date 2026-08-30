@@ -38,7 +38,7 @@ struct V3WorkbenchView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("证据工作台 Evidence Workbench", systemImage: "rectangle.3.group")
+                Label("证据工作台", systemImage: "rectangle.3.group")
                     .font(.title3)
                     // Keep the Workbench's stable region identifier on the
                     // title itself.  On current macOS, assigning it to the
@@ -111,14 +111,14 @@ private struct RadarWorkbenchTab: View {
                 TextField("名称", text: $queryName)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("radarQueryName")
-                TextField("INSPIRE query", text: $queryText)
+                TextField("INSPIRE 查询语句", text: $queryText)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("radarQueryText")
                 Picker("刷新策略", selection: $policy) {
                     ForEach(SavedQueryRefreshPolicy.allCases, id: \.self) { Text($0.displayNameZH).tag($0) }
                 }
                 .accessibilityIdentifier("radarRefreshPolicy")
-                Button("保存 query") { viewModel.saveRadarQuery(name: queryName, query: queryText, policy: policy) }
+                Button("保存查询") { viewModel.saveRadarQuery(name: queryName, query: queryText, policy: policy) }
                     .accessibilityIdentifier("saveRadarQuery")
                 Divider()
                 List(savedQueries) { query in
@@ -170,11 +170,11 @@ private struct RadarWorkbenchTab: View {
                 HStack {
                     Text("Radar 事件").font(.headline)
                     Spacer()
-                    Text("仅来自两次带时间戳的 INSPIRE snapshot diff")
+                    Text("仅来自两次带时间戳的 INSPIRE 快照差异")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if events.isEmpty {
-                    ContentUnavailableView("暂无变化", systemImage: "dot.radiowaves.left.and.right", description: Text("完成一次本地/INSPIRE sync 后，record diff 会出现在这里。"))
+                    ContentUnavailableView("暂无变化", systemImage: "dot.radiowaves.left.and.right", description: Text("完成一次本地/INSPIRE 同步后，记录差异会出现在这里。"))
                 } else {
                     List(events) { event in
                         RadarEventRow(event: event, paper: viewModel.workbenchSnapshot.papers[event.paperID]) {
@@ -213,11 +213,11 @@ private struct RadarEventRow: View {
             ForEach(event.changedFields.compactMap(V4RadarFieldChange.decodeStorageMarker), id: \.semanticKey) { change in
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(change.field) · \(change.kind.rawValue)").font(.caption).bold()
-                    Text("before: \(change.beforeDisplay ?? "∅")")
+                    Text("之前：\(change.beforeDisplay ?? "∅")")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                    Text("after: \(change.afterDisplay ?? "∅")")
+                    Text("之后：\(change.afterDisplay ?? "∅")")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                    Text("batch \(change.batchID.uuidString.prefix(8)) · \(change.sourceURL.absoluteString)")
+                    Text("批次 \(change.batchID.uuidString.prefix(8)) · \(change.sourceURL.absoluteString)")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .padding(6).background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
@@ -226,15 +226,15 @@ private struct RadarEventRow: View {
             if let paper {
                 LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(2)
             } else {
-                Text("本地未找到论文 metadata").lineLimit(2)
+                Text("本地未找到论文元数据").lineLimit(2)
             }
-            Text("changed: \(event.changedFields.filter { V4RadarFieldChange.decodeStorageMarker($0) == nil }.joined(separator: ", ")) · observed \(event.observedAt.formatted(date: .abbreviated, time: .shortened))")
+            Text("变化：\(event.changedFields.filter { V4RadarFieldChange.decodeStorageMarker($0) == nil }.joined(separator: ", ")) · 观察时间 \(event.observedAt.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                Text("before \(event.beforeHash?.prefix(12) ?? "none")")
-                Text("after \(event.afterHash.prefix(12))")
+                Text("之前 \(event.beforeHash?.prefix(12) ?? "无")")
+                Text("之后 \(event.afterHash.prefix(12))")
                 if event.changedFields.compactMap(V4RadarFieldChange.decodeStorageMarker).contains(where: { $0.field == "citationCount" }) {
-                    Text("citation \(event.beforeCitationCount.map(String.init) ?? "nil") → \(event.afterCitationCount.map(String.init) ?? "nil")")
+                    Text("引用 \(event.beforeCitationCount.map(String.init) ?? "无") → \(event.afterCitationCount.map(String.init) ?? "无")")
                 }
                 Link("source", destination: event.sourceURL)
             }
@@ -282,28 +282,28 @@ private struct CompareWorkbenchTab: View {
                         LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(2)
                     }
                 }
-                TextField("workspace name", text: $workspaceName).textFieldStyle(.roundedBorder)
-                Button("创建 Compare workspace") {
+                TextField("对照工作区名称", text: $workspaceName).textFieldStyle(.roundedBorder)
+                Button("创建对照工作区") {
                     viewModel.createCompareWorkspace(name: workspaceName, paperIDs: Array(selectedPaperIDs).sorted())
                     selectedPaperIDs.removeAll()
                 }
                 .disabled(!(2...6).contains(selectedPaperIDs.count))
                 .accessibilityIdentifier("createCompareWorkspace")
-                Text("当前选择：\(selectedPaperIDs.count) · direct cell 必须带同 paper anchor；缺失保持 unknown")
+                Text("当前选择：\(selectedPaperIDs.count) · direct 单元必须带同一论文锚点；缺失保持未知")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding()
             .frame(minWidth: 300, maxWidth: 360)
             VStack(alignment: .leading, spacing: 8) {
                 if workspaces.isEmpty {
-                    ContentUnavailableView("尚无 workspace", systemImage: "square.split.2x1", description: Text("从左侧选择论文创建一个可回查的 physics contract。"))
+                    ContentUnavailableView("尚无工作区", systemImage: "square.split.2x1", description: Text("从左侧选择论文创建可回查的物理契约。"))
                 } else {
-                    Picker("Workspace", selection: Binding(get: { selectedWorkspace?.id }, set: { selectedWorkspaceID = $0 })) {
+                    Picker("工作区", selection: Binding(get: { selectedWorkspace?.id }, set: { selectedWorkspaceID = $0 })) {
                         ForEach(workspaces) { workspace in Text(workspace.name).tag(Optional(workspace.id)) }
                     }
                     .accessibilityIdentifier("compareWorkspacePicker")
                     if let workspace = selectedWorkspace {
-                        Text("确定性规则只接受当前论文的明确格式；无法确认的 action、ensemble、Fourier 或重整化信息保持 missing。")
+                        Text("确定性规则只接受当前论文的明确格式；无法确认的 action、ensemble、Fourier 或重整化信息保持缺失。")
                             .font(.caption).foregroundStyle(.secondary)
                         if let inspectorCell {
                             VStack(alignment: .leading, spacing: 4) {
@@ -353,7 +353,7 @@ private struct CompareWorkbenchTab: View {
                                             .font(.headline)
                                             .accessibilityIdentifier("pdfAnchorPreviewPageTitle-\(previewAnchor.page ?? 0)")
                                         Spacer()
-                                        Button("返回 cell inspector") { self.previewAnchor = nil }
+                                        Button("返回单元检查器") { self.previewAnchor = nil }
                                             .accessibilityIdentifier("closeComparePDFAnchorPreview")
                                     }
                                     PDFAnchorPreview(
@@ -385,10 +385,10 @@ private struct CompareWorkbenchTab: View {
                             }
                         }
                         HStack {
-                            Button("仅用本地 anchor 提取") { viewModel.extractLocalCompareWorkspace(workspace.id) }
+                            Button("仅用本地锚点提取") { viewModel.extractLocalCompareWorkspace(workspace.id) }
                                 .accessibilityIdentifier("extractLocalCompare")
                             Spacer()
-                            Text("仅更新已通过同 paper anchor 验证的完整 matrix。")
+                            Text("仅更新已通过同一论文锚点验证的完整矩阵。")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                         if let status = viewModel.compareExtractionStatus {
@@ -488,7 +488,7 @@ private struct PhysicsCellInspector: View {
             Text("论文 \(cell.paperID) · \(cell.status.displayNameZH) · \(cell.value ?? "未知") \(cell.unit ?? "")")
             Text("提取版本：\(cell.extractionVersion)").font(.caption).foregroundStyle(.secondary)
             if cell.evidenceAnchorIDs.isEmpty {
-                Label("无 anchor：该值保持 missing/unknown，不能回查。", systemImage: "exclamationmark.triangle")
+                Label("无锚点：该值保持缺失/未知，不能回查。", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             } else {
                 ForEach(cell.evidenceAnchorIDs, id: \.self) { id in
@@ -506,12 +506,12 @@ private struct PhysicsCellInspector: View {
                             Text(anchor.quote).lineLimit(4).textSelection(.enabled)
                         }
                     } else {
-                        Text("stale anchor \(id)").foregroundStyle(.orange)
+                        Text("失效锚点 \(id)").foregroundStyle(.orange)
                     }
                 }
             }
             HStack {
-                Button("编辑 physics cell") { editing = true }
+                Button("编辑物理单元") { editing = true }
                 Button("跳到原文 / 论文") { openPaper(); close() }
             }
                 .accessibilityIdentifier("physicsCellOpenSource")
@@ -548,12 +548,12 @@ private struct PhysicsCellEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Edit \(cell.rowKey)").font(.title3)
-            Picker("status", selection: $status) { ForEach(PhysicsCellStatus.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-            TextField("value (leave empty for missing)", text: $value).textFieldStyle(.roundedBorder)
-            TextField("unit", text: $unit).textFieldStyle(.roundedBorder)
-            TextField("anchor IDs (comma separated)", text: $anchorIDs).textFieldStyle(.roundedBorder)
-            Text("可用 anchors: \(anchors.count)；direct/inference 必须选择同 paper anchor；caveat 无数值时可无 anchor，含数值时同样必须可回查。")
+            Text("编辑 \(cell.rowKey)").font(.title3)
+            Picker("状态", selection: $status) { ForEach(PhysicsCellStatus.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+            TextField("数值（缺失时留空）", text: $value).textFieldStyle(.roundedBorder)
+            TextField("单位", text: $unit).textFieldStyle(.roundedBorder)
+            TextField("锚点 ID（逗号分隔）", text: $anchorIDs).textFieldStyle(.roundedBorder)
+            Text("可用锚点：\(anchors.count)；direct/inference 必须选择同一论文锚点；没有数值的 caveat 可不带锚点，有数值时同样必须可回查。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack { Spacer(); Button("取消") { dismiss() }; Button("验证并保存") {
                 let ids = anchorIDs.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
@@ -601,16 +601,16 @@ private struct NotebookWorkbenchTab: View {
     private var notebookIndex: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("证据笔记本 / 可移植导出").font(.headline)
-            Text("仅导出用户选择的本地 records；默认不写入本机 PDF 绝对路径。RIS/CSL 缺失字段保持缺失。")
+            Text("仅导出用户选择的本地记录；默认不写入本机 PDF 绝对路径。RIS/CSL 缺失字段保持缺失。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Picker("格式", selection: $format) { ForEach(V3ExportFormat.allCases, id: \.self) { Text($0.displayNameZH).tag($0) } }
                 Button("导出…") { prepareExport() }
                     .disabled(selectedPaperIDs.isEmpty)
                     .accessibilityIdentifier("workbenchExport")
-                Button("导入 BibTeX/RIS/CSL…") { importing = true }
+                Button("导入 BibTeX / RIS / CSL…") { importing = true }
                     .accessibilityIdentifier("workbenchImport")
-                Button("新建 notebook entry…") {
+                Button("新建笔记本条目…") {
                     editingNotebookEntry = nil
                     presentingNotebookEditor = true
                 }
@@ -622,7 +622,7 @@ private struct NotebookWorkbenchTab: View {
             // the complete notebook, but a long paper selection list must not
             // push every mutation behind an inaccessible scroll boundary.
             if let mostRecentAnnotation = viewModel.workbenchSnapshot.userEvidenceAnchors.values.max(by: { $0.updatedAt < $1.updatedAt }) {
-                GroupBox("最近 annotation") {
+            GroupBox("最近标注") {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(mostRecentAnnotation.label)
@@ -647,9 +647,9 @@ private struct NotebookWorkbenchTab: View {
             let entries = viewModel.workbenchSnapshot.notebookEntries.values.sorted { lhs, rhs in
                 lhs.updatedAt == rhs.updatedAt ? lhs.id.uuidString < rhs.id.uuidString : lhs.updatedAt > rhs.updatedAt
             }
-            GroupBox("Notebook entries · multi-anchor") {
+            GroupBox("笔记本条目 · 多锚点") {
                 if entries.isEmpty {
-                    Text("尚无 notebook entry。新建后可为同一篇 paper 选择多个 annotation/evidence anchors，并以用户选择的顺序保存。")
+                    Text("尚无笔记本条目。新建后可为同一篇论文选择多个标注/证据锚点，并以用户选择的顺序保存。")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
                     List(entries) { entry in
@@ -657,7 +657,7 @@ private struct NotebookWorkbenchTab: View {
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(entry.title)
-                                Text("paper \(entry.paperID) · \(linkCount) anchors · \(entry.updatedAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text("论文 \(entry.paperID) · \(linkCount) 个锚点 · \(entry.updatedAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption2).foregroundStyle(.secondary)
                                 if !entry.body.isEmpty { Text(entry.body).lineLimit(1).font(.caption) }
                             }
@@ -687,7 +687,7 @@ private struct NotebookWorkbenchTab: View {
                 LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(2).tag(paper.literatureID)
             }
             if !viewModel.workbenchSnapshot.exportRecords.isEmpty {
-                GroupBox("Export provenance") {
+            GroupBox("导出来源记录") {
                     ForEach(viewModel.workbenchSnapshot.exportRecords.values.sorted { $0.createdAt > $1.createdAt }) { record in
                         HStack {
                             Text(record.format.displayNameZH)
@@ -702,14 +702,14 @@ private struct NotebookWorkbenchTab: View {
                 GroupBox("导入冲突 · 需要审阅") {
                     ForEach(viewModel.workbenchSnapshot.importConflicts.values.sorted { $0.paperID < $1.paperID }, id: \.importedID) { conflict in
                         HStack {
-                            Text("paper \(conflict.paperID): \(conflict.fields.joined(separator: ", "))")
+                            Text("论文 \(conflict.paperID)：\(conflict.fields.joined(separator: ", "))")
                             Spacer(); Text(conflict.status.rawValue).font(.caption)
                             if conflict.status == .pending {
                                 Button("审阅字段…") { reviewingImportConflict = conflict }
                                     .accessibilityIdentifier("reviewImportConflict-\(conflict.importedID.uuidString)")
                                 Button("拒绝") { viewModel.setImportConflictStatus(conflict, status: .rejected) }
                             } else if conflict.status == .accepted {
-                                Text("merged: \(conflict.acceptedFields.joined(separator: ", "))")
+                                Text("已合并：\(conflict.acceptedFields.joined(separator: ", "))")
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                         }
@@ -717,20 +717,20 @@ private struct NotebookWorkbenchTab: View {
                 }
             }
             if let dryRun = importDryRun {
-                GroupBox("Import dry-run · 尚未写入资料库") {
+                GroupBox("导入预演 · 尚未写入资料库") {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("records \(dryRun.records.count) · conflicts \(dryRun.conflicts.count)")
+                        Text("记录 \(dryRun.records.count) · 冲突 \(dryRun.conflicts.count)")
                         if dryRun.conflicts.isEmpty {
-                            Text("没有字段冲突；仍需确认后才写入 provenance ledger。")
+                            Text("没有字段冲突；仍需确认后才写入来源记录。")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else {
                             ForEach(dryRun.conflicts, id: \.importedID) { conflict in
-                                Text("paper \(conflict.paperID): \(conflict.fields.joined(separator: ", ")) · pending review")
+                                    Text("论文 \(conflict.paperID)：\(conflict.fields.joined(separator: ", ")) · 待审阅")
                                     .font(.caption)
                             }
                         }
                         HStack {
-                            Button("取消 dry-run") { importDryRun = nil }
+                            Button("取消预演") { importDryRun = nil }
                             Button("确认写入导入记录") {
                                 viewModel.commitNotebookImport(dryRun)
                                 importDryRun = nil
@@ -888,15 +888,15 @@ private struct NotebookEntryEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(entry == nil ? "New notebook entry" : "Edit notebook entry").font(.title3)
-            Text("Entry 只能连接同一篇 paper 的有效 evidence/annotation；顺序是可审计的持久化字段。")
+            Text(entry == nil ? "新建笔记本条目" : "编辑笔记本条目").font(.title3)
+            Text("条目只能连接同一篇论文的有效证据/标注；顺序是可审计的持久化字段。")
                 .font(.caption).foregroundStyle(.secondary)
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField("title", text: $title)
+                    TextField("标题", text: $title)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("notebookEntryTitle")
-                    GroupBox("Paper") {
+                    GroupBox("论文") {
                         VStack(alignment: .leading, spacing: 6) {
                             if let selectedPaper {
                                 HStack(spacing: 4) {
@@ -926,7 +926,7 @@ private struct NotebookEntryEditor: View {
                                     .accessibilityLabel("Notebook selected paper")
                                     .accessibilityValue("none")
                             }
-                            TextField("filter title or INSPIRE record ID", text: $paperFilter)
+                            TextField("筛选标题或 INSPIRE 记录 ID", text: $paperFilter)
                                 .textFieldStyle(.roundedBorder)
                                 .accessibilityIdentifier("notebookPaperFilter")
                             // A notebook may span the whole local library.
@@ -967,9 +967,9 @@ private struct NotebookEntryEditor: View {
                             .accessibilityLabel("Notebook paper selection list")
                         }
                     }
-                    GroupBox("Selected anchors · stable order") {
+                    GroupBox("已选锚点 · 稳定顺序") {
                         if selectedAnchorIDs.isEmpty {
-                            Text("可留空；选择后可用上下按钮确定进入 Notebook 的稳定顺序。")
+                            Text("可留空；选择后可用上下按钮确定进入笔记本的稳定顺序。")
                                 .font(.caption).foregroundStyle(.secondary)
                         } else {
                             VStack(alignment: .leading, spacing: 5) {
@@ -990,9 +990,9 @@ private struct NotebookEntryEditor: View {
                         }
                     }
                     if selectedPaperID != nil {
-                        GroupBox("Available valid anchors") {
+                        GroupBox("可用的有效锚点") {
                             if availableAnchors.isEmpty {
-                                Text("该 paper 暂无可用 anchors。可先在 PDF 或 Evidence 页面创建。")
+                                Text("该论文暂无可用锚点。可先在 PDF 或证据页面创建。")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else {
                                 VStack(alignment: .leading, spacing: 6) {
@@ -1053,7 +1053,7 @@ private struct NotebookEntryEditor: View {
                             }
                         }
                     }
-                    GroupBox("Entry text") {
+                    GroupBox("条目正文") {
                         TextEditor(text: $bodyText)
                             .frame(minHeight: 150)
                             .border(.quaternary)
@@ -1119,13 +1119,13 @@ private struct AnnotationEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Edit annotation").font(.title3)
-            Text("paper \(annotation.paperID) · quote hash \(annotation.quoteHash.prefix(12))").font(.caption).foregroundStyle(.secondary)
+            Text("编辑标注").font(.title3)
+            Text("论文 \(annotation.paperID) · 引文哈希 \(annotation.quoteHash.prefix(12))").font(.caption).foregroundStyle(.secondary)
             Text(annotation.quote).lineLimit(4).textSelection(.enabled)
-            TextField("label", text: $label)
+            TextField("标签", text: $label)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("annotationEditorLabel")
-            TextField("color", text: $color)
+            TextField("颜色", text: $color)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("annotationEditorColor")
             TextEditor(text: $note)
@@ -1161,8 +1161,8 @@ private struct ImportConflictReviewSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Review bibliography conflict").font(.title3)
-            Text("paper \(conflict.paperID) · only checked fields will be merged and recorded.")
+            Text("审阅书目冲突").font(.title3)
+            Text("论文 \(conflict.paperID) · 仅合并并记录明确勾选的字段。")
                 .font(.caption).foregroundStyle(.secondary)
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1203,11 +1203,11 @@ private struct GraphWorkbenchTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Bounded citation / coauthor graph").font(.headline)
-            Text("Preview: no edge ingestion yet · 仅显示当前本地 snapshot 已有的 source-backed edge；不会伪造缺失关系。")
+            Text("有界引用 / 合作者关系图").font(.headline)
+            Text("预览：尚未摄取新的边 · 仅显示当前本地快照中已有来源支持的关系；不会伪造缺失关系。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Picker("paper", selection: $rootPaperID) {
+                Picker("论文", selection: $rootPaperID) {
                     Text("不选").tag(Optional<Int>.none)
                     ForEach(viewModel.workbenchSnapshot.papers.values.sorted { $0.literatureID < $1.literatureID }) { paper in
                         HStack(spacing: 4) {
@@ -1216,7 +1216,7 @@ private struct GraphWorkbenchTab: View {
                         }.tag(Optional(paper.literatureID))
                     }
                 }
-                Picker("author recid", selection: $rootAuthorID) {
+                Picker("作者记录 ID", selection: $rootAuthorID) {
                     Text("不选").tag(Optional<Int>.none)
                     ForEach(viewModel.workbenchSnapshot.authors.values.sorted { $0.recid < $1.recid }) { author in
                         Text("\(author.recid) · \(author.preferredName)").tag(Optional(author.recid))
@@ -1226,21 +1226,21 @@ private struct GraphWorkbenchTab: View {
             }
             if let graph {
                 HStack {
-                    Text("papers: \(graph.paperIDs.count) · authors: \(graph.authorRecids.count)")
-                    Text("citation edges: \(graph.citationEdges.count) · coauthor edges: \(graph.coauthorEdges.count)")
-                    if graph.truncated { Label("bounded/truncated", systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                    Text("论文：\(graph.paperIDs.count) · 作者：\(graph.authorRecids.count)")
+                    Text("引用边：\(graph.citationEdges.count) · 合作者边：\(graph.coauthorEdges.count)")
+                    if graph.truncated { Label("已限制范围 / 已截断", systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
                 }.font(.caption)
                 List {
                     ForEach(graph.citationEdges) { edge in
                         VStack(alignment: .leading) {
-                            Text("citation \(edge.fromPaperID) → \(edge.toPaperID)")
+                            Text("引用 \(edge.fromPaperID) → \(edge.toPaperID)")
                             HStack { Link(edge.sourceURL.absoluteString, destination: edge.sourceURL); Text(edge.fetchedAt.formatted(date: .abbreviated, time: .shortened)); Text(edge.batchID.uuidString.prefix(8)) }
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                     ForEach(graph.coauthorEdges) { edge in
                         VStack(alignment: .leading) {
-                            Text("coauthor \(edge.authorRecid) — \(edge.coauthorRecid) (paper \(edge.sourcePaperID))")
+                            Text("合作者 \(edge.authorRecid) — \(edge.coauthorRecid)（论文 \(edge.sourcePaperID)）")
                             HStack { Link(edge.sourceURL.absoluteString, destination: edge.sourceURL); Text(edge.fetchedAt.formatted(date: .abbreviated, time: .shortened)); Text(edge.batchID.uuidString.prefix(8)) }
                                 .font(.caption2).foregroundStyle(.secondary)
                         }

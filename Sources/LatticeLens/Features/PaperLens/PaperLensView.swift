@@ -578,7 +578,10 @@ private struct EvidenceTab: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("以下推导仅来自已提取的 PDF chunks，并逐条绑定可回查的 page anchor；不会把摘要级猜测当作公式。")
                             .font(.caption).foregroundStyle(.secondary)
-                        EvidenceClaimSection(title: "公式与推导步骤", claims: artifact.insight.physics.importantFormulaDerivations)
+                        FormulaDerivationSection(
+                            claims: artifact.insight.physics.importantFormulaDerivations,
+                            anchors: Dictionary(uniqueKeysWithValues: viewModel.selectedEvidenceAnchors.map { ($0.id, $0) })
+                        )
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
@@ -748,10 +751,77 @@ private struct EvidenceClaimSection: View {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(claims) { claim in
                         VStack(alignment: .leading, spacing: 5) {
-                            HStack(alignment: .top) { Text(claim.epistemicStatus.rawValue).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(.quaternary, in: Capsule()); LocalMarkdownTeXText(source: claim.textZH) }
-                            if !claim.evidenceIDs.isEmpty { Text(claim.evidenceIDs.joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled) }
+                            HStack(alignment: .top) {
+                                Text(claim.epistemicStatus.displayNameZH)
+                                    .font(.caption)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(.quaternary, in: Capsule())
+                                LocalMarkdownTeXText(source: claim.textZH)
+                            }
+                            if !claim.evidenceIDs.isEmpty {
+                                Text("回查锚点：" + claim.evidenceIDs.joined(separator: " · "))
+                                    .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                            } else if claim.epistemicStatus == .missing {
+                                Text("无回查锚点：原文未提供此信息")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Formula claims deserve a more explicit presentation than ordinary prose:
+/// the epistemic label, native local math rendering, and every PDF page anchor
+/// are kept in one bounded card so a reader can verify the derivation without
+/// parsing raw `<math>` markup or opaque UUIDs.
+private struct FormulaDerivationSection: View {
+    let claims: [EvidenceClaim]
+    let anchors: [String: EvidenceAnchor]
+
+    var body: some View {
+        if claims.isEmpty {
+            Text("未找到可回查的论文重要公式；当前 PDF chunks 没有足够的公式文本。")
+                .font(.caption).foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(claims.enumerated()), id: \.element.id) { index, claim in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("公式 " + String(index + 1)).font(.subheadline.weight(.semibold))
+                            Text(claim.epistemicStatus.displayNameZH)
+                                .font(.caption)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(claim.epistemicStatus == .direct ? .green.opacity(0.15) : .orange.opacity(0.15), in: Capsule())
+                        }
+                        LocalMarkdownTeXText(source: claim.textZH)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                        if claim.evidenceIDs.isEmpty {
+                            Text("无 PDF 锚点；此项不能作为 direct 公式结论。")
+                                .font(.caption2).foregroundStyle(.orange)
+                        } else {
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(claim.evidenceIDs, id: \.self) { evidenceID in
+                                    if let anchor = anchors[evidenceID] {
+                                        let location = anchor.page.map { "第 " + String($0) + " 页" } ?? "元数据"
+                                        let section = anchor.section.map { " · " + $0 } ?? ""
+                                        Text("回查：" + anchor.sourceKind.displayNameZH + " " + location + section)
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                            .textSelection(.enabled)
+                                    } else {
+                                        Text("回查锚点缺失：" + evidenceID)
+                                            .font(.caption2).foregroundStyle(.orange)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
                 }
             }
         }

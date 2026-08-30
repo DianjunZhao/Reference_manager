@@ -40,13 +40,12 @@ struct MainWorkspaceView: View {
                     Button {
                         viewModel.presentSyncCenter = true
                     } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        HStack(alignment: .center, spacing: 6) {
                             Image(systemName: viewModel.syncStatusSymbol)
                                 .accessibilityHidden(true)
                                 .imageScale(.small)
-                                .alignmentGuide(.firstTextBaseline) { dimensions in dimensions[VerticalAlignment.center] }
                             Text("INSPIRE")
-                            Text(viewModel.syncToolbarStatus)
+                                Text(viewModel.syncToolbarStatus)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
@@ -73,7 +72,7 @@ struct MainWorkspaceView: View {
                     .accessibilityIdentifier("syncCenterButton")
             }
             ToolbarItem(placement: .automatic) {
-                Button { viewModel.openWorkbench() } label: { Label("Evidence Workbench", systemImage: "rectangle.3.group") }
+                Button { viewModel.openWorkbench() } label: { Label("证据工作台", systemImage: "rectangle.3.group") }
                     .accessibilityIdentifier("workbenchButton")
             }
             ToolbarItem(placement: .automatic) {

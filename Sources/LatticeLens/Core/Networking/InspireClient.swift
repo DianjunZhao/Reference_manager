@@ -25,6 +25,7 @@ private struct ConditionalGETCacheEntry: Sendable {
     let data: Data
     let eTag: String?
     let lastModified: String?
+    let bodyExpiresAt: Date
 }
 
 private actor ConditionalGETCache {
@@ -33,11 +34,14 @@ private actor ConditionalGETCache {
     func entry(for url: URL) -> ConditionalGETCacheEntry? { entries[url] }
 
     func store(_ entry: ConditionalGETCacheEntry, for url: URL) {
-        guard entry.eTag != nil || entry.lastModified != nil else {
-            entries.removeValue(forKey: url)
-            return
-        }
         entries[url] = entry
+    }
+
+    func freshUnvalidatedBody(for url: URL, now: Date = Date()) -> Data? {
+        guard let entry = entries[url],
+              entry.eTag == nil, entry.lastModified == nil,
+              entry.bodyExpiresAt > now else { return nil }
+        return entry.data
     }
 }
 
@@ -115,13 +119,18 @@ struct InspireClient: Sendable {
     private let maximumGETAttempts: Int
     private let retrySleeper: @Sendable (Duration) async throws -> Void
     private let conditionalCache: ConditionalGETCache
+    /// A short process-local reuse window prevents repeated view-driven
+    /// refreshes from blocking the main timeline when INSPIRE omits validators.
+    /// Validator-bearing responses still use conditional GET on every call.
+    private let unvalidatedBodyTTL: TimeInterval
 
     init(
         transport: any HTTPTransport = URLSessionTransport(),
         origin: URL = InspireClient.defaultOrigin,
         maximumResponseBytes: Int = InspireClient.defaultMaximumResponseBytes,
         maximumGETAttempts: Int = InspireClient.defaultMaximumGETAttempts,
-        retrySleeper: @escaping @Sendable (Duration) async throws -> Void = { duration in try await Task.sleep(for: duration) }
+        retrySleeper: @escaping @Sendable (Duration) async throws -> Void = { duration in try await Task.sleep(for: duration) },
+        unvalidatedBodyTTL: TimeInterval = 15
     ) {
         self.transport = transport
         self.origin = origin
@@ -130,6 +139,7 @@ struct InspireClient: Sendable {
         self.maximumGETAttempts = max(1, maximumGETAttempts)
         self.retrySleeper = retrySleeper
         self.conditionalCache = ConditionalGETCache()
+        self.unvalidatedBodyTTL = max(0, unvalidatedBodyTTL)
     }
 
     func selfAuthor() async throws -> Author {
@@ -390,6 +400,10 @@ struct InspireClient: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 30
         let cached = await conditionalCache.entry(for: url)
+        if unvalidatedBodyTTL > 0,
+           let freshBody = await conditionalCache.freshUnvalidatedBody(for: url) {
+            return freshBody
+        }
         if let eTag = cached?.eTag {
             request.setValue(eTag, forHTTPHeaderField: "If-None-Match")
         } else if let lastModified = cached?.lastModified {
@@ -415,7 +429,8 @@ struct InspireClient: Sendable {
                 await conditionalCache.store(
                     ConditionalGETCacheEntry(data: data,
                                              eTag: response.value(forHTTPHeaderField: "ETag"),
-                                             lastModified: response.value(forHTTPHeaderField: "Last-Modified")),
+                                             lastModified: response.value(forHTTPHeaderField: "Last-Modified"),
+                                             bodyExpiresAt: Date().addingTimeInterval(unvalidatedBodyTTL)),
                     for: url
                 )
                 return data
