@@ -297,26 +297,45 @@ struct InspireClient: Sendable {
 
     /// Fallback when the live citation-summary facet changes or is unavailable.
     /// It deliberately records a different source rather than impersonating the
-    /// INSPIRE official summary.
+    /// INSPIRE official summary.  INSPIRE rejects offsets beyond its 10,000-row
+    /// window (page 41 at size 250) with HTTP 400.  Keep the fallback bounded to
+    /// the first 10,000 most-cited rows: that is sufficient for every h-index
+    /// up to 10,000 and, crucially, never turns one author into a fatal index
+    /// refresh when a large collaboration record crosses the service window.
     func locallyComputedHIndex(for authorRecid: Int, now: Date = Date()) async throws -> HIndexSnapshot {
         var nextURL: URL?
         var counts: [Int] = []
         var totalPapers = 0
         var pages = 0
+        let pageSize = 250
+        let maximumPages = 40
         repeat {
             try Task.checkCancellation()
-            guard pages < 1_000 else { throw LatticeLensError.paginationLimitExceeded }
+            guard pages < maximumPages else { break }
             let url = try nextURL.map { try validatedNextURL($0, expectedPath: "/api/literature") } ?? makeURL(path: "/api/literature", query: [
                 URLQueryItem(name: "q", value: "authors.recid:\(authorRecid)"),
                 URLQueryItem(name: "sort", value: "mostcited"),
-                URLQueryItem(name: "size", value: "250")
+                URLQueryItem(name: "size", value: String(pageSize))
             ])
             let data = try await get(url)
             let page = try decoder.decode(InspireSearchPage<InspireLiteratureHit>.self, from: data)
             totalPapers += page.hits.hits.count
             counts.append(contentsOf: page.hits.hits.compactMap(\.metadata.citationCount).filter { $0 >= 0 })
-            nextURL = try trustedNextURL(page.links?.next, expectedPath: "/api/literature")
             pages += 1
+            guard pages < maximumPages, page.hits.hits.count == pageSize else {
+                nextURL = nil
+                continue
+            }
+            let candidateNext = try trustedNextURL(page.links?.next, expectedPath: "/api/literature")
+            if let candidateNext,
+               let nextPage = URLComponents(url: candidateNext, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "page" })?.value.flatMap(Int.init),
+               nextPage > maximumPages {
+                // Do not send the known-invalid page-41 request.
+                nextURL = nil
+            } else {
+                nextURL = candidateNext
+            }
         } while nextURL != nil
         let sorted = counts.sorted(by: >)
         let h = sorted.enumerated().reduce(0) { current, item in item.element >= item.offset + 1 ? item.offset + 1 : current }
@@ -324,7 +343,7 @@ struct InspireClient: Sendable {
                               source: "locally-computed", query: "authors.recid:\(authorRecid) sort:mostcited",
                               fetchedAt: now, rawSchemaHash: StableHash.sha256(sorted.map(String.init).joined(separator: ",")),
                               inputPaperCount: totalPapers, missingCitationCount: totalPapers - counts.count,
-                              pageCount: pages, computationFormulaVersion: "h-index-counts-v1")
+                              pageCount: pages, computationFormulaVersion: "h-index-counts-v1-capped-10000")
     }
 
     func literaturePage(for authorRecid: Int, nextURL: URL? = nil, now: Date = Date()) async throws -> (papers: [Paper], nextURL: URL?, total: Int) {

@@ -419,6 +419,26 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(snapshot.pageCount, 1)
     }
 
+    func testHIndexFallbackStopsBeforeINSPIREPage41HTTP400() async throws {
+        let firstPage = Data("""
+        {"hits":{"total":12000,"hits":[
+          {"id":1,"metadata":{"titles":[{"title":"one"}],"citation_count":3}}
+        ]},"links":{"next":"https://inspirehep.net/api/literature/?q=authors.recid%3A32&sort=mostcited&size=250&page=41"}}
+        """.utf8)
+        let transport = ScriptedHTTPTransport([
+            .init(data: Data(), statusCode: 400, headers: nil),
+            .init(data: firstPage, statusCode: 200, headers: nil)
+        ])
+        let provider = HIndexProvider(client: InspireClient(transport: transport))
+        let snapshot = try await provider.snapshot(for: 32)
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(snapshot.source, "locally-computed")
+        XCTAssertEqual(snapshot.pageCount, 1)
+        XCTAssertEqual(requestCount, 2,
+                       "fallback must not request the service's known-invalid page 41")
+        XCTAssertEqual(snapshot.computationFormulaVersion, "h-index-counts-v1-capped-10000")
+    }
+
     func testNameSearchNormalizesDiacriticsHyphenAndNativeName() {
         let candidate = Author(recid: 3, preferredName: "Álvarez, Ana-Maria", nativeNames: ["阿娜"], bai: "A.Alvarez.1",
                                arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .unknown, isTracked: false, lastSyncedAt: nil)
