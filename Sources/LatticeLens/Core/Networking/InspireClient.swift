@@ -220,12 +220,17 @@ struct InspireClient: Sendable {
         guard let query else { return 0 }
         // URLComponents keeps `+` as a literal plus in query-item values
         // (rather than decoding it to a space).  INSPIRE's pagination links
-        // commonly encode the spaces around `OR`, `AND`, and `TO` this way,
-        // so normalize it before matching the durable control-number range.
-        let normalizedQuery = query.replacingOccurrences(of: "+", with: " ")
+        // commonly mix `+` and `%20` for the spaces around `OR`, `AND`, and
+        // `TO`.  Decode once, then canonicalize all whitespace before matching
+        // the durable control-number range.  This also handles a checkpoint
+        // copied from a proxy that percent-encoded the query value twice.
+        let decodedQuery = query.removingPercentEncoding ?? query
+        let normalizedQuery = decodedQuery
+            .replacingOccurrences(of: "+", with: " ")
+            .split { $0 == " " || $0 == "\t" || $0 == "\n" || $0 == "\r" }
+            .joined(separator: " ")
         for (index, range) in Self.authorCandidatePartitions.enumerated() {
-            if normalizedQuery.contains("control_number:[\(range.0) TO \(range.1)]") ||
-               normalizedQuery.contains("control_number:[\(range.0)%20TO%20\(range.1)]") {
+            if normalizedQuery.contains("control_number:[\(range.0) TO \(range.1)]") {
                 return index
             }
         }

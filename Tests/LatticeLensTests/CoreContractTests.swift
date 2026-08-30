@@ -141,6 +141,19 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
     }
 
+    func testAuthorCandidatePaginationRecognizesMixedPercentAndPlusEncoding() async throws {
+        // A hand-copied checkpoint can contain a mixture of proxy-style
+        // `%20` and form-style `+` spaces.  It must still advance from the
+        // second control-number partition without issuing the invalid page-41
+        // request again.
+        let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR+arxiv_categories%3Ahep-th%29%20AND+control_number%3A%5B1000000%20TO+1249999%5D&size=250&page=41"))
+        let client = InspireClient(transport: SequentialTransport([]))
+        let result = try await client.authorCandidatesPage(nextURL: staleURL)
+        let query = URLComponents(url: try XCTUnwrap(result.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1250000 TO 1499999]") == true)
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+    }
+
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
         let store = InMemoryLibraryStore()
         let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,

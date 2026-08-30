@@ -12,9 +12,13 @@ final class V2RecoveryTests: XCTestCase {
 
     func testCandidateCheckpointResumesAtDurableNextURL() async throws {
         let store = InMemoryLibraryStore()
-        let next = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors?page=2"))
+        // Use the final declared partition so an empty `links.next` is a
+        // genuine end-of-index in this one-page fixture.  Earlier partitions
+        // intentionally advance to the following disjoint range when the
+        // service omits `links.next`.
+        let next = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat+OR+arxiv_categories%3Ahep-th%29+AND+control_number%3A%5B3000000+TO+3999999%5D&size=250&page=2"))
         try await store.save(checkpoint: SyncCheckpoint(jobID: AuthorIndexService.candidateJobID,
-                                                         jobKind: "author-candidates", query: AuthorIndexService.candidateQuery,
+                                                         jobKind: "author-candidates", query: AuthorIndexService.candidateQueryCheckpoint,
                                                          generationID: "resume", nextURL: next, completedPages: 1,
                                                          successfulRecords: 2, state: .failed))
         let client = InspireClient(transport: SequentialTransport([try fixtureData("authors-page-2")]))
