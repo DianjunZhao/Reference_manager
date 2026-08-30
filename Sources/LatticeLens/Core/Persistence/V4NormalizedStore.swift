@@ -1350,13 +1350,35 @@ actor V8TypedLibraryStore: LibraryStoring {
     /// materialize unrelated papers, AI artifacts, or V9 search postings.
     func authorSidebarProjection() -> LibraryAuthorSidebarProjection {
         do {
-            let authors = try modelContext.fetch(FetchDescriptor<StoredV8Author>()).map { try $0.decoded() }
-            let generations = try modelContext.fetch(FetchDescriptor<StoredV8AuthorIndexGeneration>())
-                .map { try JSONDecoder.latticeLens.decode(AuthorIndexGeneration.self, from: $0.generationData) }
-            let activeMembership = generations
-                .filter { $0.state == .completed }
-                .max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?
-                .activeMembership
+            // Decode author rows independently.  A single malformed legacy
+            // row must not turn the whole sidebar into an empty projection;
+            // the self-author row and every other readable row remain useful
+            // for browsing and for an explicit retry.
+            let rows = try modelContext.fetch(FetchDescriptor<StoredV8Author>())
+            let authors = rows.compactMap { row -> Author? in
+                do { return try row.decoded() }
+                catch {
+                    availabilityFailure = "V8 typed store 存在无法解码的作者行；已跳过该行"
+                    return nil
+                }
+            }
+
+            // Generation payloads are audit/checkpoint metadata, not a
+            // prerequisite for painting author rows.  Decode them one by one
+            // and retain the most recent valid completed membership.  This is
+            // especially important after an interrupted upgrade where an old
+            // generation may contain fields unknown to the current decoder.
+            let generationRows = try modelContext.fetch(FetchDescriptor<StoredV8AuthorIndexGeneration>())
+            var completed: [AuthorIndexGeneration] = []
+            for row in generationRows {
+                do {
+                    let generation = try JSONDecoder.latticeLens.decode(AuthorIndexGeneration.self, from: row.generationData)
+                    if generation.state == .completed { completed.append(generation) }
+                } catch {
+                    availabilityFailure = "V8 typed store 存在无法解码的作者索引 checkpoint；已保留可读作者行"
+                }
+            }
+            let activeMembership = completed.max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?.activeMembership
             return LibraryAuthorSidebarProjection(authors: authors, activeMembership: activeMembership)
         } catch {
             availabilityFailure = "V8 typed store 作者投影读取失败；资料库保持只读"
@@ -1379,7 +1401,15 @@ actor V8TypedLibraryStore: LibraryStoring {
             let links = try modelContext.fetch(FetchDescriptor<StoredV8PaperAuthorLink>(predicate: #Predicate { $0.authorRecid == authorRecid }))
             var values: [Paper] = []
             for link in links {
-                if let paper = try typedPaper(id: link.paperID) { values.append(paper) }
+                do {
+                    if let paper = try typedPaper(id: link.paperID) { values.append(paper) }
+                } catch {
+                    // One corrupt/legacy paper payload should not hide every
+                    // other paper for this author.  Keep the readable rows
+                    // visible and let the next explicit sync repair the bad
+                    // record instead of presenting a blank timeline.
+                    availabilityFailure = "V8 typed store 存在无法解码的论文行；已跳过该行"
+                }
             }
             return values.sorted { lhs, rhs in
                 if (lhs.timelineDate ?? .distantPast) != (rhs.timelineDate ?? .distantPast) {

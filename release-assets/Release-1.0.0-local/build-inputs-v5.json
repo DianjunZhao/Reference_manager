@@ -97,7 +97,7 @@
 ,
 {"path":"Sources/LatticeLens/Core/Persistence/SwiftDataLibraryStore.swift","sha256":"46d8d7672662e72023aa4aea06f4a3e7b648c467344ca67a6012b50ffc97b8c5"}
 ,
-{"path":"Sources/LatticeLens/Core/Persistence/V4NormalizedStore.swift","sha256":"8c40bc6bce76638e544ce52e7eb655ad894ab4b5a7f8556ed5f32caa4d85208b"}
+{"path":"Sources/LatticeLens/Core/Persistence/V4NormalizedStore.swift","sha256":"81f8b0ee114f34240e44d6a3c005f2b09f1afcdf5ccae2aec478c62b571b2b09"}
 ,
 {"path":"Sources/LatticeLens/Core/Support/Support.swift","sha256":"a97a4c9d59c474ff97ec241b9a77dec0c324dea5dded9c399dcfd308e6782d65"}
 ,
@@ -107,7 +107,7 @@
 ,
 {"path":"Sources/LatticeLens/Core/Workbench/V3WorkbenchService.swift","sha256":"d22c5671d8ccf235728b0947d2ae4b793565829408b9a954b3ee99c6f08c9912"}
 ,
-{"path":"Sources/LatticeLens/Features/Authors/AuthorIndexService.swift","sha256":"cc606517f8ea60d4405595f4d67249802128944b39faee503fa03f8a92b5db47"}
+{"path":"Sources/LatticeLens/Features/Authors/AuthorIndexService.swift","sha256":"84d1101e3f474c7a1ed83a8f5a10387996df83eb1087ec2e97b0c47e13f61524"}
 ,
 {"path":"Sources/LatticeLens/Features/Library/PaperSyncService.swift","sha256":"a0440a174bb7029881abb92e5aad80da5f2ee236bd469d82b356541bf3cabca6"}
 ,
@@ -143,7 +143,7 @@
 ,
 {"path":"Sources/LatticeLens/LLM/Workflow/VisionWorkflow.swift","sha256":"6b47eb1e6b256a694f88cad987dd11d99657782a84f8d016dfc2eb8853365846"}
 ,
-{"path":"Tests/LatticeLensTests/CoreContractTests.swift","sha256":"f9d769e6c7ff054572aebfff75399506bb509aa9b5485674ec58ea102e531430"}
+{"path":"Tests/LatticeLensTests/CoreContractTests.swift","sha256":"6014d251f4459fa5518e7b780905aa4353faafca2eaa9d580539113cae23f795"}
 ,
 {"path":"Tests/LatticeLensTests/EvidenceWorkflowTests.swift","sha256":"f24c68c3d6d1d55ac2eed425c6b9a83209d6a2aade68cf1cfa208c05d0391015"}
 ,
