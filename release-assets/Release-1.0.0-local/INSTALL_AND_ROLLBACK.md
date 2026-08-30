@@ -1,26 +1,9 @@
-# LatticeLens 1.0.0 — same-Mac local artifact
+# LatticeLens 1.0.0-local（h-index 修复包）
 
-This DMG is ad-hoc signed for local inspection.  It is not Developer ID signed,
-not notarized, and it must not be presented as a public macOS release.
+这是当前源码的同 Mac 本地 ad-hoc 包。请先核对 `manifest-v1.0.json` 和
+`SHA256SUMS.txt`，再从 DMG 安装。此次修复限制 h-index 本地 fallback 在
+INSPIRE 的 page 41 之前停止，避免已知 HTTP 400 让作者索引整体不可见。
 
-## Install without overwriting an existing app
-
-1. Verify `manifest-v1.0.json` and `SHA256SUMS.txt` before mounting the DMG.
-2. If `/Applications/LatticeLens.app` already exists, choose one action before
-   dragging the new app: retain and rename the old app, cancel, or replace it
-   only after you have verified a backup.  Never silently overwrite it.
-3. Start the installed app with network disabled for the local acceptance flow:
-   browse cached authors, search, note, PDF, Compare, Notebook and Bundle;
-   quit and relaunch to confirm durable state.
-
-## Data rollback and uninstall
-
-- If no V8 migration occurred, quit 1.0, remove only the new app and relaunch
-  the retained app.  Do not delete Application Support, PDFs, Keychain or a
-  library as part of an app rollback.
-- If a V7→V8 migration occurred, verify the pre-migration backup manifest and
-  hashes first. Restore it only to a new explicit target, verify record/link
-  counts, then choose the active library. Do not point an old app at a V8 store.
-- Default uninstall removes only `/Applications/LatticeLens.app`; it retains
-  libraries, PDFs and Keychain. A full data purge is a separate human action
-  after a verified Research Bundle export.
+该包没有 Developer ID 签名或公证；DMG smoke 只使用项目内 fixture/no-network
+副本，不会写入 `/Applications`、真实 Application Support、Keychain 或真实科研资料。
+回滚时退出 app 并移除用户选择的 app 副本即可，不要删除真实 library。

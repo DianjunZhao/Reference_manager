@@ -1,3 +1,3 @@
-21d77ad9b63cc13b46ece0736589e8a3e75f50a30a03a7495cde3e2eb2d4f2f8  LatticeLens-1.0.0-local.dmg
-ab6defecdfed285a539205df64cd755e763ee69e5333b79555523b636d7cdb32  LatticeLens-1.0.0.dSYM.zip
-89b57198133708b63c1f42c153011748ac2387a7ead49a7a27a24f6ea5f60193  manifest-v1.0.json
+19ef2ac82810ff1c72702724af23b6589dfa89f3292a2e1bd83e6d2a81353bcd  /Users/zhaodianjun/Desktop/Reference_manager/Release-1.0.0-local/LatticeLens-1.0.0-local.dmg
+c79db1d7ca1ce9d4a80168992e2bc69fab9481e0898fe2878ead5458c09be148  /Users/zhaodianjun/Desktop/Reference_manager/Release-1.0.0-local/LatticeLens-1.0.0.dSYM.zip
+54fdd3136afacfe9d0b0ee3186542d19eba59b54a78c9ec3bf8ab8c7d8d460fc  /Users/zhaodianjun/Desktop/Reference_manager/Release-1.0.0-local/manifest-v1.0.json
