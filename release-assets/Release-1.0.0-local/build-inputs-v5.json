@@ -56,7 +56,7 @@
 ,{"path":"Sources/LatticeLens/Features/Library/PaperSyncService.swift","sha256":"a0440a174bb7029881abb92e5aad80da5f2ee236bd469d82b356541bf3cabca6"}
 ,{"path":"Sources/LatticeLens/Features/Library/ReferenceManagerService.swift","sha256":"5c8204c85b3d221d0a2502150d721fb610d0a4e6f562df02b5d9ab8e8d62ff29"}
 ,{"path":"Sources/LatticeLens/Features/PaperLens/FullTextService.swift","sha256":"faa977da6b25dc78d25f4c1a31a5cddea72caeef677e073ab32b6d2b1f15926c"}
-,{"path":"Sources/LatticeLens/Features/PaperLens/LocalMarkdownTeXText.swift","sha256":"7c0100b47ada07dec0c77ad6f5c848535ba09f46b1b07299b8d4fee9d97d0af6"}
+,{"path":"Sources/LatticeLens/Features/PaperLens/LocalMarkdownTeXText.swift","sha256":"5144efa9c87d6dbe107c365ed3d7ba440cb8988c3224c102dcff2b8b1b7e5a2c"}
 ,{"path":"Sources/LatticeLens/Features/PaperLens/MainWorkspaceView.swift","sha256":"0bd4190360b7bdb29d3a6c48e23416d5ef4b0bfe02baf395047ec0bd95f25696"}
 ,{"path":"Sources/LatticeLens/Features/PaperLens/PaperLensView.swift","sha256":"3a9838e6e899eb3740c85b6662ae95799109e023a9db8daca2e9f04672e9c691"}
 ,{"path":"Sources/LatticeLens/Features/Settings/SettingsView.swift","sha256":"c3618a637894a892ff59ca45caa58784d19df934d31866db3e135ccb878262e8"}
@@ -70,7 +70,7 @@
 ,{"path":"Sources/LatticeLens/LLM/Workflow/EvidenceInsightWorkflow.swift","sha256":"df4da0a06ebbf9966b91967764fc43b0f013bcb58b35cdf451dce20cfa54d7b2"}
 ,{"path":"Sources/LatticeLens/LLM/Workflow/InsightWorkflow.swift","sha256":"178afad0493a551c3c760a21cba4146ae868bf8bddd68af34de159a3f37b95e9"}
 ,{"path":"Sources/LatticeLens/LLM/Workflow/VisionWorkflow.swift","sha256":"6b47eb1e6b256a694f88cad987dd11d99657782a84f8d016dfc2eb8853365846"}
-,{"path":"Tests/LatticeLensTests/CoreContractTests.swift","sha256":"fae47c89e30fd2bcc3e9935991bd8bb2fe2e4aaca887a9ab563e9a082937634f"}
+,{"path":"Tests/LatticeLensTests/CoreContractTests.swift","sha256":"d2b9d872664b431247373f034a3cef7cbb34af51513fb2a57619774512f16b6c"}
 ,{"path":"Tests/LatticeLensTests/EvidenceWorkflowTests.swift","sha256":"f24c68c3d6d1d55ac2eed425c6b9a83209d6a2aade68cf1cfa208c05d0391015"}
 ,{"path":"Tests/LatticeLensTests/Fixtures/authors-page-1.json","sha256":"f2ca891c9e69ddfe3cacd5621cd02785278829baa3972a03ab4cd36b533bb12f"}
 ,{"path":"Tests/LatticeLensTests/Fixtures/authors-page-2.json","sha256":"30673694aaab7e8395c63f189dc3712ac40f011b1ba2023b1ff9a673fb3b1b21"}

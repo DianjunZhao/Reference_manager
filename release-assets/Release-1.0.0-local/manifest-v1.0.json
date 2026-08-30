@@ -1,8 +1,8 @@
 {
   "schema_version": "latticelens-package-manifest-v1.0",
-  "generated_at_utc": "2026-08-30T08:50:04Z",
+  "generated_at_utc": "2026-08-30T09:09:08Z",
   "artifact_class": "same_mac_local_ad_hoc",
-  "validation_class": "targeted_h_index_page41_hotfix",
+  "validation_class": "targeted_native_tex_renderer_rebuild",
   "product_version": "1.0.0",
   "build_number": 100,
   "minimum_macos": "14.0",
@@ -12,11 +12,37 @@
   "notarized": false,
   "dmg_smoke": "passed",
   "spctl_status": "rejected_or_unavailable",
-  "source_commit": "1573bbb789144ae83be25eb524b593010578519c",
-  "build_input_tree_sha256": "0761925dab328e54060aef9d815defa7e6a97a988c2e76d0a8c1de424d82e857",
-  "hotfix": {"name": "h-index fallback capped before INSPIRE page 41", "behavior": "limits local most-cited fallback to 40 pages/10000 records and stops before known HTTP 400", "verification": "CoreContractTests plus full Swift test suite"},
-  "automated_verification": {"swift_tests_executed": 146, "swift_tests_failed": 0, "ui_fixture_tests_executed": 1, "ui_fixture_tests_failed": 0, "dmg_mount_arch_signature_smoke": true},
-  "app": {"bundle": "LatticeLens.app", "architectures": "arm64 x86_64", "executable_sha256": "06f703ad593ff57163ae6ba920fdd0252dc81f2d1e13b9ab1c878cb0791770c8", "icon_resource": "Contents/Resources/AppIcon.icns", "build_scope": "current source targeted hotfix rebuild"},
-  "artifacts": {"dmg": {"file": "LatticeLens-1.0.0-local.dmg", "sha256": "19ef2ac82810ff1c72702724af23b6589dfa89f3292a2e1bd83e6d2a81353bcd"}, "dsym": {"file": "LatticeLens-1.0.0.dSYM.zip", "sha256": "c79db1d7ca1ce9d4a80168992e2bc69fab9481e0898fe2878ead5458c09be148"}},
-  "install_boundary": "DMG mount smoke used only a project-local fixture/no-network inspection copy; no /Applications install and no user library access was performed."
+  "source_commit": "4ac49e6686e3d5b79975e678e91738b7f3f914fc",
+  "build_input_tree_sha256": "74b7feb8379df378bb7d23306840692e7f63a99098b2e26efca85df9ba63d2d7",
+  "hotfix": {
+    "name": "bounded native Unicode TeX renderer",
+    "behavior": "renders supported Greek letters, fractions, roots, scripts and operators as selectable local math text without WebView or MathJax",
+    "verification": "CoreContractTests targeted renderer plus one fixture UI paper-selection test"
+  },
+  "automated_verification": {
+    "renderer_unit_tests_executed": 1,
+    "renderer_unit_tests_failed": 0,
+    "ui_fixture_tests_executed": 1,
+    "ui_fixture_tests_failed": 0,
+    "release_build": true,
+    "dmg_mount_arch_signature_smoke": true
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "arm64 x86_64",
+    "executable_sha256": "03b98a530ae108883b75a2772c4090a09969c0b1941235c894cafd22e27db34d",
+    "icon_resource": "Contents/Resources/AppIcon.icns",
+    "build_scope": "current source native TeX renderer rebuild"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.0-local.dmg",
+      "sha256": "e46806ade37613a4e6c70cd216b325e21d349c6bdbf52b1bd6b4d63f4a3e0b82"
+    },
+    "dsym": {
+      "file": "LatticeLens-1.0.0.dSYM.zip",
+      "sha256": "4155563aa6e13e5f3c7a8418a4c4bb63cc6ba3d2d5bbf15537c23f33b8cb294b"
+    }
+  },
+  "install_boundary": "DMG build and smoke use only project-local artifacts; no /Applications install and no user library access."
 }
