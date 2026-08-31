@@ -360,7 +360,15 @@ final class AppViewModel: ObservableObject {
             syncStatus = SyncStatus(phase: .syncingMetadata, message: "正在加载我的 INSPIRE 作者记录",
                                     completedPages: 0, successfulRecords: 0, failedRecords: 0,
                                     lastUpdatedAt: Date())
-            guard await refreshPinnedSelfWithRetry() else { return }
+            let pinnedSelfLoaded = await refreshPinnedSelfWithRetry()
+            // A pinned-author request is an optional network enrichment.  A
+            // migrated/previously populated library can still contain a
+            // perfectly readable qualified author and papers when INSPIRE is
+            // temporarily unavailable.  Do not discard that local projection
+            // and leave the whole workspace looking blank just because the
+            // self-author refresh failed; select the first visible local row
+            // and let the explicit Sync action retry the network request.
+            if !pinnedSelfLoaded && authors.isEmpty { return }
         }
         // A new library is empty on the first pass through `reloadAuthors()`;
         // `refreshPinnedSelf()` then publishes the durable self record.  Pick

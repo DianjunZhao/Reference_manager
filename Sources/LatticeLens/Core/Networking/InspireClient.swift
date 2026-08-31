@@ -415,41 +415,66 @@ struct InspireClient: Sendable {
     /// up to 10,000 and, crucially, never turns one author into a fatal index
     /// refresh when a large collaboration record crosses the service window.
     func locallyComputedHIndex(for authorRecid: Int, now: Date = Date()) async throws -> HIndexSnapshot {
-        var nextURL: URL?
-        var counts: [Int] = []
-        var totalPapers = 0
-        var pages = 0
-        let pageSize = 250
-        let maximumPages = 40
-        repeat {
-            try Task.checkCancellation()
-            guard pages < maximumPages else { break }
-            let url = try nextURL.map { try validatedNextURL($0, expectedPath: "/api/literature") } ?? makeURL(path: "/api/literature", query: [
-                URLQueryItem(name: "q", value: "authors.recid:\(authorRecid)"),
-                URLQueryItem(name: "sort", value: "mostcited"),
-                URLQueryItem(name: "size", value: String(pageSize)),
-                URLQueryItem(name: "fields", value: Self.hIndexLiteratureFields)
-            ])
-            let data = try await get(url)
-            let page = try decoder.decode(InspireSearchPage<InspireLiteratureHit>.self, from: data)
-            totalPapers += page.hits.hits.count
-            counts.append(contentsOf: page.hits.hits.compactMap(\.metadata.citationCount).filter { $0 >= 0 })
-            pages += 1
-            guard pages < maximumPages, page.hits.hits.count == pageSize else {
-                nextURL = nil
-                continue
-            }
-            let candidateNext = try trustedNextURL(page.links?.next, expectedPath: "/api/literature")
-            if let candidateNext,
-               let nextPage = URLComponents(url: candidateNext, resolvingAgainstBaseURL: false)?.queryItems?
-                .first(where: { $0.name == "page" })?.value.flatMap(Int.init),
-               nextPage > maximumPages {
-                // Do not send the known-invalid page-41 request.
-                nextURL = nil
-            } else {
-                nextURL = candidateNext
-            }
-        } while nextURL != nil
+        /// The citation facet is normally the authoritative path.  When it
+        /// returns a deterministic 400, the fallback must still be cheap
+        /// enough to run for every candidate in a large hep-lat/hep-th
+        /// generation.  Current INSPIRE accepts `size=1000` for this
+        /// citation-only projection, reducing the capped 10,000-paper scan
+        /// from forty requests to at most ten.  A few older mirrors still
+        /// enforce the historical 250-row limit, so a first-page 400 retries
+        /// the complete bounded scan at size 250 rather than surfacing the
+        /// same HTTP 400 to the author-index UI.
+        func collect(pageSize: Int) async throws -> (counts: [Int], totalPapers: Int, pages: Int) {
+            var nextURL: URL?
+            var counts: [Int] = []
+            var totalPapers = 0
+            var pages = 0
+            let maximumPages = max(1, Int(ceil(Double(10_000) / Double(pageSize))))
+            repeat {
+                try Task.checkCancellation()
+                guard pages < maximumPages else { break }
+                let url = try nextURL.map { try validatedNextURL($0, expectedPath: "/api/literature") } ?? makeURL(path: "/api/literature", query: [
+                    URLQueryItem(name: "q", value: "authors.recid:\(authorRecid)"),
+                    URLQueryItem(name: "sort", value: "mostcited"),
+                    URLQueryItem(name: "size", value: String(pageSize)),
+                    URLQueryItem(name: "fields", value: Self.hIndexLiteratureFields)
+                ])
+                let data = try await get(url)
+                let page = try decoder.decode(InspireSearchPage<InspireLiteratureHit>.self, from: data)
+                totalPapers += page.hits.hits.count
+                counts.append(contentsOf: page.hits.hits.compactMap(\.metadata.citationCount).filter { $0 >= 0 })
+                pages += 1
+                guard pages < maximumPages, page.hits.hits.count == pageSize else {
+                    nextURL = nil
+                    continue
+                }
+                let candidateNext = try trustedNextURL(page.links?.next, expectedPath: "/api/literature")
+                if let candidateNext,
+                   let nextPage = URLComponents(url: candidateNext, resolvingAgainstBaseURL: false)?.queryItems?
+                    .first(where: { $0.name == "page" })?.value.flatMap(Int.init),
+                   nextPage > maximumPages {
+                    // Do not send the known-invalid page-41 request.
+                    nextURL = nil
+                } else {
+                    nextURL = candidateNext
+                }
+            } while nextURL != nil
+            return (counts, totalPapers, pages)
+        }
+
+        let collected: (counts: [Int], totalPapers: Int, pages: Int)
+        do {
+            collected = try await collect(pageSize: 1_000)
+        } catch let error as LatticeLensError where error == .httpStatus(400) {
+            // Do not retry arbitrary 4xx responses or rate limits.  This
+            // narrow downgrade is solely for mirrors that reject the larger
+            // citation-only page; it restarts from page one so changing the
+            // page size cannot skip records at a different offset.
+            collected = try await collect(pageSize: 250)
+        }
+        let counts = collected.counts
+        let totalPapers = collected.totalPapers
+        let pages = collected.pages
         let sorted = counts.sorted(by: >)
         let h = sorted.enumerated().reduce(0) { current, item in item.element >= item.offset + 1 ? item.offset + 1 : current }
         return HIndexSnapshot(authorRecid: authorRecid, all: h, published: nil, excludesSelfCitations: false,

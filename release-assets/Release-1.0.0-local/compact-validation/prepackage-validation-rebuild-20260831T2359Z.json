@@ -3,8 +3,8 @@
   "product_version": "1.0.0",
   "build_number": 100,
   "local_only": true,
-  "run_id": "20260831T142658Z-41566",
-  "build_input_tree_sha256": "597fba7f60e25d54edeaacfe05937965252cc6c1c631bb6bbbe4a3db210bd6bd",
+  "run_id": "20260831T154023Z-56843-rebuild",
+  "build_input_tree_sha256": "e7f9515abc78978e59dcd7ec6669c44ff261189dc7ce4844b8419ef7f2ee6c93",
   "prepackage_eligible": true,
   "ui_evidence": {
     "scope": "selected_ui_delta_once_per_case",
@@ -31,12 +31,28 @@
   "migration_evidence": {
     "source_origin": "synthetic_v7_benchmark",
     "source_store_name": "synthetic-v7-benchmark-disposable.store",
-    "sha256": "858b0406be5b9db42e2a84ea9dce827033b24b5c420ddbfb27b0cd1b13485d7c"
+    "sha256": "e07ad47869180d259e0f5e4e9c09226c2ddf6afd98916da3b0636ffcb32bb45c"
   },
   "benchmarks": {
-    "warm_search_p95_ms": 49,
-    "disk_cold_open_p95_ms": 33,
-    "disk_single_row_mutation_p95_ms": 3,
-    "v7_warm_search_p95_ms": 48
+    "legacy_v6_warm_search_p95_ms": 36,
+    "legacy_v6_disk_cold_open_p95_ms": 38,
+    "legacy_v6_disk_single_row_mutation_p95_ms": 2,
+    "compatibility_v7_warm_search_p95_ms": 42,
+    "v9_final_typed": {
+      "authors": 2000,
+      "papers": 20000,
+      "links": 100000,
+      "chunks": 10000,
+      "full_text_documents": 100,
+      "radar_events": 500,
+      "user_annotations": 200,
+      "tags": 100,
+      "collections": 100,
+      "backup_verified": true,
+      "warm_search_result_count": 100,
+      "warm_search_p95_ms": 90,
+      "cold_open_p95_ms": 7,
+      "single_row_mutation_p95_ms": 2
+    }
   }
 }

@@ -137,6 +137,36 @@ final class CoreContractTests: XCTestCase {
                        "fresh store must load the first INSPIRE page after self-author refresh")
     }
 
+    @MainActor
+    func testStartupKeepsLocalAuthorWhenPinnedSelfRequestFails() async throws {
+        // A temporary INSPIRE outage must not turn an already migrated local
+        // library into an empty workspace.  The pinned self record is a
+        // network enrichment; visible local authors/papers remain usable.
+        let store = InMemoryLibraryStore()
+        let localAuthor = Author(recid: 77, preferredName: "Local, Researcher", nativeNames: [], bai: nil,
+                                 arxivCategories: ["hep-th"], hIndex: HIndexSnapshot(authorRecid: 77, all: 42,
+                                 published: nil, excludesSelfCitations: false, source: "fixture", query: "fixture",
+                                 fetchedAt: Date(), rawSchemaHash: "fixture"), hIndexState: .qualified,
+                                 isTracked: false, lastSyncedAt: Date())
+        let paper = Paper(literatureID: 7_701,
+                          titles: [PaperTitle(value: "offline local paper", source: "fixture")],
+                          abstracts: [], preprintDate: nil, earliestDate: nil, arxivID: nil,
+                          arxivCategories: ["hep-th"], doi: nil, citationCount: nil,
+                          publicationStatus: nil, updated: nil, figures: [], firstSeenAt: Date(), isRead: false)
+        try await store.upsert(authors: [localAuthor])
+        _ = try await store.upsert(papers: [paper], for: localAuthor.recid)
+
+        let viewModel = AppViewModel(store: store,
+                                     client: InspireClient(transport: SequentialTransport([])),
+                                     keychain: FixedKeychain(value: "fixture-key"),
+                                     useFixtureDependencies: false)
+        await viewModel.start()
+
+        XCTAssertEqual(viewModel.selectedAuthorID, localAuthor.recid)
+        XCTAssertEqual(viewModel.papers.map(\.literatureID), [paper.literatureID])
+        XCTAssertEqual(viewModel.syncStatus.phase, .failed)
+    }
+
     func testAuthorCandidatePaginationPartitionsBeyondInspireResultWindow() async throws {
         // INSPIRE rejects page 41 for a 250-row author query.  The client must
         // switch to the next disjoint control-number partition instead of
@@ -506,6 +536,10 @@ final class CoreContractTests: XCTestCase {
             .first(where: { $0.name == "fields" })?.value
         XCTAssertEqual(fields, "citation_count",
                        "h-index fallback must not download figures/documents metadata")
+        let size = URLComponents(url: fallbackURL, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "size" })?.value
+        XCTAssertEqual(size, "1000",
+                       "citation-only fallback should use the bounded large page when the service accepts it")
     }
 
     func testHIndex429DoesNotTriggerExpensiveLocalFallback() async throws {
