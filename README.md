@@ -8,13 +8,18 @@
 > large fixture UI、synthetic disposable V7 migration、typed-store/physics/Radar/Compare/Notebook/
 > Bundle 与 same-Mac DMG smoke；其成功仍不替代下列人工 P0 gate。
 >
-> 唯一自动化入口是 `zsh Scripts/verify_v5.sh --local-only`；只有 non-empty build-input manifest
+> 1.0.0 的历史自动化入口是 `zsh Scripts/verify_v5.sh --local-only`；只有 non-empty build-input manifest
 > 所绑定的 verifier 才可作为 candidate。它真实执行 fixture UI、SwiftData disk benchmark、synthetic
 > disposable V7 migration 和 same-Mac DMG smoke；不能用历史 `.xcresult`、单用例或静态 build 代替它。
 > 2026-08-28 起，UI gate 是一次性 selected UI delta：1 个 normal case（Sync Center 滚动）与 2 个 large
 > case（虚拟化作者选择、长 Settings 滚动），每个 case 均单独启动 fixture app 并生成一份可读 result。三种窗口
 > 尺寸观察保留为人工 P0 receipt。完整 26-case fixture suite 仍用于开发回归，不再是该同机 release 的非重复
 > 封存 gate；manifest 会记录该范围和确切计数。
+> 对当前 **1.0.1 (101)** 安装包，使用
+> `zsh Scripts/verify_v1_0_1_seal.sh --manual-receipt evidence/ManualAcceptanceReceipt-v1.0.1-*.json`
+> 进行最终封存。该轻量脚本会校验两份 release DMG 的字节一致性、DMG image、当前
+> `/Applications/LatticeLens.app` 的版本/签名/executable hash，并要求 receipt 精确绑定
+> `manifest-v1.0.1.json`；它不把旧 1.0.0 的自动化记录冒充为 1.0.1 的新测试。
 >
 > 目前仍 fail-closed 的 1.0 边界是：真实 VoiceOver/Accessibility Inspector 与三种窗口尺寸观察、
 > 三篇 sanitized LQCD fixture rubric、用户选择下的 `/Applications` install/uninstall/app+data
