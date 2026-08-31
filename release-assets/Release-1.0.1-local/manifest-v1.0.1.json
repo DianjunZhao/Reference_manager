@@ -56,12 +56,29 @@
     "mounted_dmg_ui_observation": {
       "status": "PASS",
       "scope": "author sidebar and first literature page visible after fresh isolated launch"
+    },
+    "installed_application_isolated_startup": {
+      "status": "PASS",
+      "scope": "/Applications/LatticeLens.app 1.0.1 (101), real public INSPIRE GET, new disposable SwiftData root",
+      "authors": 1,
+      "papers": 10,
+      "paper_author_links": 10
+    },
+    "full_author_candidate_pagination": {
+      "status": "PASS",
+      "verified_at_utc": "2026-08-31T21:27:49Z",
+      "scope": "all seven disjoint hep-lat/hep-th author control-number partitions, public read-only INSPIRE API",
+      "pages": 72,
+      "records": 17478,
+      "unique_records": 17478,
+      "http_400_failures": 0,
+      "h_index_completion": "not asserted; h(all)>20 qualification remains a separate recoverable per-author queue"
     }
   },
   "release_status": {
     "current_binary_distinguishable_from_1_0_0_100": true,
     "manual_receipt_rebinding": "required_before_final_seal",
     "developer_id_and_notarization": "out_of_scope",
-    "install_boundary": "This package was never copied to /Applications during automated verification and never opened a real Application Support library."
+    "install_boundary": "This package was copied to /Applications only after the older app was closed, then verified against a new disposable SwiftData root. No real Application Support library was opened."
   }
 }
