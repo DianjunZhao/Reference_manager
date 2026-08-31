@@ -504,6 +504,20 @@ final class CoreContractTests: XCTestCase {
         XCTAssertFalse(snapshot.excludesSelfCitations)
     }
 
+    func testHIndexRequestsHyphenatedFacetBeforeCompatibilityVariant() async throws {
+        let recorder = HIndexRequestRecordingTransport(payload: try fixtureData("h-index"))
+        let client = InspireClient(transport: recorder)
+        let result = try await client.hIndex(for: 21)
+        XCTAssertEqual(result.all, 21)
+        let requests = await recorder.requestURLs()
+        let facet = URLComponents(url: try XCTUnwrap(requests.first), resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "facet_name" })?.value
+        XCTAssertEqual(facet, "citation-summary",
+                       "live INSPIRE requires the hyphenated selector for the citation-summary h-index facet")
+        XCTAssertEqual(requests.count, 1,
+                       "a valid h-index response must not trigger a compatibility request")
+    }
+
     func testAuthorPaginationFollowsTrustedNextWithoutDuplicates() async throws {
         let slashTerminatedNext = try String(decoding: fixtureData("authors-page-1"), as: UTF8.self)
             .replacingOccurrences(of: "/api/authors?page=2", with: "/api/authors/?page=2")
@@ -515,6 +529,49 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(second.authors.map(\.recid), [22])
         XCTAssertEqual(first.total, 3)
         XCTAssertNil(second.nextURL)
+    }
+
+    func testAuthorPaginationRetriesHTTP400WithBoundedCanonicalVariant() async throws {
+        // A transient service/proxy 400 must not discard the current author
+        // page.  The client retries once, then uses a lower-size canonical
+        // request before surfacing a terminal failure.
+        let transport = ScriptedHTTPTransport([
+            .init(data: Data(), statusCode: 400, headers: nil),
+            .init(data: Data(), statusCode: 400, headers: nil),
+            .init(data: try fixtureData("authors-page-1"), statusCode: 200, headers: nil)
+        ])
+        let client = InspireClient(transport: transport, retrySleeper: { _ in })
+        let page = try await client.authorCandidatesPage()
+        XCTAssertEqual(page.authors.map(\.recid), [ProductContract.selfAuthorRecid, 21])
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 3)
+    }
+
+    func testAuthorPaginationHTTP400RecoveryNeverDropsPartitionRange() async throws {
+        // A recovery response from an unpartitioned query can contain a
+        // `links.next` URL for the global page window.  Accepting that link
+        // after a partitioned page failure would silently restart at page 1
+        // and omit later hep-th control-number ranges.  Recovery must stay in
+        // the same range, even when the service only accepts the explicit OR
+        // form of the query.
+        let recovered = Data("""
+        {
+          "hits":{"total":1000,"hits":[{"id":77,"metadata":{"name":{"value":"Partition, Recovered"},"arxiv_categories":["hep-th"]}}]},
+          "links":{"next":"https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20AND%20control_number%3A%5B1000000%20TO%201249999%5D%29%20OR%20%28arxiv_categories%3Ahep-th%20AND%20control_number%3A%5B1000000%20TO%201249999%5D%29&size=250&page=2"}
+        }
+        """.utf8)
+        let transport = ScriptedHTTPTransport([
+            .init(data: Data(), statusCode: 400, headers: nil),
+            .init(data: Data(), statusCode: 400, headers: nil),
+            .init(data: recovered, statusCode: 200, headers: nil)
+        ])
+        let client = InspireClient(transport: transport, retrySleeper: { _ in })
+        let first = try await client.authorCandidatesPage(nextURL: URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th%29%20AND%20control_number%3A%5B1000000%20TO%201249999%5D&size=250&page=2")!)
+        XCTAssertEqual(first.authors.map(\.recid), [77])
+        let next = try XCTUnwrap(first.nextURL)
+        let query = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
+        XCTAssertFalse(query.first(where: { $0.name == "q" })?.value == AuthorIndexService.candidateQuery)
     }
 
     func testLiteratureDetailUsesSingleRecordShapeAndMapsMetadata() async throws {
@@ -529,6 +586,17 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(paper.displayTitle, "Detail lattice paper")
         XCTAssertEqual(paper.contributors.map(\.fullName), ["Author, First"])
         XCTAssertEqual(paper.documents.first?.isFullText, true)
+    }
+
+    func testLiteraturePageUsesSupportedBoundedFieldNames() async throws {
+        let transport = ScriptedHTTPTransport([.init(data: try fixtureData("literature-page"), statusCode: 200, headers: nil)])
+        _ = try await InspireClient(transport: transport).literaturePage(for: 77)
+        let observedURL = await transport.url(at: 0)
+        let url = try XCTUnwrap(observedURL)
+        let fields = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "fields" })?.value
+        XCTAssertTrue(fields?.contains("titles") == true)
+        XCTAssertFalse(fields?.contains("metadata.titles") == true)
     }
 
     func testPublicationInfoYearOverridesPreprintTimelineYear() async throws {
@@ -574,6 +642,9 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="block">\frac{a}{b}</math>"#), [.displayTeX("\\frac{a}{b}")])
         XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview("<mi>ξ</mi><mo>+</mo><mn>1</mn>"), "ξ+1")
         XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math display="inline"><mi>ξ</mi></math>"#), [.inlineTeX("ξ")])
+        XCTAssertEqual(LocalMarkdownTeX.segments(in: #"&lt;math display=&quot;inline&quot;&gt;\alpha&lt;/math&gt;"#),
+                       [.inlineTeX(#"\alpha"#)],
+                       "HTML-escaped MathML wrappers must never leak into reader-facing text")
     }
 
     func testInspireGETRetriesOnlyBoundedRetryableResponsesAndHonorsRetryAfter() async throws {
@@ -913,10 +984,26 @@ private actor ScriptedHTTPTransport: HTTPTransport {
     }
 
     func requestCount() -> Int { count }
+    func url(at index: Int) -> URL? { requests.indices.contains(index) ? requests[index].url : nil }
     func header(at index: Int, named name: String) -> String? {
         guard requests.indices.contains(index) else { return nil }
         return requests[index].value(forHTTPHeaderField: name)
     }
+}
+
+private actor HIndexRequestRecordingTransport: HTTPTransport {
+    private let payload: Data
+    private var urls: [URL] = []
+
+    init(payload: Data) { self.payload = payload }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if let url = request.url { urls.append(url) }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (payload, response)
+    }
+
+    func requestURLs() -> [URL] { urls }
 }
 
 private func XCTAssertThrowsErrorAsync(

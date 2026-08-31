@@ -130,7 +130,7 @@ private struct RadarWorkbenchTab: View {
                                 .font(.caption2)
                                 .foregroundStyle(query.isPaused ? Color.orange : Color.secondary)
                                 .accessibilityIdentifier("radarQueryState-\(query.id.uuidString)")
-                                .accessibilityValue(query.isPaused ? "paused" : "active")
+                                .accessibilityValue(query.isPaused ? "已暂停" : "运行中")
                         }
                         Spacer()
                         Button("刷新") { viewModel.refreshRadarQuery(query) }
@@ -168,7 +168,7 @@ private struct RadarWorkbenchTab: View {
             .frame(minWidth: 280, maxWidth: 340)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Radar 事件").font(.headline)
+                    Text("研究雷达事件").font(.headline)
                     Spacer()
                     Text("仅来自两次带时间戳的 INSPIRE 快照差异")
                         .font(.caption).foregroundStyle(.secondary)
@@ -212,10 +212,10 @@ private struct RadarEventRow: View {
             }
             ForEach(event.changedFields.compactMap(V4RadarFieldChange.decodeStorageMarker), id: \.semanticKey) { change in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(change.field) · \(change.kind.rawValue)").font(.caption).bold()
-                    Text("之前：\(change.beforeDisplay ?? "∅")")
+                    Text("\(change.field) · \(change.kind.displayNameZH)").font(.caption).bold()
+                    LocalMarkdownTeXInlineText(source: "之前：\(change.beforeDisplay ?? "∅")")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                    Text("之后：\(change.afterDisplay ?? "∅")")
+                    LocalMarkdownTeXInlineText(source: "之后：\(change.afterDisplay ?? "∅")")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                     Text("批次 \(change.batchID.uuidString.prefix(8)) · \(change.sourceURL.absoluteString)")
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -236,7 +236,7 @@ private struct RadarEventRow: View {
                 if event.changedFields.compactMap(V4RadarFieldChange.decodeStorageMarker).contains(where: { $0.field == "citationCount" }) {
                     Text("引用 \(event.beforeCitationCount.map(String.init) ?? "无") → \(event.afterCitationCount.map(String.init) ?? "无")")
                 }
-                Link("source", destination: event.sourceURL)
+                Link("来源", destination: event.sourceURL)
             }
             .font(.caption2).foregroundStyle(.secondary)
         }
@@ -249,7 +249,7 @@ private struct CompareWorkbenchTab: View {
     @ObservedObject var viewModel: AppViewModel
     let dismissWorkbench: () -> Void
     @State private var selectedPaperIDs: Set<Int> = []
-    @State private var workspaceName = "New compare workspace"
+    @State private var workspaceName = "新建对照工作区"
     @State private var selectedWorkspaceID: UUID?
     @State private var inspectorCell: PhysicsContractCell?
     @State private var previewAnchor: EvidenceAnchor?
@@ -278,7 +278,7 @@ private struct CompareWorkbenchTab: View {
                             }
                         }
                         .accessibilityIdentifier("toggleComparePaper-\(paper.literatureID)")
-                        .accessibilityValue(selectedPaperIDs.contains(paper.literatureID) ? "selected" : "unselected")
+                        .accessibilityValue(selectedPaperIDs.contains(paper.literatureID) ? "已选择" : "未选择")
                         LocalMarkdownTeXInlineText(source: paper.displayTitle).lineLimit(2)
                     }
                 }
@@ -307,13 +307,13 @@ private struct CompareWorkbenchTab: View {
                             .font(.caption).foregroundStyle(.secondary)
                         if let inspectorCell {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Inspector 已选中：\(inspectorCell.rowKey) · paper \(inspectorCell.paperID)")
+                                Text("检查器已选中：\(inspectorCell.rowKey) · 论文 \(inspectorCell.paperID)")
                                     .font(.caption)
                                     .accessibilityIdentifier("physicsCellInspectorSelection")
                                 ForEach(inspectorCell.evidenceAnchorIDs, id: \.self) { anchorID in
                                     if let anchor = viewModel.workbenchSnapshot.evidenceAnchors[anchorID] {
                                         let anchorLocation = anchor.page.map { "p" + String($0) } ?? "metadata"
-                                        Button("打开 \(anchor.sourceKind.rawValue) \(anchorLocation)") {
+                                        Button("打开 \(anchor.sourceKind.displayNameZH) \(anchorLocation)") {
                                             // This compact inspector strip stays
                                             // visible above the scrollable
                                             // matrix. It exposes exactly the
@@ -430,7 +430,7 @@ private struct PhysicsMatrix: View {
                                 if let cell { inspect(cell) }
                             } label: {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(displayValue.isEmpty ? "unknown" : displayValue)
+                                    Text(displayValue.isEmpty ? "未知" : displayValue)
                                         .accessibilityIdentifier("physicsCellValue-\(rowKey)-\(paperID)")
                                     Text(state).font(.caption2)
                                         .accessibilityIdentifier("physicsCellState-\(rowKey)-\(paperID)")
@@ -447,8 +447,8 @@ private struct PhysicsMatrix: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("physicsCell-\(rowKey)-\(paperID)")
-                            .accessibilityLabel("\(rowKey) paper \(paperID) \(displayValue.isEmpty ? "unknown" : displayValue) \(state)")
-                            .accessibilityValue("\(state):\(displayValue.isEmpty ? "unknown" : displayValue)")
+                            .accessibilityLabel("\(rowKey) 论文 \(paperID) \(displayValue.isEmpty ? "未知" : displayValue) \(state)")
+                            .accessibilityValue("\(state)：\(displayValue.isEmpty ? "未知" : displayValue)")
                         }
                     }
                 }
@@ -503,7 +503,7 @@ private struct PhysicsCellInspector: View {
                             // the concrete evidence ID remains suffixed so a
                             // multi-anchor cell cannot collapse distinct links.
                             .accessibilityIdentifier("physicsCellAnchor-\(cell.paperID)-\(cell.rowKey)-\(anchor.id)")
-                            Text(anchor.quote).lineLimit(4).textSelection(.enabled)
+                        LocalMarkdownTeXText(source: anchor.quote).lineLimit(4)
                         }
                     } else {
                         Text("失效锚点 \(id)").foregroundStyle(.orange)
@@ -549,7 +549,7 @@ private struct PhysicsCellEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("编辑 \(cell.rowKey)").font(.title3)
-            Picker("状态", selection: $status) { ForEach(PhysicsCellStatus.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+            Picker("状态", selection: $status) { ForEach(PhysicsCellStatus.allCases, id: \.self) { Text($0.displayNameZH).tag($0) } }
             TextField("数值（缺失时留空）", text: $value).textFieldStyle(.roundedBorder)
             TextField("单位", text: $unit).textFieldStyle(.roundedBorder)
             TextField("锚点 ID（逗号分隔）", text: $anchorIDs).textFieldStyle(.roundedBorder)
@@ -633,7 +633,7 @@ private struct NotebookWorkbenchTab: View {
                                 // annotation List below.
                                 .accessibilityIdentifier("annotationPrimaryLabel-\(mostRecentAnnotation.id.uuidString)")
                                 .accessibilityValue(mostRecentAnnotation.label)
-                            Text("\(mostRecentAnnotation.status.rawValue) · paper \(mostRecentAnnotation.paperID)")
+                            Text("\(mostRecentAnnotation.status.displayNameZH) · 论文 \(mostRecentAnnotation.paperID)")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -656,10 +656,10 @@ private struct NotebookWorkbenchTab: View {
                         let linkCount = viewModel.workbenchSnapshot.notebookAnchorLinks.filter { $0.entryID == entry.id }.count
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(entry.title)
+                                LocalMarkdownTeXInlineText(source: entry.title)
                                 Text("论文 \(entry.paperID) · \(linkCount) 个锚点 · \(entry.updatedAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption2).foregroundStyle(.secondary)
-                                if !entry.body.isEmpty { Text(entry.body).lineLimit(1).font(.caption) }
+                                if !entry.body.isEmpty { LocalMarkdownTeXInlineText(source: entry.body).lineLimit(1).font(.caption) }
                             }
                             Spacer()
                             Button("编辑") {
@@ -678,7 +678,7 @@ private struct NotebookWorkbenchTab: View {
                         // count.  This prevents a pre-existing fixture entry
                         // from satisfying a newly saved-entry assertion.
                         .accessibilityLabel(entry.title)
-                        .accessibilityValue("\(linkCount) anchors")
+                        .accessibilityValue("\(linkCount) 个锚点")
                     }
                     .frame(minHeight: 96, maxHeight: 180)
                 }
@@ -703,7 +703,7 @@ private struct NotebookWorkbenchTab: View {
                     ForEach(viewModel.workbenchSnapshot.importConflicts.values.sorted { $0.paperID < $1.paperID }, id: \.importedID) { conflict in
                         HStack {
                             Text("论文 \(conflict.paperID)：\(conflict.fields.joined(separator: ", "))")
-                            Spacer(); Text(conflict.status.rawValue).font(.caption)
+                            Spacer(); Text(conflict.status.displayNameZH).font(.caption)
                             if conflict.status == .pending {
                                 Button("审阅字段…") { reviewingImportConflict = conflict }
                                     .accessibilityIdentifier("reviewImportConflict-\(conflict.importedID.uuidString)")
@@ -746,8 +746,8 @@ private struct NotebookWorkbenchTab: View {
                     List(annotations) { annotation in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
-                                Text(annotation.label)
-                                Text(annotation.status.rawValue).font(.caption).foregroundStyle(.secondary)
+                        LocalMarkdownTeXInlineText(source: annotation.label)
+                                Text(annotation.status.displayNameZH).font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                                 Button("编辑") { editingAnnotation = annotation }
                                     .buttonStyle(.link)
@@ -758,7 +758,7 @@ private struct NotebookWorkbenchTab: View {
                             }
                         Text("论文 \(annotation.paperID) · \(annotation.sourceKind.displayNameZH) \(annotation.page.map { "p\($0)" } ?? "元数据") · 范围 \(annotation.characterRangeStart.map(String.init) ?? "—")–\(annotation.characterRangeEnd.map(String.init) ?? "—")")
                                 .font(.caption2).foregroundStyle(.secondary)
-                            Text(annotation.quote).lineLimit(2).textSelection(.enabled)
+                            LocalMarkdownTeXInlineText(source: annotation.quote).lineLimit(2)
                         }
                         .accessibilityIdentifier("annotationRow-\(annotation.id.uuidString)")
                     }
@@ -863,14 +863,14 @@ private struct NotebookEntryEditor: View {
         let evidence = snapshot.evidenceAnchors.values.compactMap { anchor -> NotebookAnchorChoice? in
             guard anchor.paperID == paperID, !snapshot.quarantinedEvidenceIDs.contains(anchor.id),
                   StableHash.sha256(anchor.quote) == anchor.quoteHash else { return nil }
-            let location = anchor.page.map { "p\($0)" } ?? anchor.sourceKind.rawValue
-            return NotebookAnchorChoice(id: anchor.id, label: "Evidence · \(location)", detail: anchor.quote)
+            let location = anchor.page.map { "第 \($0) 页" } ?? anchor.sourceKind.displayNameZH
+            return NotebookAnchorChoice(id: anchor.id, label: "证据 · \(location)", detail: anchor.quote)
         }
         let annotations = snapshot.userEvidenceAnchors.values.compactMap { annotation -> NotebookAnchorChoice? in
             guard annotation.paperID == paperID, annotation.status == .valid,
                   StableHash.sha256(annotation.quote) == annotation.quoteHash else { return nil }
-            let location = annotation.page.map { "p\($0)" } ?? annotation.sourceKind.rawValue
-            return NotebookAnchorChoice(id: annotation.id.uuidString, label: "Annotation · \(annotation.label) · \(location)", detail: annotation.quote)
+            let location = annotation.page.map { "第 \($0) 页" } ?? annotation.sourceKind.displayNameZH
+            return NotebookAnchorChoice(id: annotation.id.uuidString, label: "标注 · \(annotation.label) · \(location)", detail: annotation.quote)
         }
         return (evidence + annotations).sorted { lhs, rhs in
             lhs.label == rhs.label ? lhs.id < rhs.id : lhs.label.localizedCaseInsensitiveCompare(rhs.label) == .orderedAscending
@@ -883,7 +883,7 @@ private struct NotebookEntryEditor: View {
     }
 
     private func displayName(for anchorID: String) -> String {
-        availableAnchors.first { $0.id == anchorID }?.label ?? "Unavailable or stale anchor · \(anchorID.prefix(12))"
+        availableAnchors.first { $0.id == anchorID }?.label ?? "锚点不可用或已过期 · \(anchorID.prefix(12))"
     }
 
     var body: some View {
@@ -1014,8 +1014,8 @@ private struct NotebookEntryEditor: View {
                                                     HStack(alignment: .top, spacing: 8) {
                                                         Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                                                         VStack(alignment: .leading, spacing: 2) {
-                                                            Text(anchor.label).font(.caption)
-                                                            Text(anchor.detail).lineLimit(2).font(.caption2).foregroundStyle(.secondary)
+                                    LocalMarkdownTeXInlineText(source: anchor.label).font(.caption)
+                                    LocalMarkdownTeXInlineText(source: anchor.detail).lineLimit(2).font(.caption2).foregroundStyle(.secondary)
                                                         }
                                                         Spacer()
                                                     }
@@ -1121,7 +1121,7 @@ private struct AnnotationEditor: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("编辑标注").font(.title3)
             Text("论文 \(annotation.paperID) · 引文哈希 \(annotation.quoteHash.prefix(12))").font(.caption).foregroundStyle(.secondary)
-            Text(annotation.quote).lineLimit(4).textSelection(.enabled)
+            LocalMarkdownTeXText(source: annotation.quote).lineLimit(4)
             TextField("标签", text: $label)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("annotationEditorLabel")

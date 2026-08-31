@@ -1,0 +1,11 @@
+{
+  "schema_version": "latticelens-manual-acceptance-v5",
+  "package_manifest_sha256": "16a7cbb22f68653834088f56e715b3a60d00620420a65617a4f1d20a3f89489a",
+  "mandatory": {
+    "voiceover": true,
+    "lqcd_rubric": true,
+    "applications_install": true,
+    "disposable_library_drill": true
+  },
+  "applications_installation_choice": "no_old_app"
+}

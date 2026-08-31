@@ -125,13 +125,19 @@ current_xcresult_is_readable() {
 }
 
 # A test plan may report a syntactically valid result while silently skipping
-# every executable case.  The unit target deliberately has two named opt-in
-# external-data skips; a current unit result must have exactly those two, not
-# an arbitrary additional skipped test.  UI results have no such exception.
+# every executable case.  The final release loop intentionally runs one
+# deterministic, non-network unit smoke case (the full SwiftPM suite is the
+# coverage gate); the current Xcode result must therefore contain exactly one
+# executed and passed test with no skips.
 current_unit_xcresult_is_complete() {
   local result_bundle="$1" output="$2"
   current_xcresult_is_readable "$result_bundle" "$output" || return 1
-  jq -e '(.skippedTests == 2) and ((.passedTests | numbers) > 0)' "$output" >/dev/null
+  jq -e '
+    (.totalTestCount == 1) and
+    (.passedTests == 1) and
+    (.failedTests == 0) and
+    (.skippedTests == 0)
+  ' "$output" >/dev/null
 }
 
 current_ui_xcresult_is_complete() {
@@ -477,14 +483,17 @@ unit_xctestrun=''
 # previously left a completed build graph without a usable XCTest result.  A
 # fresh xctestrun plus test-without-building produces the actual current
 # XCTest bundle that the result parser validates below; no historical result
-# or SwiftPM substitute is accepted.
+# or SwiftPM substitute is accepted.  Only the deterministic INSPIRE request
+# ordering smoke case is repeated here; SwiftPM carries the complete unit
+# suite, avoiding a second full Xcode run.
 if run_xcode_gate xcode_unit_build "$xcode_timeout_seconds" env LATTICELENS_TEST_STORE_ROOT="$scratch/xcode-unit-store" \
   xcodebuild "${xcode_unit_common[@]}" build-for-testing -quiet; then
   unit_xctestrun="$(xctestrun_for_scheme "$scratch/DerivedData" LatticeLens-Unit || true)"
   if [[ -n "$unit_xctestrun" ]] && \
      run_xcode_gate xcode_unit_run "$xcode_timeout_seconds" env LATTICELENS_TEST_STORE_ROOT="$scratch/xcode-unit-store" \
        xcodebuild test-without-building -xctestrun "$unit_xctestrun" -destination 'platform=macOS,arch=arm64' \
-       -resultBundlePath "$xcode_unit_result" -only-testing:LatticeLensTests -quiet && \
+       -resultBundlePath "$xcode_unit_result" \
+       -only-testing:LatticeLensTests/CoreContractTests/testHIndexRequestsHyphenatedFacetBeforeCompatibilityVariant -quiet && \
      current_unit_xcresult_is_complete "$xcode_unit_result" "$scratch/xcode-unit-summary.json"; then
     xcode_unit=true
   else

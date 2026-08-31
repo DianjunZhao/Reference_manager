@@ -190,6 +190,14 @@ enum UserEvidenceAnchorStatus: String, Codable, CaseIterable, Sendable {
     case valid
     case stale
     case quarantined
+
+    var displayNameZH: String {
+        switch self {
+        case .valid: "有效"
+        case .stale: "已过期"
+        case .quarantined: "已隔离"
+        }
+    }
 }
 
 struct UserEvidenceAnchor: Codable, Hashable, Identifiable, Sendable {

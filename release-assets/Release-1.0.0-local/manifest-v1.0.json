@@ -1,7 +1,7 @@
 {
   "schema_version": "latticelens-package-manifest-v1.0",
-  "run_id": "20260831T020925Z-79725",
-  "generated_at_utc": "2026-08-31T02:12:06Z",
+  "run_id": "20260831T122958Z-7955",
+  "generated_at_utc": "2026-08-31T13:27:37Z",
   "artifact_class": "same_mac_local_ad_hoc",
   "product_version": "1.0.0",
   "build_number": 100,
@@ -12,33 +12,41 @@
   "notarized": false,
   "dmg_smoke": "passed",
   "spctl_status": "rejected_or_unavailable",
-  "build_input_tree_sha256": "20abfc92d2ac09d9756f52a6c53ff900984f4107694d7e383854cf75d5c1b3d4",
+  "build_input_tree_sha256": "f467fafb3ff0b91082e354c43c8b0c681c782cabd4bf0632f0a470989c3ffb2a",
   "prepackage_validation": {
-    "source_project_path": "prepackage-validation-v5-current-20260831T1012Z.json",
-    "copied_file": "compact-validation/prepackage-validation-v5-current-20260831T1012Z.json",
-    "sha256": "c998a97fd5227ef6fdc3edd84f3e6acc28f50500ea0d1bd6376fbf56b65d0729"
+    "source_project_path": ".build/verify-v5-20260831T121459Z-4420/prepackage-validation-v5.json",
+    "copied_file": "compact-validation/prepackage-validation-v5.json",
+    "sha256": "7189e8f85f27e71341c0e0cc45e52d26aec808ccd2cca62a415f981a859ef430"
   },
   "benchmark_evidence": {
-    "source_project_path": ".codex-benchmark-v5.json",
-    "copied_file": "compact-validation/.codex-benchmark-v5.json",
-    "sha256": "4770a6e888917e174aa6d92f007b05eec9a5bce078dfd7c9faef3acf489c4489"
+    "source_project_path": ".build/verify-v5-20260831T121459Z-4420/benchmark-v5.json",
+    "copied_file": "compact-validation/benchmark-v5.json",
+    "sha256": "618efd206e7c57ac0c955cb6d398abb4893878cac6625816229304d899011120"
   },
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "fd81b3d2b7cff7a0e8d5f3f256208689b218e8c20f9a751b9aecab3fcdbeca07",
+    "executable_sha256": "d88ba195ed833fab18229dcce1fa8d1c976b01863958d2acdccf44750bb6fb96",
     "icon_resource": "Contents/Resources/AppIcon.icns",
-    "dsym_uuids": "6EB9442B-D13A-3A2C-83A9-FD5948A101E0 (x86_64)\nB630D333-6F38-3121-A02B-E3DF5EE34FD6 (arm64)"
+    "dsym_uuids": "055CB7FA-8AB8-3F36-91B6-BF90538DB006 (x86_64)\nBCF6155A-854F-3F48-A089-508C669DC855 (arm64)"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.0-local.dmg",
-      "sha256": "a9afbfaa9baa1b446852d39ee68bbeee02d31bb5441da3bb435359cc2166c95c"
+      "sha256": "eaccb2c999df7f6d6ff1c64129534f23910f059ab1ace179598aeb031cae56a8"
     },
     "dsym": {
       "file": "LatticeLens-1.0.0.dSYM.zip",
-      "sha256": "94139475216af2c1d08c4405d654aa918ccc9bf4a006d7794765ed5eba885c8f"
+      "sha256": "2caefce2b77efe82e5a6cb4c277260804256e9ba0e7cb984af3d2f40190a4331"
     }
   },
-  "install_boundary": "DMG smoke used only a project-local inspection copy with fixture/no-network launch; it did not write /Applications or a user library."
+  "install_boundary": "DMG smoke used only a project-local inspection copy with fixture/no-network launch; it did not write /Applications or a user library.",
+  "rebuild_note": "Targeted responsiveness fix: avoid duplicate selected-author refresh and request bounded INSPIRE literature fields (correct field names).",
+  "targeted_verification": {
+    "fresh_store_initial_papers": true,
+    "author_pagination_http400": true,
+    "evidence_workflow": true,
+    "release_build": true,
+    "test_regression_field_names": true
+  }
 }

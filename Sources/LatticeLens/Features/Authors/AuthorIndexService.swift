@@ -423,14 +423,18 @@ struct AuthorIndexService: Sendable {
             try? await store.commitAuthorIndexState(checkpoint: checkpoint, generation: generation)
             throw CancellationError()
         } catch {
-            checkpoint.state = .failed
+            // A page-level failure is recoverable: all previously committed
+            // pages remain valid and `nextURL` is the exact resume boundary.
+            // Mark the checkpoint paused rather than failed so callers can
+            // keep durable staging rows and retry only this page.
+            checkpoint.state = .paused
             checkpoint.failedRecords += 1
             checkpoint.updatedAt = Date()
-            generation.state = .failed
+            generation.state = .active
             generation.hQueueFailed = checkpoint.failedRecords
             generation.lastCheckpointAt = checkpoint.updatedAt
             try? await store.commitAuthorIndexState(checkpoint: checkpoint, generation: generation)
-            throw error
+            return await indexProgress(state: .paused, pages: checkpoint.completedPages)
         }
     }
 

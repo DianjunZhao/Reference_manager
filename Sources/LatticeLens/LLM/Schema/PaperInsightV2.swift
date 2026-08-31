@@ -149,7 +149,8 @@ enum PaperInsightV2Validator {
         if let formulas = physics["important_formula_derivations"] {
             let items = try array(formulas, maximum: 8, path: "physics.important_formula_derivations")
             for (index, item) in items.enumerated() {
-                try claim(item, path: "physics.important_formula_derivations[\(index)]", requiredStatus: .direct)
+                try claim(item, path: "physics.important_formula_derivations[\(index)]", requiredStatus: .direct,
+                          requireFormulaStructure: true)
             }
         }
         let figures = try array(try value(root, "important_figures", "root"), maximum: 5, path: "important_figures")
@@ -189,8 +190,12 @@ enum PaperInsightV2Validator {
         }
     }
 
-    private static func claim(_ raw: JSONValue, path: String, requiredStatus: EpistemicStatus? = nil) throws {
-        let object = try object(raw, keys: ["text_zh", "epistemic_status", "evidence_ids"], path: path)
+    private static func claim(_ raw: JSONValue, path: String, requiredStatus: EpistemicStatus? = nil,
+                              requireFormulaStructure: Bool = false) throws {
+        let object = try objectAllowingOptional(raw,
+                                                requiredKeys: ["text_zh", "epistemic_status", "evidence_ids"],
+                                                optionalKeys: ["formula_tex", "derivation_steps", "conclusion_zh"],
+                                                path: path)
         try nonempty(try value(object, "text_zh", path), path: "\(path).text_zh")
         guard let status = object["epistemic_status"]?.stringValue, EpistemicStatus(rawValue: status) != nil else {
             throw LatticeLensError.schemaViolation("\(path).epistemic_status 无效")
@@ -205,6 +210,26 @@ enum PaperInsightV2Validator {
         }
         for (index, anchor) in evidenceValues.enumerated() {
             try nonempty(anchor, path: "\(path).evidence_ids[\(index)]")
+        }
+        if let formula = object["formula_tex"] {
+            try nonempty(formula, path: "\(path).formula_tex")
+        }
+        if let steps = object["derivation_steps"] {
+            let values = try array(steps, maximum: 8, path: "\(path).derivation_steps")
+            for (index, step) in values.enumerated() {
+                try nonempty(step, path: "\(path).derivation_steps[\(index)]")
+            }
+            if requireFormulaStructure {
+                guard !values.isEmpty else { throw LatticeLensError.schemaViolation("\(path).derivation_steps 不能为空") }
+            }
+        } else if requireFormulaStructure {
+            throw LatticeLensError.schemaViolation("\(path) 缺少 derivation_steps")
+        }
+        if let conclusion = object["conclusion_zh"] {
+            try nonempty(conclusion, path: "\(path).conclusion_zh")
+        }
+        if requireFormulaStructure, object["formula_tex"] == nil {
+            throw LatticeLensError.schemaViolation("\(path) 缺少 formula_tex")
         }
     }
 

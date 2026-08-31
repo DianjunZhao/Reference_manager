@@ -18,7 +18,7 @@ struct MainWorkspaceView: View {
                     Label("LatticeLens", systemImage: "circle.grid.cross")
                     Divider().frame(height: 18)
                     if viewModel.isUsingFixtureDependencies {
-                        Text("Fixture mode")
+                        Text("测试夹具模式")
                             .foregroundStyle(.orange)
                             // Toolbar `Text` siblings otherwise coalesce
                             // into one AppKit accessibility node.  Fixture
@@ -26,28 +26,30 @@ struct MainWorkspaceView: View {
                             // so it must remain independently queryable.
                             .accessibilityElement(children: .ignore)
                             .accessibilityIdentifier("fixtureModeIndicator")
-                            .accessibilityLabel("Fixture mode")
+                            .accessibilityLabel("测试夹具模式")
                             .accessibilityValue("enabled")
                         if viewModel.isLargeFixtureReady {
-                            Text("Large fixture ready")
+                            Text("大数据夹具已就绪")
                                 .foregroundStyle(.orange)
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityIdentifier("largeFixtureModeIndicator")
-                                .accessibilityLabel("Large fixture ready")
+                                .accessibilityLabel("大数据夹具已就绪")
                                 .accessibilityValue("ready")
                         }
                     }
                     Button {
                         viewModel.presentSyncCenter = true
                     } label: {
-                        HStack(alignment: .center, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: viewModel.syncStatusSymbol)
                                 .accessibilityHidden(true)
                                 .imageScale(.small)
                             Text("INSPIRE")
-                                Text(viewModel.syncToolbarStatus)
+                                .font(.body.weight(.medium))
+                            Text(viewModel.syncToolbarStatus)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         // The principal toolbar item can shrink when all four
                         // trailing actions are visible.  Keep its rendered
@@ -200,7 +202,7 @@ private struct V4ResearchHomeView: View {
         let home = viewModel.researchHomeSnapshot
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Label("Research Home", systemImage: "house.fill").font(.title2)
+                Label("研究首页", systemImage: "house.fill").font(.title2)
                 Spacer()
                 Button("完成") { dismiss() }
             }
@@ -214,7 +216,7 @@ private struct V4ResearchHomeView: View {
                 HomeMetric(title: "导入冲突", value: home.importConflicts, systemImage: "arrow.triangle.branch", identifier: "homeMetric-importConflicts")
                 HomeMetric(title: "可恢复 job", value: home.resumableJobs, systemImage: "arrow.clockwise", identifier: "homeMetric-resumableJobs")
             }
-            GroupBox("Reading Inbox") {
+            GroupBox("阅读收件箱") {
                 let inbox = viewModel.papers.filter { !$0.isRead }.prefix(8)
                 if inbox.isEmpty { Text("当前没有来自本地 library 的未读论文。").foregroundStyle(.secondary) }
                 else {
@@ -226,7 +228,7 @@ private struct V4ResearchHomeView: View {
                 }
             }
             GroupBox("最近工作区 / 导出") {
-                Text("workspaces \(home.recentWorkspaceIDs.count) · exports \(home.recentExportIDs.count)")
+                Text("工作区 \(home.recentWorkspaceIDs.count) · 导出 \(home.recentExportIDs.count)")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -463,7 +465,7 @@ private struct SyncCenterView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Text("Sync Center").font(.title3).accessibilityIdentifier("syncCenter")
+                Text("同步中心").font(.title3).accessibilityIdentifier("syncCenter")
                 Spacer()
                 Button("完成") { dismiss() }
             }
@@ -489,34 +491,34 @@ private struct SyncCenterView: View {
                         Button("取消", role: .destructive) { viewModel.cancelFullTextDownload() }
                             .disabled(viewModel.fullTextStatusMessage == nil)
                     }
-                    SyncJobRow(title: "LLM text insight", status: viewModel.insightStateDescription) {
+                    SyncJobRow(title: "LLM 文本解读", status: viewModel.insightStateDescription) {
                         if viewModel.isInsightRunning { Button("取消") { viewModel.cancelInsight() } }
                     }
-                    SyncJobRow(title: "Evidence / Vision", status: viewModel.evidenceAndVisionStatusDescription) {
+                    SyncJobRow(title: "证据 / 图像解读", status: viewModel.evidenceAndVisionStatusDescription) {
                         if viewModel.isEvidenceInsightRunning { Button("取消 evidence") { viewModel.cancelEvidenceInsight() } }
                         if viewModel.isVisionRunning { Button("取消 vision") { viewModel.cancelVision() } }
                     }
-                    GroupBox("Durable job owners") {
+                    GroupBox("持久化任务与所有者") {
                         VStack(alignment: .leading, spacing: 4) {
                             let snapshot = viewModel.workbenchSnapshot
-                            Text("tracked authors \(snapshot.authors.values.filter { $0.isTracked }.count) · saved queries \(snapshot.savedInspireQueries.count)")
+                            Text("已关注作者 \(snapshot.authors.values.filter { $0.isTracked }.count) · 已保存查询 \(snapshot.savedInspireQueries.count)")
                                 .accessibilityIdentifier("syncCenterDurableSummary")
-                            Text("batches \(snapshot.syncBatchesV3.count) · job events \(snapshot.syncJobEvents.count) · Radar events \(snapshot.radarEvents.count)")
+                            Text("批次 \(snapshot.syncBatchesV3.count) · 任务事件 \(snapshot.syncJobEvents.count) · 雷达事件 \(snapshot.radarEvents.count)")
                             if let checkpoint = snapshot.checkpoints.values.sorted(by: { $0.updatedAt > $1.updatedAt }).first {
-                                Text("last checkpoint \(checkpoint.jobID) · \(checkpoint.state.rawValue) · page \(checkpoint.completedPages) · pending \(checkpoint.pendingIDs.count)")
+                                Text("最近 checkpoint：\(checkpoint.jobID) · \(checkpoint.state.rawValue) · 页 \(checkpoint.completedPages) · 待处理 \(checkpoint.pendingIDs.count)")
                             } else {
                                 Text("暂无 durable checkpoint")
                             }
                         }
                         .font(.caption)
                     }
-                    Text("暂停/取消均保留已成功写入的页、论文与 checkpoint；继续只请求未完成部分。provider、PDF 和 Vision 请求不在此处自动重试。")
+                    Text("暂停/取消均保留已成功写入的页面、论文与 checkpoint；继续只请求未完成部分。provider、PDF 和 Vision 请求不会在此处自动重试。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .scrollIndicators(.visible)
             .accessibilityIdentifier("syncCenterScrollableContent")
-            .accessibilityLabel("Sync Center scrollable content")
+            .accessibilityLabel("同步中心可滚动内容")
         }
         .padding().frame(width: 560, height: 360)
     }
@@ -607,7 +609,11 @@ private struct PaperTimeline: View {
                 // durable-ID summary lets keyboard and UI automation verify
                 // the resulting author selection rather than infer it from
                 // a stale row proxy.
-                .accessibilityElement(children: .ignore)
+                // Keep the summary node while retaining the contained
+                // follow-up actions (notably “同步”) in the accessibility
+                // tree. Flattening this whole header made the visible
+                // refresh action unreachable to VoiceOver and UI automation.
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("selectedAuthorSummary")
                 .accessibilityLabel("当前作者 \(author.preferredName)，INSPIRE \(author.recid)")
                 .accessibilityValue("\(author.recid)")

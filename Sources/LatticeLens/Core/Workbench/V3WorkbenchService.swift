@@ -201,6 +201,14 @@ enum V3ImportReviewStatus: String, Codable, CaseIterable, Sendable {
     case pending
     case accepted
     case rejected
+
+    var displayNameZH: String {
+        switch self {
+        case .pending: "待审阅"
+        case .accepted: "已接受"
+        case .rejected: "已拒绝"
+        }
+    }
 }
 
 struct V3ImportConflict: Codable, Hashable, Sendable, Identifiable {

@@ -67,7 +67,7 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Settings").font(.title3)
+                    Text("设置").font(.title3)
                     Spacer()
                     // Do not use `role: .cancel` here.  On the current macOS
                     // XCTest/AppKit bridge it can receive a mouse event without
@@ -95,7 +95,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("settingsScrollableForm")
-                    .accessibilityLabel("Settings scrollable form")
+                    .accessibilityLabel("设置可滚动表单")
                 if hasSingleTerminologyMatch, let entry = visibleTerminology.first {
                     // Keep the sole filtered result's real action in the
                     // non-scrolling header.  The Form below may consume all
@@ -175,7 +175,7 @@ struct SettingsView: View {
                                 .accessibilityIdentifier("providerAPIKey")
                         }
                         if !draft.activeProvider.apiKeyIsRequired {
-                            Text("API Key optional · Local process not bundled")
+                            Text("API Key 可选 · 不会随应用打包")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .accessibilityIdentifier("localProviderDisclosure")
@@ -384,7 +384,7 @@ struct SettingsView: View {
                     }
                     .padding(.horizontal, 2)
                     .accessibilityIdentifier("terminologyScrollableList")
-                    .accessibilityLabel("Terminology list within Settings scroll")
+                    .accessibilityLabel("设置中的术语滚动列表")
                     .onChange(of: terminologySearch) { _, _ in
                         terminologyDisplayLimit = 50
                     }
@@ -552,7 +552,7 @@ struct ProductionSettingsView: View {
     private var minimalBody: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Settings").font(.title3)
+                Text("设置").font(.title3)
                 Spacer()
                 Button("取消") { viewModel.cancelSettings() }
                     .keyboardShortcut(.cancelAction)
@@ -569,13 +569,13 @@ struct ProductionSettingsView: View {
             .padding(.vertical, 12)
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Provider").font(.headline)
+                Text("服务提供商").font(.headline)
                     Text("服务").font(.caption).foregroundStyle(.secondary)
                     SettingsMenuButton(title: "服务", selection: $draft.activeProvider,
                                        options: LLMProvider.allCases,
                                        optionTitle: { $0.displayName })
                         .accessibilityIdentifier("providerPicker")
-                    Text("Base URL").font(.caption).foregroundStyle(.secondary)
+                Text("服务地址").font(.caption).foregroundStyle(.secondary)
                     TextField("https://…/v1", text: activeProfileBinding(\.baseURL))
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
@@ -649,7 +649,7 @@ struct ProductionSettingsView: View {
             }
             .scrollIndicators(.visible)
             .accessibilityIdentifier("settingsScrollableForm")
-            .accessibilityLabel("Settings scrollable form")
+            .accessibilityLabel("设置可滚动表单")
         }
         .frame(width: 620, height: 560, alignment: .top)
         .onExitCommand { viewModel.cancelSettings() }
@@ -860,7 +860,7 @@ private struct ModelSelectionSheet: View {
             }
             .scrollIndicators(.visible)
             .accessibilityIdentifier("modelScrollableList")
-            .accessibilityLabel("Discovered models scrollable list")
+            .accessibilityLabel("已发现模型可滚动列表")
         }
         .frame(minWidth: 520, minHeight: 520)
     }

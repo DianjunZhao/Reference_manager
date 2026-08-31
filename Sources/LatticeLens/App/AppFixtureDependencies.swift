@@ -107,7 +107,18 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
             throw LatticeLensError.schemaViolation("fixture evidence payload 缺少 PDF anchor")
         }
         let direct: [String: Any] = ["text_zh": "fixture 全文含有可回查的局部证据。", "epistemic_status": "direct", "evidence_ids": [anchorID]]
-        let formula: [String: Any] = ["text_zh": "由原文 $a=0.09\\,\\mathrm{fm}$，可直接得到该 fixture 的格距定义。", "epistemic_status": "direct", "evidence_ids": [anchorID]]
+        let formula: [String: Any] = [
+            "text_zh": "原文直接给出格距定义 a=0.09 fm，并可按下列步骤核对。",
+            "formula_tex": "$a=0.09\\,\\mathrm{fm}$",
+            "derivation_steps": [
+                "从 PDF anchor 读取格距记号 $a$。",
+                "代入原文给出的数值 $0.09\\,\\mathrm{fm}$。",
+                "单位保持为 fm，因此不需要额外换算。"
+            ],
+            "conclusion_zh": "该 fixture 的格距为 $a=0.09\\,\\mathrm{fm}$。",
+            "epistemic_status": "direct",
+            "evidence_ids": [anchorID]
+        ]
         let inference: [String: Any] = ["text_zh": "fixture 仅用于验证证据流，不构成物理推断。", "epistemic_status": "inference", "evidence_ids": [anchorID]]
         let missing: [String: Any] = ["text_zh": "真实格点参数未在 fixture 中提供。", "epistemic_status": "missing", "evidence_ids": []]
         let envelope: [String: Any] = [

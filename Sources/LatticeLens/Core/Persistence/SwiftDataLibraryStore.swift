@@ -1194,7 +1194,19 @@ enum LibraryStoreFactory {
         fileManager: FileManager = .default
     ) throws {
         let candidates = legacyV7StoreCandidates(applicationSupportRoot: applicationSupportRoot)
-        guard let source = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) else { return }
+        let existingCandidates = candidates.filter { fileManager.fileExists(atPath: $0.path) }
+        guard !existingCandidates.isEmpty else { return }
+        // An interrupted upgrade can leave an empty, marker-bearing
+        // `Library-v7.store` beside the real pre-V7 root family.  Choosing
+        // purely by path would migrate that empty placeholder and permanently
+        // shadow the readable `LatticeLens.store`, making the upgraded app
+        // appear to have no authors or papers.  Prefer a structurally
+        // readable source with at least one domain record; retain the old
+        // first-existing fallback when every candidate is empty or malformed
+        // so a recovery attempt remains deterministic and fail-closed.
+        let source = existingCandidates.first(where: {
+            legacySourceHasMeaningfulContent(at: $0)
+        }) ?? existingCandidates[0]
         let backupRoot = storeURL.deletingLastPathComponent()
             .appendingPathComponent("LatticeLens-StoreBackups", isDirectory: true)
 
@@ -1208,6 +1220,31 @@ enum LibraryStoreFactory {
 
         _ = try V8MigrationCoordinator.migrateV7ToV8(sourceURL: source, activeV8URL: storeURL,
                                                       backupRoot: backupRoot, fileManager: fileManager)
+    }
+
+    /// Read-only source probe used only to choose among legacy families.  It
+    /// never saves, migrates, or exposes library payloads; a malformed source
+    /// simply returns `false` and remains eligible for the deterministic
+    /// fallback above.
+    @MainActor
+    private static func legacySourceHasMeaningfulContent(at url: URL) -> Bool {
+        do {
+            let schema = Schema(versionedSchema: LatticeLensSchemaV7.self)
+            let container = try ModelContainer(for: schema,
+                                               migrationPlan: LatticeLensMigrationPlanV7.self,
+                                               configurations: ModelConfiguration(url: url))
+            let context = container.mainContext
+            if try context.fetchCount(FetchDescriptor<StoredV7DomainRecord>()) > 0 {
+                return true
+            }
+            guard let document = try context.fetch(FetchDescriptor<StoredLibraryDocument>()).first else {
+                return false
+            }
+            let snapshot = try JSONDecoder.latticeLens.decode(LibrarySnapshot.self, from: document.snapshotData)
+            return !snapshot.authors.isEmpty || !snapshot.papers.isEmpty || !snapshot.paperAuthorLinks.isEmpty
+        } catch {
+            return false
+        }
     }
 
     /// Returns false on any schema/open error.  Failing closed is important:

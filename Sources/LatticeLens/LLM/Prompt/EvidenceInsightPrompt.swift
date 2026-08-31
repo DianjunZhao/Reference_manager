@@ -18,10 +18,12 @@ enum EvidenceInsightPrompt {
     provided anchors do not state them. In physics.important_formula_derivations,
     return up to 8 of the paper's most important displayed equations or
     definitions as concise Chinese derivations. Each item must be a direct
-    evidence claim whose text_zh preserves the TeX formula between $...$ (or
-    $$...$$) delimiters, explains the algebraic step-by-step relation, and
-    cites the exact PDF anchor(s). Never invent an equation that is absent from
-    the supplied chunks.
+    evidence claim and must include formula_tex (the original TeX between
+    delimiters), derivation_steps (an ordered array of algebraic steps, each
+    retaining TeX where needed), and conclusion_zh (the scoped conclusion).
+    Keep text_zh as a short evidence summary, cite the exact PDF anchor(s), and
+    never invent an equation that is absent from the supplied chunks. If no
+    equation is present, return an empty important_formula_derivations array.
     """
 
     static func userPayload(

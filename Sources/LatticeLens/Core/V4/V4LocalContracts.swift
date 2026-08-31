@@ -722,7 +722,17 @@ enum V4PhysicsValidator {
 
 // MARK: - R10 semantic Radar diff
 
-enum V4RadarChangeKind: String, Codable, CaseIterable, Sendable { case added, removed, modified }
+enum V4RadarChangeKind: String, Codable, CaseIterable, Sendable {
+    case added, removed, modified
+
+    var displayNameZH: String {
+        switch self {
+        case .added: "新增"
+        case .removed: "移除"
+        case .modified: "修改"
+        }
+    }
+}
 
 struct V4RadarFieldChange: Codable, Hashable, Sendable, Identifiable {
     let id: String

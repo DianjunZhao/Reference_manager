@@ -230,7 +230,7 @@ final class AppViewModel: ObservableObject {
     var isEvidenceInsightRunning: Bool { if case .idle = evidenceInsightState { return false }; if case .completed = evidenceInsightState { return false }; if case .cancelled = evidenceInsightState { return false }; if case .failed = evidenceInsightState { return false }; return true }
     var isVisionRunning: Bool { if case .idle = visionState { return false }; if case .completed = visionState { return false }; if case .cancelled = visionState { return false }; if case .failed = visionState { return false }; return true }
     var insightStateDescription: String { describe(insightState) }
-    var evidenceAndVisionStatusDescription: String { "evidence: \(describe(evidenceInsightState)) · vision: \(describe(visionState))" }
+    var evidenceAndVisionStatusDescription: String { "证据：\(describe(evidenceInsightState)) · 图像：\(describe(visionState))" }
     /// This is deliberately a last-observed sync status, never a permanent
     /// claim that INSPIRE is currently online.
     var connectivityDescription: String {
@@ -279,14 +279,14 @@ final class AppViewModel: ObservableObject {
 
     private func describe(_ state: InsightWorkflowState) -> String {
         switch state {
-        case .idle: "idle"
-        case .connecting: "connecting"
-        case .waitingFirstContent: "waiting first content"
-        case .receiving(let characters, let bytes): "receiving \(characters) chars / \(bytes) bytes"
-        case .validating: "validating"
-        case .completed(let cacheHit, let requests): cacheHit ? "completed (cache)" : "completed \(requests) request(s)"
-        case .cancelled: "cancelled"
-        case .failed(let message): "failed: \(message)"
+        case .idle: "未开始"
+        case .connecting: "连接中"
+        case .waitingFirstContent: "等待首段内容"
+        case .receiving(let characters, let bytes): "接收中：\(characters) 字符 / \(bytes) 字节"
+        case .validating: "校验中"
+        case .completed(let cacheHit, let requests): cacheHit ? "已完成（缓存）" : "已完成（\(requests) 次请求）"
+        case .cancelled: "已取消"
+        case .failed(let message): "失败：\(message)"
         }
     }
 
@@ -1571,7 +1571,7 @@ final class AppViewModel: ObservableObject {
     private func runAuthorIndex(force: Bool, session: UUID) async {
         do {
             await refreshPinnedSelf()
-            _ = try await authorIndex.rebuildCandidateIndex(force: force) { [weak self] progress in
+            let candidateProgress = try await authorIndex.rebuildCandidateIndex(force: force) { [weak self] progress in
                 guard let self, !Task.isCancelled, self.authorIndexSessionID == session else { return }
                 self.authorIndexProgress = progress
                 self.authorIndexStatus = SyncStatus(
@@ -1588,6 +1588,28 @@ final class AppViewModel: ObservableObject {
                 // looks like a dead refresh button; only qualified rows are
                 // exposed by the projection until their h-index is verified.
                 await self.reloadAuthors()
+            }
+            // Candidate pagination can fail after several durable pages (for
+            // example when INSPIRE rejects one stale page URL with HTTP 400).
+            // Keep those pages and their previous qualified authors visible,
+            // but do not run h-index completion or promote an incomplete
+            // generation. The persisted nextURL is retryable through the same
+            // Sync action, so one bad page cannot make the whole sidebar look
+            // like an empty successful refresh.
+            if candidateProgress.state == .paused {
+                guard !Task.isCancelled, authorIndexSessionID == session else { return }
+                authorIndexProgress = candidateProgress
+                authorIndexStatus = SyncStatus(
+                    phase: .partial,
+                    message: "作者候选索引已部分完成；网络请求失败，已保留成功页面，可继续重试",
+                    completedPages: candidateProgress.completedPages,
+                    successfulRecords: candidateProgress.verified,
+                    failedRecords: candidateProgress.failed,
+                    lastUpdatedAt: Date(),
+                    remainingRecords: candidateProgress.remaining
+                )
+                await reloadAuthors()
+                return
             }
             let progress = try await authorIndex.refreshHIndices(force: force) { [weak self] progress in
                 guard let self, !Task.isCancelled, self.authorIndexSessionID == session else { return }
@@ -1697,8 +1719,14 @@ final class AppViewModel: ObservableObject {
             activeTrackedAuthorRefreshes.removeValue(forKey: recid)
         }
         queuedTrackedAuthorRefreshes.removeAll { !tracked.contains($0) }
-        for recid in tracked.sorted()
-            where activeTrackedAuthorRefreshes[recid] == nil && !queuedTrackedAuthorRefreshes.contains(recid) {
+        for recid in tracked.sorted() {
+            // The selected author's first page is foreground work. Starting
+            // a second tracked refresh here used to cancel that request on a
+            // fresh install, leaving an empty timeline until the slower
+            // replacement request completed.
+            guard recid != selectedAuthorID,
+                  activeTrackedAuthorRefreshes[recid] == nil,
+                  !queuedTrackedAuthorRefreshes.contains(recid) else { continue }
             queuedTrackedAuthorRefreshes.append(recid)
         }
         startQueuedTrackedAuthorRefreshes()
@@ -2127,10 +2155,10 @@ enum PaperFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var displayName: String {
         switch self {
-        case .all: "Papers"
-        case .updates: "Updates"
-        case .favorites: "Favorites"
-        case .needsReview: "Needs Review"
+        case .all: "全部文献"
+        case .updates: "有更新"
+        case .favorites: "收藏"
+        case .needsReview: "待复核"
         case .hepLat: "hep-lat"
         case .published: "已发表"
         case .unread: "新增（未读）"

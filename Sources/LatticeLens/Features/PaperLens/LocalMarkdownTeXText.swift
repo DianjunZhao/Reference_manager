@@ -58,6 +58,10 @@ enum LocalMarkdownTeX {
     /// one rendering path.
     private static func normalizedMathMarkup(_ source: String) -> String {
         var value = source
+        // Some JSON/Markdown paths HTML-escape the transport marker itself,
+        // leaving readers with literal `&lt;math ...&gt;`. Decode only complete
+        // escaped math elements so ordinary prose entities remain untouched.
+        value = replaceEscapedMathElements(in: value)
         // INSPIRE/LLM payloads do not agree on MathML attribute order.  A
         // pattern that requires `display` to be the first attribute leaves
         // strings such as `<math alttext="..." display="inline">` visible
@@ -69,6 +73,29 @@ enum LocalMarkdownTeX {
         value = replaceMathTags(in: value, pattern: #"(?s)\\\((.*?)\\\)"#, display: false)
         value = replaceMathTags(in: value, pattern: #"(?s)\\\[(.*?)\\\]"#, display: true)
         return value
+    }
+
+    private static func replaceEscapedMathElements(in source: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"(?is)&lt;math\b(.*?)&gt;(.*?)&lt;/math&gt;"#) else { return source }
+        let fullRange = NSRange(source.startIndex..., in: source)
+        let matches = regex.matches(in: source, range: fullRange)
+        guard !matches.isEmpty else { return source }
+        var output = "", cursor = source.startIndex
+        for match in matches {
+            guard let whole = Range(match.range, in: source),
+                  let attributes = Range(match.range(at: 1), in: source),
+                  let body = Range(match.range(at: 2), in: source) else { continue }
+            output += source[cursor..<whole.lowerBound]
+            let attrs = String(source[attributes]).replacingOccurrences(of: "&quot;", with: "\"")
+            let contents = String(source[body])
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&quot;", with: "\"")
+            output += "<math \(attrs)>\(contents)</math>"
+            cursor = whole.upperBound
+        }
+        output += source[cursor..<source.endIndex]
+        return output
     }
 
     private static func replaceMathElements(in source: String) -> String {

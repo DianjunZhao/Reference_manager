@@ -61,6 +61,13 @@ struct BibTeXRecord: Codable, Hashable, Identifiable, Sendable {
 enum FullTextSourceKind: String, Codable, CaseIterable, Sendable {
     case inspireDocument
     case arxivPDF
+
+    var displayNameZH: String {
+        switch self {
+        case .inspireDocument: "INSPIRE 文档"
+        case .arxivPDF: "arXiv PDF"
+        }
+    }
 }
 
 enum FullTextExtractionState: String, Codable, Sendable {
@@ -72,6 +79,19 @@ enum FullTextExtractionState: String, Codable, Sendable {
     case textExtractionUnavailable
     case failed
     case deleted
+
+    var displayNameZH: String {
+        switch self {
+        case .notDownloaded: "未下载"
+        case .downloading: "下载中"
+        case .downloaded: "已下载"
+        case .extracting: "提取中"
+        case .extracted: "已提取"
+        case .textExtractionUnavailable: "无法提取文本"
+        case .failed: "失败"
+        case .deleted: "已删除"
+        }
+    }
 }
 
 struct FullTextDocument: Codable, Hashable, Identifiable, Sendable {
@@ -184,25 +204,40 @@ struct EvidenceClaim: Codable, Hashable, Identifiable, Sendable {
     let textZH: String
     let epistemicStatus: EpistemicStatus
     let evidenceIDs: [String]
+    /// Optional structured fields used by formula-focused v2 evidence. They
+    /// remain optional so previously cached claim artifacts decode unchanged.
+    let formulaTeX: String?
+    let derivationSteps: [String]
+    let conclusionZH: String?
 
     enum CodingKeys: String, CodingKey {
         case textZH = "text_zh"
         case epistemicStatus = "epistemic_status"
         case evidenceIDs = "evidence_ids"
+        case formulaTeX = "formula_tex"
+        case derivationSteps = "derivation_steps"
+        case conclusionZH = "conclusion_zh"
     }
 
-    init(id: UUID = UUID(), textZH: String, epistemicStatus: EpistemicStatus, evidenceIDs: [String]) {
+    init(id: UUID = UUID(), textZH: String, epistemicStatus: EpistemicStatus, evidenceIDs: [String],
+         formulaTeX: String? = nil, derivationSteps: [String] = [], conclusionZH: String? = nil) {
         self.id = id
         self.textZH = textZH
         self.epistemicStatus = epistemicStatus
         self.evidenceIDs = evidenceIDs
+        self.formulaTeX = formulaTeX
+        self.derivationSteps = derivationSteps
+        self.conclusionZH = conclusionZH
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         self.init(textZH: try values.decode(String.self, forKey: .textZH),
                   epistemicStatus: try values.decode(EpistemicStatus.self, forKey: .epistemicStatus),
-                  evidenceIDs: try values.decode([String].self, forKey: .evidenceIDs))
+                  evidenceIDs: try values.decode([String].self, forKey: .evidenceIDs),
+                  formulaTeX: try values.decodeIfPresent(String.self, forKey: .formulaTeX),
+                  derivationSteps: try values.decodeIfPresent([String].self, forKey: .derivationSteps) ?? [],
+                  conclusionZH: try values.decodeIfPresent(String.self, forKey: .conclusionZH))
     }
 }
 

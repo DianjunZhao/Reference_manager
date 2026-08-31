@@ -84,7 +84,7 @@ struct PaperLensView: View {
                     Group {
                         switch tab {
                         case .overview: OverviewTab(paper: paper, artifact: viewModel.insightArtifact)
-                        case .physics: PhysicsTab(paper: paper, artifact: viewModel.insightArtifact, evidenceArtifact: viewModel.evidenceInsightArtifact)
+                        case .physics: PhysicsTab(paper: paper, viewModel: viewModel, artifact: viewModel.insightArtifact, evidenceArtifact: viewModel.evidenceInsightArtifact)
                         case .figures: FiguresTab(paper: paper, artifact: viewModel.insightArtifact, viewModel: viewModel)
                         case .evidence: EvidenceTab(paper: paper, viewModel: viewModel)
                         case .source: SourceTab(paper: paper, viewModel: viewModel)
@@ -98,7 +98,7 @@ struct PaperLensView: View {
                 ContentUnavailableView("选择一篇论文", systemImage: "doc.text.magnifyingglass", description: Text("原始 metadata 会先从本地渲染；LLM 分析是独立的后续状态。"))
             }
         }
-        .navigationTitle("AI Paper Lens")
+        .navigationTitle("AI 论文镜头")
         .onChange(of: viewModel.evidenceJumpAnchor?.id) { _, anchorID in
             // Cross-surface evidence navigation is an instruction to enter
             // the Evidence tab; otherwise a correctly queued anchor could
@@ -158,6 +158,7 @@ private struct OverviewTab: View {
 
 private struct PhysicsTab: View {
     let paper: Paper
+    @ObservedObject var viewModel: AppViewModel
     let artifact: InsightArtifact?
     let evidenceArtifact: EvidenceInsightArtifact?
     var body: some View {
@@ -165,6 +166,12 @@ private struct PhysicsTab: View {
             VStack(alignment: .leading, spacing: 16) {
                 if let insight = evidenceArtifact?.insight {
                     EvidenceScopeBadge(fullText: true)
+                    GroupBox("重要公式推导（LLM）") {
+                        FormulaDerivationSection(
+                            claims: insight.physics.importantFormulaDerivations,
+                            anchors: Dictionary(uniqueKeysWithValues: viewModel.selectedEvidenceAnchors.map { ($0.id, $0) })
+                        )
+                    }
                     EvidenceClaimSection(title: "研究问题", claims: [insight.physics.researchQuestion])
                     EvidenceClaimSection(title: "方法与数据流", claims: insight.physics.methodAndDataFlow)
                     EvidenceClaimSection(title: "主要结果", claims: insight.physics.mainResults)
@@ -251,24 +258,27 @@ private struct FiguresTab: View {
                                 .accessibilityIdentifier("previewFigure-\(figure.key)")
                                 .accessibilityLabel("打开 INSPIRE 原图预览")
                             } else { ContentUnavailableView("记录没有可用图像 URL", systemImage: "photo.badge.exclamationmark") }
-                            GroupBox("原始 caption") { Text(figure.caption ?? "INSPIRE record 未提供 caption。").frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
+                            GroupBox("原始 caption") {
+                                LocalMarkdownTeXText(source: figure.caption ?? "INSPIRE record 未提供 caption。")
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                             GroupBox("图像 provenance") {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("source: \(figure.source ?? "unknown")")
-                                    Text("filename: \(figure.filename ?? "unknown")")
+                                    Text("来源：\(figure.source ?? "未知")")
+                                    Text("文件名：\(figure.filename ?? "未知")")
                                     Text(artifact?.insight.importantFigures.contains(where: { $0.figureKey == figure.key }) == true ? "caption-only：模型只读取 caption，未查看图像像素。" : "未进入模型选择；显示 INSPIRE metadata。")
                                 }
                                 .font(.caption).foregroundStyle(.secondary)
                             }
                             if let chosen = artifact?.insight.importantFigures.first(where: { $0.figureKey == figure.key }) {
-                                GroupBox("中文 caption") { Text(chosen.captionZH).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
+                                GroupBox("中文图注") { LocalMarkdownTeXText(source: chosen.captionZH).frame(maxWidth: .infinity, alignment: .leading) }
                                 GroupBox("选择理由") { Text(chosen.whyImportant).frame(maxWidth: .infinity, alignment: .leading) }
                             }
                             if let vision = viewModel.visionArtifact?.insights.first(where: { $0.figureKey == figure.key }) {
-                                GroupBox("Vision 图像解读") {
+                                GroupBox("图像解读") {
                                     VStack(alignment: .leading, spacing: 6) {
                                         Label("模型查看了缩放图像像素", systemImage: "eye").font(.caption)
-                                        Text(vision.textZH).textSelection(.enabled)
+                                        LocalMarkdownTeXText(source: vision.textZH)
                                     }
                                 }
                             }
@@ -308,7 +318,8 @@ private struct FigurePreview: View {
             } else {
                 ContentUnavailableView("原图 URL 不满足 HTTPS 安全策略", systemImage: "lock.trianglebadge.exclamationmark")
             }
-            Text(figure.caption ?? "INSPIRE record 未提供 caption。").font(.caption).textSelection(.enabled)
+            LocalMarkdownTeXText(source: figure.caption ?? "INSPIRE record 未提供 caption.")
+                .font(.caption)
         }
         .padding().frame(minWidth: 700, minHeight: 600)
     }
@@ -329,7 +340,7 @@ private struct FigureImageView: View {
                 Image(systemName: "chart.xyaxis.line")
                     .resizable().scaledToFit().frame(width: 260, height: 180)
                     .foregroundStyle(.blue, .secondary)
-                Text("fixture thumbnail · image bytes remain process-local")
+                Text("测试缩略图 · 图像字节仅保留在进程内")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, minHeight: 220)
@@ -382,40 +393,44 @@ private struct SourceTab: View {
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Bibliographic metadata") {
+                GroupBox("书目元数据") {
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
-                        SourceRow(name: "INSPIRE record id", value: String(paper.literatureID))
+                        SourceRow(name: "INSPIRE 记录 ID", value: String(paper.literatureID))
                         SourceRow(name: "arXiv", value: paper.arxivID ?? "未提供")
                         SourceRow(name: "DOI", value: paper.doi ?? "未提供")
-                        SourceRow(name: "categories", value: paper.arxivCategories.joined(separator: ", "))
-                        SourceRow(name: "publication", value: paper.publicationStatus ?? "未提供")
-                        SourceRow(name: "publication year (INSPIRE)", value: paper.publicationYear.map(String.init) ?? "未提供")
-                        SourceRow(name: "record updated", value: paper.updated?.formatted(date: .abbreviated, time: .shortened) ?? "未提供")
-                        SourceRow(name: "figures", value: String(paper.figures.count))
+                        SourceRow(name: "分类", value: paper.arxivCategories.joined(separator: ", "))
+                        SourceRow(name: "发表状态", value: paper.publicationStatus ?? "未提供")
+                        SourceRow(name: "发表年份（INSPIRE）", value: paper.publicationYear.map(String.init) ?? "未提供")
+                        SourceRow(name: "记录更新时间", value: paper.updated?.formatted(date: .abbreviated, time: .shortened) ?? "未提供")
+                        SourceRow(name: "图像数", value: String(paper.figures.count))
                     }
                 }
                 GroupBox("作者（INSPIRE 顺序）") {
                     VStack(alignment: .leading, spacing: 4) {
                         if paper.contributors.isEmpty {
-                            Text("INSPIRE search record 未提供作者顺序。").foregroundStyle(.secondary)
+                            Text("INSPIRE 搜索记录未提供作者顺序。").foregroundStyle(.secondary)
                         } else {
                             ForEach(paper.contributors.sorted { $0.position < $1.position }) { contributor in
-                                Text("\(contributor.position + 1). \(contributor.fullName)\(contributor.recid.map { " · recid \($0)" } ?? "")")
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
+                                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                                    Text("\(contributor.position + 1). \(contributor.fullName)\(contributor.recid.map { " · recid \($0)" } ?? "")")
+                                        .multilineTextAlignment(.leading)
+                                        .textSelection(.enabled)
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("documents / fulltext") {
+                GroupBox("文档与全文") {
                     if paper.documents.isEmpty {
-                        Text("INSPIRE record 未提供 document metadata。").foregroundStyle(.secondary)
+                        Text("INSPIRE 记录未提供文档元数据。").foregroundStyle(.secondary)
                     } else {
                         ForEach(paper.documents) { document in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(document.filename ?? document.key).textSelection(.enabled)
-                                Text("source: \(document.source ?? "unknown") · fulltext: \(document.isFullText ? "yes" : "no")")
+                                Text("来源：\(document.source ?? "未知") · 全文：\(document.isFullText ? "是" : "否")")
                                     .font(.caption).foregroundStyle(.secondary)
                                 if let url = document.url { Text(url.absoluteString).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled) }
                             }
@@ -455,7 +470,7 @@ private struct BibTeXSourceControls: View {
                         .accessibilityIdentifier("exportBibTeX")
                     Spacer()
                     if let record = viewModel.selectedBibTeXRecord {
-                        Text("verified · \(record.sourceFetchedAt.formatted(date: .abbreviated, time: .shortened))")
+                        Text("已验证 · \(record.sourceFetchedAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
                         Text("未缓存；不会生成替代条目").font(.caption).foregroundStyle(.secondary)
@@ -615,18 +630,18 @@ private struct EvidenceTab: View {
             } else if let document = viewModel.selectedFullTextDocument {
                 GroupBox("本地全文") {
                     Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
-                        SourceRow(name: "source", value: document.sourceKind.rawValue)
+                        SourceRow(name: "来源", value: document.sourceKind.displayNameZH)
                         SourceRow(name: "bytes", value: String(document.byteCount))
                         SourceRow(name: "SHA-256", value: document.sha256)
                         SourceRow(name: "pages", value: document.pageCount.map(String.init) ?? "未提取")
-                        SourceRow(name: "state", value: document.extractionState.rawValue)
+                        SourceRow(name: "状态", value: document.extractionState.displayNameZH)
                     }
                 }
                 .padding(.horizontal)
             }
             Picker("anchor 类型", selection: $filter) {
                 Text("全部").tag(EvidenceSourceKind?.none)
-                ForEach(EvidenceSourceKind.allCases, id: \.self) { type in Text(type.rawValue).tag(EvidenceSourceKind?.some(type)) }
+                ForEach(EvidenceSourceKind.allCases, id: \.self) { type in Text(type.displayNameZH).tag(EvidenceSourceKind?.some(type)) }
             }
             .pickerStyle(.segmented).padding(.horizontal)
             if let artifact = viewModel.evidenceInsightArtifact {
@@ -705,7 +720,7 @@ private struct EvidenceAnchorRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(anchor.sourceKind.rawValue).font(.caption).foregroundStyle(.secondary)
+                Text(anchor.sourceKind.displayNameZH).font(.caption).foregroundStyle(.secondary)
                 if let page = anchor.page { Text("PDF p.\(page)").font(.caption).foregroundStyle(.secondary) }
                 if let section = anchor.section { Text(section).font(.caption).lineLimit(1).foregroundStyle(.secondary) }
             }
@@ -799,6 +814,33 @@ private struct FormulaDerivationSection: View {
                         LocalMarkdownTeXText(source: claim.textZH)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
+                        if let formula = claim.formulaTeX {
+                            GroupBox("原始公式") {
+                                LocalMarkdownTeXText(source: formula)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        if !claim.derivationSteps.isEmpty {
+                            GroupBox("逐步推导") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(Array(claim.derivationSteps.enumerated()), id: \.offset) { stepIndex, step in
+                                        HStack(alignment: .top, spacing: 8) {
+                                            Text("\(stepIndex + 1).")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.secondary)
+                                            LocalMarkdownTeXText(source: step)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let conclusion = claim.conclusionZH {
+                            GroupBox("结论") {
+                                LocalMarkdownTeXText(source: conclusion)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                         if claim.evidenceIDs.isEmpty {
                             Text("无 PDF 锚点；此项不能作为 direct 公式结论。")
                                 .font(.caption2).foregroundStyle(.orange)
@@ -934,7 +976,7 @@ private struct ReferenceControls: View {
     }
 
     var body: some View {
-        GroupBox("Reference manager") {
+        GroupBox("文献管理") {
             VStack(alignment: .leading, spacing: 10) {
                 Button {
                     favoritePresentationOverride = !selectedPaperIsFavorite
