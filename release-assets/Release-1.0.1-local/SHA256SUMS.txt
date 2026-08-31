@@ -1,3 +1,2 @@
-49b9e5ba23bdd682e5ac2ff80a4e07c122a0e07dafebc3829a159f181b564945  LatticeLens-1.0.1-local.dmg
-696aa64e9db3df52c5ced8ac3e421ce4f9adf4a27c040f66d7995441b97f306c  manifest-v1.0.1.json
-d0068233f35aec6070484bd6f4a24ca48ae95fd804f8a9bf982c2f6d895a625f  INSTALL_AND_ROLLBACK.md
+6abbe429d342c636149b3b503bf3bd2fde023061d84f99f4ae06f7a31bd7ddac  LatticeLens-1.0.1-local.dmg
+e4a6d3e5504f78e0dc79ec768c347a758c6fb5d1cb44b554ee9edb1a922e6911  manifest-v1.0.1.json
