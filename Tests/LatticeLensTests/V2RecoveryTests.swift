@@ -144,6 +144,47 @@ final class V2RecoveryTests: XCTestCase {
         XCTAssertEqual(completedCheckpoint?.state, .completed)
     }
 
+    func testHIndexProgressUsesGenerationMembershipAndExcludesSelf() async throws {
+        let store = InMemoryLibraryStore()
+        let candidate = makeAuthor(recid: 91, name: "Member, Candidate")
+        let legacy = makeAuthor(recid: 92, name: "Legacy, OutsideGeneration")
+        let selfAuthor = makeAuthor(recid: ProductContract.selfAuthorRecid, name: "Zhao, Dian-Jun")
+        try await store.upsert(authors: [candidate, legacy, selfAuthor])
+
+        let generationID = "progress-membership"
+        let generation = AuthorIndexGeneration(
+            id: generationID,
+            query: AuthorIndexService.candidateQueryCheckpoint,
+            startedAt: Date(),
+            completedAt: nil,
+            state: .active,
+            activeMembership: [],
+            stagingMembership: [candidate.recid, selfAuthor.recid],
+            pageCount: 1,
+            hQueueCompleted: 0,
+            hQueuePending: 1,
+            hQueueFailed: 0,
+            hQueueCancelled: 0,
+            lastCheckpointAt: Date()
+        )
+        try await store.applyV3(.saveGeneration(generation))
+
+        let service = AuthorIndexService(
+            client: InspireClient(transport: SequentialTransport([try fixtureData("h-index")])),
+            store: store,
+            hIndexQueue: HIndexQueue(maximumConcurrentRequests: 1)
+        )
+        let progress = try await service.refreshHIndices()
+
+        XCTAssertEqual(progress.verified, 1)
+        XCTAssertEqual(progress.candidates, 1)
+        XCTAssertEqual(progress.remaining, 0)
+        XCTAssertEqual(progress.failed, 0)
+        let snapshot = await store.snapshot()
+        XCTAssertNil(snapshot.authors[legacy.recid]?.hIndex)
+        XCTAssertNil(snapshot.authors[selfAuthor.recid]?.hIndex)
+    }
+
     func testSelfSearchInvariantAndOrdinaryZSection() async throws {
         let store = InMemoryLibraryStore()
         var zed = makeAuthor(recid: 77, name: "Zebra, Zed")

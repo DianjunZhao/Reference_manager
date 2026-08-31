@@ -536,7 +536,23 @@ struct AuthorIndexService: Sendable {
 
     private func indexProgress(state: SyncCheckpointState, pages: Int) async -> AuthorIndexProgress {
         let snapshot = await store.snapshot()
-        let candidates = snapshot.authors.values.filter(\.isHIndexCandidate)
+        // Progress must use the same membership as the h-index queue. The
+        // fixed self author is intentionally excluded from that queue, and
+        // rows left by an older generation may still exist in the store.
+        // Counting the whole category-matching store therefore made a
+        // completed queue look permanently short (for example 17,477/17,479).
+        let candidates: [Author]
+        if let generation = snapshot.authorIndexGenerations.values
+            .max(by: { $0.startedAt < $1.startedAt }) {
+            let membership = generation.state == .completed
+                ? generation.activeMembership
+                : generation.stagingMembership
+            candidates = snapshot.authors.values.filter { author in
+                !author.isSelf && membership.contains(author.recid)
+            }
+        } else {
+            candidates = snapshot.authors.values.filter { $0.isHIndexCandidate && !$0.isSelf }
+        }
         let verified = candidates.filter { $0.hIndex != nil }.count
         let qualified = candidates.filter { $0.hIndexState == .qualified }.count
         let rejected = candidates.filter { $0.hIndexState == .rejected }.count

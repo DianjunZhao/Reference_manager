@@ -2155,7 +2155,12 @@ final class AppViewModel: ObservableObject {
         // races an actor reload or changes the selected author/paper state.
         let projection = await store.authorSidebarProjection()
         authors = projection.visibleAuthors(search: "")
-        let candidates = projection.authors.filter(\.isHIndexCandidate)
+        // Match the progress denominator to the completed generation. The
+        // self author remains visible but is not part of the h-index queue;
+        // legacy category rows may also remain outside the latest membership.
+        let candidates = projection.activeMembership.map { membership in
+            projection.authors.filter { !$0.isSelf && membership.contains($0.recid) }
+        } ?? projection.authors.filter { $0.isHIndexCandidate && !$0.isSelf }
         authorIndexProgress = AuthorIndexProgress(verified: candidates.filter { $0.hIndex != nil }.count,
                                                   candidates: candidates.count,
                                                   failed: candidates.filter { $0.hIndexState == .failed }.count,
