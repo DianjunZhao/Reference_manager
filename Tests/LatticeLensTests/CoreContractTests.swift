@@ -118,6 +118,22 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
     }
 
+    func testAuthorCandidatePaginationStopsAtPartialLivePageAndAdvancesPartition() async throws {
+        // The live endpoint advertises a `next` URL even when the final page
+        // contains fewer than the requested 250 rows.  A hard-coded page
+        // count used to follow that link through page 40 and eventually fail
+        // the global safety limit, leaving the refresh looking empty.
+        let payload = #"{"hits":{"hits":[{"id":77,"metadata":{"name":{"value":"Fixture, Final"},"arxiv_categories":["hep-lat"]}}],"total":1865},"links":{"next":"https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th)%20AND%20control_number%3A%5B0%20TO%20999999%5D&size=250&page=9"}}"#
+        let client = InspireClient(transport: SequentialTransport([Data(payload.utf8)]))
+        let finalPageURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th)%20AND%20control_number%3A%5B0%20TO%20999999%5D&size=250&page=8"))
+        let result = try await client.authorCandidatesPage(nextURL: finalPageURL)
+        XCTAssertEqual(result.authors.map(\.recid), [77])
+        let next = try XCTUnwrap(result.nextURL)
+        let query = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+    }
+
     func testAuthorCandidatePaginationRepairsPersistedPartitionPage41WithoutARequest() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B0%20TO%20999999%5D&size=250&page=41"))
         let client = InspireClient(transport: SequentialTransport([]))

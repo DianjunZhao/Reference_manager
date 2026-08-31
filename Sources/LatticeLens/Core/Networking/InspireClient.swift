@@ -219,13 +219,37 @@ struct InspireClient: Sendable {
         // control-number range instead; each range remains below the API
         // window and the durable checkpoint still stores an ordinary trusted
         // INSPIRE URL.
-        let pageSize = Int(components?.queryItems?.first(where: { $0.name == "size" })?.value ?? "250") ?? 250
-        let exhaustedWindow = pageNumber >= 40 && responsePage.hits.total > pageNumber * pageSize
-        let advertisedNextPage = responsePage.links?.next.flatMap { URL(string: $0) }
-            .flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        // Prefer the explicit `size` sent in the request.  A few fixture and
+        // older proxy responses omit it while still returning a valid `next`
+        // link; in that case the observed hit count is the only bounded page
+        // size available.  Using a hard-coded 250 for such a response makes a
+        // short final page look incomplete and can follow the same partition
+        // until the global safety limit (the production symptom was a blank
+        // refresh ending in "分页超过安全上限").
+        let requestedPageSize = components?.queryItems?
+            .first(where: { $0.name == "size" })?.value.flatMap(Int.init)
+        let pageSize = max(1, requestedPageSize ?? responsePage.hits.hits.count)
+        // Treat the total as authoritative when the server's advertised next
+        // URL carries the same explicit page size (the shape emitted by the
+        // live INSPIRE API).  Tiny contract fixtures and older mirrors often
+        // omit `size` from their next URL; retain their link in that case so a
+        // valid page-1 -> page-2 response is not discarded merely because its
+        // synthetic total is smaller than the product's default page size.
+        let advertisedNextURL = responsePage.links?.next.flatMap { URL(string: $0) }
+        let advertisedNextComponents = advertisedNextURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let advertisedNextSize = advertisedNextComponents?.queryItems?
+            .first(where: { $0.name == "size" })?.value.flatMap(Int.init)
+        let hasMoreByTotal: Bool
+        if let requestedPageSize, let advertisedNextSize, requestedPageSize == advertisedNextSize {
+            hasMoreByTotal = responsePage.hits.total > pageNumber * pageSize
+        } else {
+            hasMoreByTotal = responsePage.links?.next != nil
+        }
+        let exhaustedWindow = pageNumber >= 40 && hasMoreByTotal
+        let advertisedNextPage = advertisedNextComponents
             .flatMap { Int($0.queryItems?.first(where: { $0.name == "page" })?.value ?? "") }
         let nextBeyondWindow = advertisedNextPage.map { $0 > 40 } ?? false
-        let serverNext = (exhaustedWindow || nextBeyondWindow) ? nil :
+        let serverNext = (!hasMoreByTotal || exhaustedWindow || nextBeyondWindow) ? nil :
             try trustedNextURL(responsePage.links?.next, expectedPath: "/api/authors")
         let next: URL?
         if let serverNext {

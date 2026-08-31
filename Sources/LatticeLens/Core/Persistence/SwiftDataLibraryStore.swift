@@ -1089,9 +1089,19 @@ enum LibraryStoreFactory {
             // rebuildable local-search projection at that verified target.
             // A failed migration returns a read-only recovery store below;
             // it must never create a blank JSON library over user data.
-            let v7Source = legacyV7StoreURL()
-            if !FileManager.default.fileExists(atPath: storeURL.path), FileManager.default.fileExists(atPath: v7Source.path) {
-                _ = try V8MigrationCoordinator.migrateV7ToV8(sourceURL: v7Source, activeV8URL: storeURL,
+            // Older local releases stored the V4/V7 SQLite family directly as
+            // `Application Support/LatticeLens.store`, while the staged V8
+            // coordinator uses `LatticeLens/Library-v7.store`.  If we only
+            // probe the latter, a first launch after upgrading creates a new
+            // empty V8 container and the UI appears to have lost every
+            // author/paper.  Keep the current nested path preferred, but
+            // explicitly discover the historical root family when the active
+            // target does not yet exist.  The coordinator backs up and reads
+            // the selected source before activating the new target; no source
+            // family is overwritten or deleted by this discovery.
+            if !FileManager.default.fileExists(atPath: storeURL.path),
+               let source = legacyV7StoreCandidates().first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+                _ = try V8MigrationCoordinator.migrateV7ToV8(sourceURL: source, activeV8URL: storeURL,
                                                               backupRoot: storeURL.deletingLastPathComponent().appendingPathComponent("LatticeLens-StoreBackups", isDirectory: true))
             }
             do {
@@ -1149,13 +1159,26 @@ enum LibraryStoreFactory {
         return root.appending(path: "LatticeLens/Library-v8.store")
     }
 
-    private static func legacyV7StoreURL() -> URL {
-        if let testRoot = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
-            return URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v7.store")
-        }
-        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    /// Candidate compatibility families, ordered from the current staged V7
+    /// location to the pre-V7 root file used by early releases.  This helper
+    /// is intentionally pure (it performs no filesystem probing) so migration
+    /// path selection can be regression-tested without touching a user store.
+    static func legacyV7StoreCandidates(applicationSupportRoot: URL? = nil) -> [URL] {
+        let root: URL
+        if let applicationSupportRoot {
+            // An explicit root is used only by deterministic tests/diagnostic
+            // callers and must win over a process-wide fixture environment.
+            root = applicationSupportRoot
+        } else if let testRoot = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
+            return [URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v7.store")]
+        } else {
+            root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return root.appending(path: "LatticeLens/Library-v7.store")
+        }
+        return [
+            root.appending(path: "LatticeLens/Library-v7.store"),
+            root.appending(path: "LatticeLens.store")
+        ]
     }
 
     private static func fallbackURL() -> URL {

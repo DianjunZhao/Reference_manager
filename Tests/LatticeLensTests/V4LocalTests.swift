@@ -186,6 +186,50 @@ final class V4LocalTests: XCTestCase {
         try await store.upsert(authors: [author])
     }
 
+    @MainActor
+    func testLegacyStoreDiscoveryIncludesPreV7RootFamily() {
+        let applicationSupport = URL(fileURLWithPath: "/tmp/latticelens-fixture-application-support", isDirectory: true)
+        let candidates = LibraryStoreFactory.legacyV7StoreCandidates(applicationSupportRoot: applicationSupport)
+        XCTAssertEqual(candidates.map(\.path), [
+            applicationSupport.appending(path: "LatticeLens/Library-v7.store").path,
+            applicationSupport.appending(path: "LatticeLens.store").path
+        ])
+    }
+
+    @MainActor
+    func testV8MigrationReadsPreV7RootSnapshotFamily() throws {
+        // Early releases wrote a V4 snapshot to `LatticeLens.store` at the
+        // Application Support root.  The upgrade path must consume that
+        // family through the same staged, hash-verified migration used by the
+        // nested V7 source instead of silently creating an empty V8 target.
+        let root = try makeProjectLocalTestDirectory(prefix: "v8-legacy-root")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("LatticeLens.store")
+        let activeURL = root.appendingPathComponent("LatticeLens/Library-v8.store")
+        let schema = Schema(versionedSchema: LatticeLensSchemaV7.self)
+        let sourceContainer = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV7.self,
+                                                  configurations: ModelConfiguration(url: sourceURL))
+        let author = Author(recid: 77, preferredName: "Legacy, Root", nativeNames: [], bai: nil,
+                            arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .qualified,
+                            isTracked: false, lastSyncedAt: Date(timeIntervalSince1970: 1))
+        let paper = makePaper(11)
+        let snapshot = LibrarySnapshot(authors: [author.recid: author], papers: [paper.literatureID: paper],
+                                       paperAuthorLinks: [PaperAuthorLink(paperID: paper.literatureID, authorRecid: author.recid, position: 0)],
+                                       schemaVersion: 6)
+        sourceContainer.mainContext.insert(StoredLibraryDocument(schemaVersion: 6,
+                                                                 snapshotData: try JSONEncoder.latticeLens.encode(snapshot)))
+        try sourceContainer.mainContext.save()
+
+        let outcome = try V8MigrationCoordinator.migrateV7ToV8(sourceURL: sourceURL, activeV8URL: activeURL,
+                                                                 backupRoot: root.appendingPathComponent("backups", isDirectory: true))
+        XCTAssertEqual(outcome.journal.phase, .activated)
+        let activeSchema = Schema(versionedSchema: LatticeLensSchemaV8.self)
+        let active = try ModelContainer(for: activeSchema, configurations: ModelConfiguration(url: activeURL))
+        XCTAssertEqual(try active.mainContext.fetchCount(FetchDescriptor<StoredV8Author>()), 1)
+        XCTAssertEqual(try active.mainContext.fetchCount(FetchDescriptor<StoredV8Paper>()), 1)
+        XCTAssertEqual(try active.mainContext.fetchCount(FetchDescriptor<StoredV8PaperAuthorLink>()), 1)
+    }
+
     func testRadarDiffClassifiesAddedRemovedAndModifiedWithFieldHashes() {
         let old = makePaper(11)
         var changed = old

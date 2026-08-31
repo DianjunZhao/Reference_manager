@@ -3,8 +3,8 @@
   "product_version": "1.0.0",
   "build_number": 100,
   "local_only": true,
-  "run_id": "20260830T135543Z-94302",
-  "build_input_tree_sha256": "90a4634bcab16d7146e6eda00a70aa8e52db6ad638c071cff447c3fd3202e075",
+  "run_id": "20260830T153951Z-13639",
+  "build_input_tree_sha256": "0dc76ac7c3d8a3ff9e1efc6ea729753bbe325792dfb35beaa6e1da1e7a207de6",
   "prepackage_eligible": true,
   "ui_evidence": {
     "scope": "selected_ui_delta_once_per_case",
@@ -29,26 +29,26 @@
     "icon_version_resources": true
   },
   "migration_evidence": {
-    "source_origin": "user_provided_disposable_copy",
+    "source_origin": "synthetic_v7_benchmark",
     "source_store_name": "synthetic-v7-benchmark-disposable.store",
-    "sha256": "6a06bf53ea902c000b70526ff2347558a3dff8d1f28d5fa1a20907daa7913a0c"
+    "sha256": "e074500dbb9299382645a9d4d1676e9d32950cafd22126e1950a4670ebbe70e8"
   },
   "benchmarks": {
-    "legacy_v6_warm_search_p95_ms": 38,
-    "legacy_v6_disk_cold_open_p95_ms": 33,
-    "legacy_v6_disk_single_row_mutation_p95_ms": 4,
-    "compatibility_v7_warm_search_p95_ms": 36,
+    "legacy_v6_warm_search_p95_ms": 19,
+    "legacy_v6_disk_cold_open_p95_ms": 23,
+    "legacy_v6_disk_single_row_mutation_p95_ms": 2,
+    "compatibility_v7_warm_search_p95_ms": 17,
     "v9_final_typed": {
       "authors": 2000,
-      "backup_ms": 64,
+      "backup_ms": 36,
       "backup_verified": true,
       "chunks": 10000,
-      "cold_open_p50_ms": 4,
-      "cold_open_p95_ms": 5,
+      "cold_open_p50_ms": 2,
+      "cold_open_p95_ms": 2,
       "cold_open_samples_ms": [
-        5,
-        4,
-        4
+        2,
+        2,
+        2
       ],
       "collections": 100,
       "expected_source_authors": 2000,
@@ -59,30 +59,30 @@
       "links": 100000,
       "papers": 20000,
       "radar_events": 500,
-      "single_row_mutation_p50_ms": 1,
-      "single_row_mutation_p95_ms": 2,
+      "single_row_mutation_p50_ms": 0,
+      "single_row_mutation_p95_ms": 1,
       "source_store_name": "benchmark-v7-active.store",
       "store": "SwiftData-disk-backed-V9-final-typed-indexed",
-      "store_family_bytes": 40632320,
+      "store_family_bytes": 40906752,
       "tags": 100,
       "user_annotations": 200,
-      "v7_to_v8_staged_migration_ms": 26591,
-      "v9_index_build_ms": 30074,
+      "v7_to_v8_staged_migration_ms": 13294,
+      "v9_index_build_ms": 14900,
       "warm_search_breakdown": {
-        "candidate_paper_fetch_p95_ms": 6,
+        "candidate_paper_fetch_p95_ms": 2,
         "candidate_paper_row_count_p95": 100,
         "decoded_paper_count_p95": 100,
-        "paper_decode_p95_ms": 2,
+        "paper_decode_p95_ms": 1,
         "posting_candidate_count_p95": 20000,
-        "posting_decode_and_intersection_p95_ms": 37,
+        "posting_decode_and_intersection_p95_ms": 19,
         "posting_lookup_p95_ms": 0,
         "posting_row_count_p95": 1,
         "query_term_count_p95": 1,
         "result_sort_p95_ms": 0,
         "sample_count": 21
       },
-      "warm_search_p50_ms": 75,
-      "warm_search_p95_ms": 78,
+      "warm_search_p50_ms": 38,
+      "warm_search_p95_ms": 40,
       "warm_search_result_count": 100
     }
   }
