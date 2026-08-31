@@ -85,6 +85,39 @@ final class CoreContractTests: XCTestCase {
     }
 
     @MainActor
+    func testWarmStoreStartupClosesLoadingStateAfterLocalPapersRender() async throws {
+        // A warm library has no reason to start a network sync when its last
+        // successful author refresh is still fresh.  Startup still publishes
+        // `.loadingLocal` while opening SwiftData; once the local timeline is
+        // visible that transient state must close, otherwise the toolbar
+        // falsely reports a never-ending refresh on every relaunch.
+        let store = InMemoryLibraryStore()
+        let selfAuthor = Author(recid: ProductContract.selfAuthorRecid,
+                                preferredName: "Zhao, Dian-Jun", nativeNames: [], bai: nil,
+                                arxivCategories: ["hep-lat"], hIndex: nil,
+                                hIndexState: .unknown, isTracked: false,
+                                lastSyncedAt: Date())
+        let paper = Paper(literatureID: 7_102,
+                          titles: [PaperTitle(value: "warm startup fixture", source: "fixture")],
+                          abstracts: [], preprintDate: nil, earliestDate: nil,
+                          arxivID: nil, arxivCategories: ["hep-lat"], doi: nil,
+                          citationCount: nil, publicationStatus: nil, updated: nil,
+                          figures: [], firstSeenAt: Date(), isRead: false)
+        try await store.upsert(authors: [selfAuthor])
+        _ = try await store.upsert(papers: [paper], for: selfAuthor.recid)
+
+        let viewModel = AppViewModel(store: store,
+                                     client: InspireClient(transport: SequentialTransport([])),
+                                     keychain: FixedKeychain(value: "fixture-key"),
+                                     useFixtureDependencies: false)
+        await viewModel.start()
+
+        XCTAssertEqual(viewModel.papers.map(\.literatureID), [paper.literatureID])
+        XCTAssertEqual(viewModel.syncStatus.phase, .ready)
+        XCTAssertTrue(viewModel.syncStatus.message.contains("已加载本地"))
+    }
+
+    @MainActor
     func testFreshStoreSelectsRefreshedSelfAndLoadsInitialPapers() async throws {
         // Regression for a first-launch blank workspace: an empty store has no
         // author during the initial projection, so refreshPinnedSelf() must be

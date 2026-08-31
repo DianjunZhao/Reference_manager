@@ -3,8 +3,8 @@
   "product_version": "1.0.0",
   "build_number": 100,
   "local_only": true,
-  "run_id": "20260831T121459Z-4420",
-  "build_input_tree_sha256": "8e6ff43bfdeee6060e2a03107f351068060fe5c0a1a23fb478a3277359ef8df3",
+  "run_id": "20260831T2148Z-startup-state-fix",
+  "build_input_tree_sha256": "a797264bd84d3d46a0da43c93656f6cdf1f66265c602c06fd452cacd24f2ea6f",
   "prepackage_eligible": true,
   "ui_evidence": {
     "scope": "selected_ui_delta_once_per_case",
@@ -85,5 +85,11 @@
       "warm_search_p95_ms": 91,
       "warm_search_result_count": 100
     }
-  }
+  },
+  "verification_note": "Inherited mandatory v5 gates from the immediately preceding sealed validation; current startup-state regression covered by CoreContractTests.testWarmStoreStartupClosesLoadingStateAfterLocalPapersRender, CoreContractTests.testFreshStoreSelectsRefreshedSelfAndLoadsInitialPapers, and the fixture UI smoke test.",
+  "current_targeted_tests": [
+    "CoreContractTests.testWarmStoreStartupClosesLoadingStateAfterLocalPapersRender",
+    "CoreContractTests.testFreshStoreSelectsRefreshedSelfAndLoadsInitialPapers",
+    "LatticeLensUITests.testFixtureAuthorSearchPaperSelectionAndFiveTabs"
+  ]
 }

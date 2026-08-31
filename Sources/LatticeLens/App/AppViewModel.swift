@@ -393,7 +393,15 @@ final class AppViewModel: ObservableObject {
             // toolbar in the misleading "未同步" state in that case: the
             // local timeline is already available and the explicit Sync
             // action remains the way to request a fresh remote pass.
-            if !papers.isEmpty, syncStatus.phase == .idle {
+            // `start()` marks the first local read explicitly as
+            // `.loadingLocal`.  A warm library can legitimately skip the
+            // network refresh when its checkpoint is fresh, so close that
+            // state as soon as the local timeline is available.  Leaving it
+            // in `.loadingLocal` made a successful cold launch look like a
+            // blank/stuck refresh even though authors and papers were already
+            // rendered.
+            if !papers.isEmpty &&
+                (syncStatus.phase == .idle || syncStatus.phase == .loadingLocal) {
                 syncStatus = SyncStatus(phase: .ready,
                                         message: "已加载本地 \(papers.count) 篇文献",
                                         completedPages: 0,
