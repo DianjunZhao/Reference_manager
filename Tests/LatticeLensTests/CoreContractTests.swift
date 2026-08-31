@@ -435,6 +435,20 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(snapshot.pageCount, 1)
     }
 
+    func testLiteratureSearchAcceptsElasticsearchObjectTotal() throws {
+        // Current INSPIRE literature replies use {value, relation} for
+        // hits.total, while older fixtures used a bare integer.  Both forms
+        // describe the same bounded page and must remain decodable.
+        let payload = Data("""
+        {"hits":{"total":{"value":1,"relation":"eq"},"hits":[
+          {"id":314,"metadata":{"titles":[{"title":"object total"}]}}
+        ]},"links":{}}
+        """.utf8)
+        let page = try JSONDecoder().decode(InspireSearchPage<InspireLiteratureHit>.self, from: payload)
+        XCTAssertEqual(page.hits.total, 1)
+        XCTAssertEqual(page.hits.hits.first?.id.integerValue, 314)
+    }
+
     func testHIndexFallbackStopsBeforeINSPIREPage41HTTP400() async throws {
         let firstPage = Data("""
         {"hits":{"total":12000,"hits":[

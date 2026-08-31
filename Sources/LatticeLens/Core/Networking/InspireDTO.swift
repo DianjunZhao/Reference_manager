@@ -76,6 +76,30 @@ struct InspireLinks: Codable, Sendable {
 struct InspireSearchHits<Hit: Decodable & Sendable>: Decodable, Sendable {
     let hits: [Hit]
     let total: Int
+
+    /// INSPIRE has emitted both the legacy integer form and the Elasticsearch
+    /// `{ "value": ..., "relation": ... }` form for `hits.total`.  The
+    /// latter is now common on `/api/literature`; decoding it as an `Int`
+    /// makes a valid page look like a failed refresh and also breaks the
+    /// bounded local h-index fallback after a citation-summary 400.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        hits = try values.decode([Hit].self, forKey: .hits)
+        if let integer = try? values.decode(Int.self, forKey: .total) {
+            total = integer
+        } else {
+            let object = try values.decode(TotalObject.self, forKey: .total)
+            total = object.value
+        }
+    }
+
+    private struct TotalObject: Decodable {
+        let value: Int
+
+        enum CodingKeys: String, CodingKey { case value }
+    }
+
+    private enum CodingKeys: String, CodingKey { case hits, total }
 }
 
 struct InspireSearchPage<Hit: Decodable & Sendable>: Decodable, Sendable {
