@@ -338,6 +338,25 @@ struct AppFixtureTransport: HTTPTransport {
 }
 
 enum AppLaunchConfiguration {
+    /// A production-dependency test run may need a fresh, disposable store
+    /// while still talking to the real read-only metadata endpoint.  `HOME`
+    /// is not a reliable isolation mechanism for AppKit/Foundation on macOS:
+    /// Application Support can remain bound to the logged-in user's home.
+    /// Require two explicit process-owned keys so an ordinary launch cannot
+    /// redirect its library, and keep this distinct from UI fixture mode.
+    static var productionIsolationStoreRoot: String? {
+        productionIsolationStoreRoot(environment: ProcessInfo.processInfo.environment)
+    }
+
+    static func productionIsolationStoreRoot(environment: [String: String]) -> String? {
+        guard environment["LATTICELENS_ALLOW_PRODUCTION_ISOLATION"] == "1",
+              let root = environment["LATTICELENS_PRODUCTION_STORE_ROOT"],
+              root.hasPrefix("/") else {
+            return nil
+        }
+        return root
+    }
+
     static var usesFixtureDependencies: Bool {
         #if LATTICELENS_UI_FIXTURE_TARGET
         // The dedicated Xcode UI fixture configuration is compiled solely

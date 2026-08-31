@@ -21,6 +21,102 @@ final class CoreContractTests: XCTestCase {
         ))
     }
 
+    func testProductionIsolationRootRequiresExplicitTwoKeyOptInAndDoesNotEnableFixtures() {
+        XCTAssertNil(AppLaunchConfiguration.productionIsolationStoreRoot(environment: [:]))
+        XCTAssertNil(AppLaunchConfiguration.productionIsolationStoreRoot(environment: [
+            "LATTICELENS_PRODUCTION_STORE_ROOT": "/tmp/latticelens-isolated"
+        ]))
+        XCTAssertNil(AppLaunchConfiguration.productionIsolationStoreRoot(environment: [
+            "LATTICELENS_ALLOW_PRODUCTION_ISOLATION": "1",
+            "LATTICELENS_PRODUCTION_STORE_ROOT": "relative-root"
+        ]))
+        let environment = [
+            "LATTICELENS_ALLOW_PRODUCTION_ISOLATION": "1",
+            "LATTICELENS_PRODUCTION_STORE_ROOT": "/tmp/latticelens-isolated"
+        ]
+        XCTAssertEqual(AppLaunchConfiguration.productionIsolationStoreRoot(environment: environment),
+                       "/tmp/latticelens-isolated")
+        XCTAssertFalse(AppLaunchConfiguration.usesFixtureDependencies(environment: environment, arguments: []))
+    }
+
+    func testFreshActiveStoreDirectoryIsCreatedBeforeSwiftDataOpens() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "latticelens-fresh-store-directory-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let storeURL = root.appending(path: "nested/swiftdata/LatticeLens-v8.store")
+        let parent = storeURL.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: parent.path))
+        try LibraryStoreFactory.ensureActiveStoreDirectory(for: storeURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: parent.path),
+                      "首启必须在 SwiftData 打开文件前建立其精确父目录")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: storeURL.path))
+    }
+
+    @MainActor
+    func testDefaultStoreBootstrapsAnEmptyNestedTestRoot() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"],
+              rootPath.hasPrefix("/") else {
+            throw XCTSkip("requires an explicitly disposable LATTICELENS_TEST_STORE_ROOT")
+        }
+        let root = URL(fileURLWithPath: rootPath, isDirectory: true)
+        let storeURL = root.appending(path: "swiftdata/LatticeLens-v8.store")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: storeURL.path),
+                       "integration root must begin without an active store")
+
+        let store = LibraryStoreFactory.makeDefault()
+        let author = Author(recid: 7_777_001,
+                            preferredName: "Fresh, Store",
+                            nativeNames: [], bai: nil,
+                            arxivCategories: ["hep-lat"], hIndex: nil,
+                            hIndexState: .unknown, isTracked: false)
+        try await store.upsert(authors: [author])
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path))
+        let reloaded = await store.author(recid: author.recid)
+        XCTAssertEqual(reloaded?.preferredName, author.preferredName,
+                       "首启必须能将作者写入并立即读回同一受控 store")
+    }
+
+    /// Opt-in production-dependency smoke.  It is deliberately skipped in
+    /// ordinary unit runs: a caller must provide both a disposable store root
+    /// and explicit consent to contact the read-only public INSPIRE metadata
+    /// API.  Unlike fixture coverage, this proves the fresh persistent store,
+    /// real client and first-page publish path work together.
+    @MainActor
+    func testOptInLiveInspireFreshPersistentStoreLoadsPinnedAuthorAndPapers() async throws {
+        guard ProcessInfo.processInfo.environment["LATTICELENS_LIVE_INSPIRE_SMOKE"] == "1" else {
+            throw XCTSkip("requires explicit live INSPIRE smoke opt-in")
+        }
+        guard let rootPath = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"],
+              rootPath.hasPrefix("/") else {
+            throw XCTSkip("requires an explicitly disposable LATTICELENS_TEST_STORE_ROOT")
+        }
+        let root = URL(fileURLWithPath: rootPath, isDirectory: true)
+        let storeURL = root.appending(path: "swiftdata/LatticeLens-v8.store")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: storeURL.path),
+                       "live smoke must begin from an empty disposable store")
+
+        let store = LibraryStoreFactory.makeDefault()
+        let viewModel = AppViewModel(
+            store: store,
+            client: InspireClient(),
+            keychain: FixedKeychain(value: "live-smoke-no-keychain-read"),
+            useFixtureDependencies: false
+        )
+        await viewModel.start()
+        for _ in 0..<20 where viewModel.papers.isEmpty && viewModel.syncStatus.phase != .failed {
+            try await Task.sleep(for: .milliseconds(500))
+        }
+
+        XCTAssertEqual(viewModel.selectedAuthorID, ProductContract.selfAuthorRecid)
+        XCTAssertTrue(viewModel.authors.contains(where: { $0.recid == ProductContract.selfAuthorRecid }))
+        XCTAssertFalse(viewModel.papers.isEmpty,
+                       "真实 INSPIRE 首启必须在受控 store 中发布至少一页本人的文献")
+        XCTAssertNotEqual(viewModel.syncStatus.phase, .failed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: storeURL.path))
+    }
+
     @MainActor
     func testUIFixtureNeverUsesInjectedPersistentKeychain() {
         let persistentKeychain = RecordingKeychain()

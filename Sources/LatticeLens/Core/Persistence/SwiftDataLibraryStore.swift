@@ -1082,6 +1082,13 @@ enum LibraryStoreFactory {
         let schema = Schema(versionedSchema: LatticeLensSchemaV9.self)
         let storeURL = defaultStoreURL()
         do {
+            // `ModelConfiguration(url:)` will not reliably create a nested
+            // parent such as `Application Support/LatticeLens` (or the
+            // explicitly isolated `swiftdata` directory) on a first launch.
+            // Without this, a brand-new installation can fall into a
+            // read-only bootstrap failure before the pinned author or its
+            // first literature page has anywhere durable to be written.
+            try ensureActiveStoreDirectory(for: storeURL)
             // Final V8-core/V9-search activation is a distinct target, not
             // an in-place V7 schema open.  The coordinator copies and hashes
             // the complete V7 SQLite family, materializes a staging V8 typed
@@ -1142,7 +1149,29 @@ enum LibraryStoreFactory {
         }
     }
 
+    /// Establish the one parent directory owned by the active V8/V9 SQLite
+    /// family before SwiftData opens it.  Keeping this helper independent of
+    /// path selection makes first-launch behaviour testable without probing
+    /// Application Support or a real library.
+    static func ensureActiveStoreDirectory(
+        for storeURL: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        try fileManager.createDirectory(
+            at: storeURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+    }
+
     private static func defaultStoreURL() -> URL {
+        // A production-dependency smoke test cannot rely on `HOME` for
+        // isolation: AppKit may still resolve Application Support for the
+        // logged-in account.  This explicit two-key gate is deliberately
+        // separate from fixture mode so the test exercises real networking
+        // while every store read/write stays below its disposable root.
+        if let isolatedRoot = AppLaunchConfiguration.productionIsolationStoreRoot {
+            return URL(fileURLWithPath: isolatedRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v8.store")
+        }
         // Every XCTest/fixture invocation supplies an explicitly project-local
         // root.  Never fall through to Application Support in that mode: a
         // host-free contract test must not even attempt to open a user's
@@ -1165,6 +1194,8 @@ enum LibraryStoreFactory {
             // An explicit root is used only by deterministic tests/diagnostic
             // callers and must win over a process-wide fixture environment.
             root = applicationSupportRoot
+        } else if let isolatedRoot = AppLaunchConfiguration.productionIsolationStoreRoot {
+            return [URL(fileURLWithPath: isolatedRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v7.store")]
         } else if let testRoot = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
             return [URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v7.store")]
         } else {
@@ -1288,6 +1319,9 @@ enum LibraryStoreFactory {
     }
 
     private static func fallbackURL() -> URL {
+        if let isolatedRoot = AppLaunchConfiguration.productionIsolationStoreRoot {
+            return URL(fileURLWithPath: isolatedRoot, isDirectory: true).appending(path: "json/LatticeLens-fallback.json")
+        }
         // The fallback path obeys the same XCTest isolation contract as the
         // SwiftData URL.  A failed test-store bootstrap must never redirect a
         // host-free test into a user's Application Support JSON library.
