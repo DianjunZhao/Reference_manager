@@ -500,6 +500,12 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(requestCount, 2,
                        "fallback must not request the service's known-invalid page 41")
         XCTAssertEqual(snapshot.computationFormulaVersion, "h-index-counts-v1-capped-10000")
+        let fallbackURLValue = await transport.url(at: 1)
+        let fallbackURL = try XCTUnwrap(fallbackURLValue)
+        let fields = URLComponents(url: fallbackURL, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "fields" })?.value
+        XCTAssertEqual(fields, "citation_count",
+                       "h-index fallback must not download figures/documents metadata")
     }
 
     func testHIndex429DoesNotTriggerExpensiveLocalFallback() async throws {

@@ -134,6 +134,13 @@ struct InspireClient: Sendable {
         "documents"
     ].joined(separator: ",")
 
+    /// H-index fallback only needs citation counts.  Reusing the full paper
+    /// metadata projection here can pull megabytes of figures/documents for a
+    /// highly cited author and turn an otherwise recoverable facet 400 into a
+    /// timeout/oversized response.  Keep this request deliberately narrow so
+    /// every author remains verifiable and the queue can make progress.
+    private static let hIndexLiteratureFields = "citation_count"
+
     init(
         transport: any HTTPTransport = URLSessionTransport(),
         origin: URL = InspireClient.defaultOrigin,
@@ -421,7 +428,7 @@ struct InspireClient: Sendable {
                 URLQueryItem(name: "q", value: "authors.recid:\(authorRecid)"),
                 URLQueryItem(name: "sort", value: "mostcited"),
                 URLQueryItem(name: "size", value: String(pageSize)),
-                URLQueryItem(name: "fields", value: Self.literatureFields)
+                URLQueryItem(name: "fields", value: Self.hIndexLiteratureFields)
             ])
             let data = try await get(url)
             let page = try decoder.decode(InspireSearchPage<InspireLiteratureHit>.self, from: data)
