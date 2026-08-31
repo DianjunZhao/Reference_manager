@@ -1099,11 +1099,7 @@ enum LibraryStoreFactory {
             // target does not yet exist.  The coordinator backs up and reads
             // the selected source before activating the new target; no source
             // family is overwritten or deleted by this discovery.
-            if !FileManager.default.fileExists(atPath: storeURL.path),
-               let source = legacyV7StoreCandidates().first(where: { FileManager.default.fileExists(atPath: $0.path) }) {
-                _ = try V8MigrationCoordinator.migrateV7ToV8(sourceURL: source, activeV8URL: storeURL,
-                                                              backupRoot: storeURL.deletingLastPathComponent().appendingPathComponent("LatticeLens-StoreBackups", isDirectory: true))
-            }
+            try recoverLegacyStoreIfNeeded(storeURL: storeURL)
             do {
                 let configuration = ModelConfiguration(schema: schema, url: storeURL)
                 let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV9.self,
@@ -1179,6 +1175,79 @@ enum LibraryStoreFactory {
             root.appending(path: "LatticeLens/Library-v7.store"),
             root.appending(path: "LatticeLens.store")
         ]
+    }
+
+    /// Repairs the upgrade state produced by early 1.0 builds.  Those builds
+    /// could create and activate an empty V8 target before discovering the
+    /// pre-V7 root family (`Application Support/LatticeLens.store`).  Once
+    /// that placeholder exists, a simple `fileExists` check incorrectly
+    /// suppresses migration forever and every subsequent launch paints an
+    /// empty sidebar.  Only a structurally readable target with *no authors
+    /// and no papers* is eligible; any non-empty active store is left alone.
+    /// The placeholder is moved into the existing backup root before the
+    /// staged migration, so neither the old source nor the previous target is
+    /// overwritten or deleted.
+    @MainActor
+    static func recoverLegacyStoreIfNeeded(
+        storeURL: URL,
+        applicationSupportRoot: URL? = nil,
+        fileManager: FileManager = .default
+    ) throws {
+        let candidates = legacyV7StoreCandidates(applicationSupportRoot: applicationSupportRoot)
+        guard let source = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) else { return }
+        let backupRoot = storeURL.deletingLastPathComponent()
+            .appendingPathComponent("LatticeLens-StoreBackups", isDirectory: true)
+
+        if fileManager.fileExists(atPath: storeURL.path) {
+            guard isEmptyV8Placeholder(at: storeURL) else { return }
+            try fileManager.createDirectory(at: backupRoot, withIntermediateDirectories: true)
+            let quarantineURL = backupRoot.appendingPathComponent(
+                "preexisting-empty-v8-\(UUID().uuidString).store")
+            try moveStoreFamily(from: storeURL, to: quarantineURL, fileManager: fileManager)
+        }
+
+        _ = try V8MigrationCoordinator.migrateV7ToV8(sourceURL: source, activeV8URL: storeURL,
+                                                      backupRoot: backupRoot, fileManager: fileManager)
+    }
+
+    /// Returns false on any schema/open error.  Failing closed is important:
+    /// an unknown or malformed target may contain user data and must never be
+    /// quarantined merely because its rows cannot be inspected.
+    @MainActor
+    private static func isEmptyV8Placeholder(at url: URL) -> Bool {
+        // A failed first launch may have left either a V8 or a V9 SQLite
+        // family.  Opening only the V8 schema is insufficient for a V9
+        // placeholder: SwiftData can reject the older model before we get a
+        // chance to inspect its (empty) typed rows, which would leave the
+        // legacy source permanently shadowed by a blank target.  Probe the
+        // current schema first and fall back to V8 for stores created by the
+        // migration coordinator.  This is a read-only count probe; no model
+        // context is saved and any schema/open error fails closed.
+        func probe<Versioned: VersionedSchema>(_ versioned: Versioned.Type) -> Bool {
+            do {
+                let schema = Schema(versionedSchema: versioned)
+                let container = try ModelContainer(for: schema, configurations: ModelConfiguration(url: url))
+                let context = container.mainContext
+                guard try !context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty else { return false }
+                let authors = try context.fetchCount(FetchDescriptor<StoredV8Author>())
+                let papers = try context.fetchCount(FetchDescriptor<StoredV8Paper>())
+                return authors == 0 && papers == 0
+            } catch {
+                return false
+            }
+        }
+        return probe(LatticeLensSchemaV9.self) || probe(LatticeLensSchemaV8.self)
+    }
+
+    @MainActor
+    private static func moveStoreFamily(from source: URL, to destination: URL,
+                                        fileManager: FileManager) throws {
+        guard !fileManager.fileExists(atPath: destination.path) else { throw V8MigrationCoordinatorError.activeTargetExists }
+        for suffix in ["", "-wal", "-shm"] {
+            let member = URL(fileURLWithPath: source.path + suffix)
+            guard fileManager.fileExists(atPath: member.path) else { continue }
+            try fileManager.moveItem(at: member, to: URL(fileURLWithPath: destination.path + suffix))
+        }
     }
 
     private static func fallbackURL() -> URL {

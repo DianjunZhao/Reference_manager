@@ -95,7 +95,7 @@
 ,
 {"path":"Sources/LatticeLens/Core/Persistence/LibraryStore.swift","sha256":"369acf1632df7634b6197e10263228ecca318ea4f18a1db45376844d69f11e49"}
 ,
-{"path":"Sources/LatticeLens/Core/Persistence/SwiftDataLibraryStore.swift","sha256":"55d65d000a00c0338b30b3c054031ad34467c5295c65fcdd592209323f21adee"}
+{"path":"Sources/LatticeLens/Core/Persistence/SwiftDataLibraryStore.swift","sha256":"c47b2735147f31a6d5f4a9e0fbea88cf2e55bff3a0688bd1e9685fc0359a6c34"}
 ,
 {"path":"Sources/LatticeLens/Core/Persistence/V4NormalizedStore.swift","sha256":"cab540f98554edaf9c4e00f1a01c5c2a189db72213781d47db14c0276358fe14"}
 ,
@@ -115,7 +115,7 @@
 ,
 {"path":"Sources/LatticeLens/Features/PaperLens/FullTextService.swift","sha256":"faa977da6b25dc78d25f4c1a31a5cddea72caeef677e073ab32b6d2b1f15926c"}
 ,
-{"path":"Sources/LatticeLens/Features/PaperLens/LocalMarkdownTeXText.swift","sha256":"5144efa9c87d6dbe107c365ed3d7ba440cb8988c3224c102dcff2b8b1b7e5a2c"}
+{"path":"Sources/LatticeLens/Features/PaperLens/LocalMarkdownTeXText.swift","sha256":"43b0761a9525f53297e07cd8775a55559a8d4cc64c41f0042a5f77c66f19f34d"}
 ,
 {"path":"Sources/LatticeLens/Features/PaperLens/MainWorkspaceView.swift","sha256":"06b9ecbbdda215a9795c486deafc7b4c018d6d9c5eeb5df7a53de680f803c7b3"}
 ,
@@ -165,7 +165,7 @@
 ,
 {"path":"Tests/LatticeLensTests/V4BenchmarkTests.swift","sha256":"b4f7b8ba03d35bf0d3352be063135628936f81e9e8a72ab0e591ac32d513466d"}
 ,
-{"path":"Tests/LatticeLensTests/V4LocalTests.swift","sha256":"e9e8476483c1666b307d5974987e20a44976cf1c1bf2e99360fd2a7040f8c676"}
+{"path":"Tests/LatticeLensTests/V4LocalTests.swift","sha256":"df57ea39c439cbff5afd0cfcd0aff0efbb40dcd1b1080b41bbfdd0ac43fc85dd"}
 ,
 {"path":"Tests/LatticeLensTests/V5FinalTests.swift","sha256":"557e280a218e8a38e91e28aa0f65cd8017dedea6d7c0ee8e040e0cf4ab62f808"}
 ,

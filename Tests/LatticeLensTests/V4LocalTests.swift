@@ -230,6 +230,45 @@ final class V4LocalTests: XCTestCase {
         XCTAssertEqual(try active.mainContext.fetchCount(FetchDescriptor<StoredV8PaperAuthorLink>()), 1)
     }
 
+    @MainActor
+    func testLegacyRootMigrationRepairsPreviouslyActivatedEmptyV8Placeholder() throws {
+        // A prior release could leave an empty, marker-bearing V8 target after
+        // failing to discover the old root family.  The next launch must
+        // quarantine that placeholder and migrate the readable legacy source,
+        // otherwise the UI remains permanently blank even though the source
+        // library is still present.
+        let root = try makeProjectLocalTestDirectory(prefix: "v8-empty-placeholder")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("LatticeLens.store")
+        let activeURL = root.appendingPathComponent("LatticeLens/Library-v8.store")
+        let sourceSchema = Schema(versionedSchema: LatticeLensSchemaV7.self)
+        let sourceContainer = try ModelContainer(for: sourceSchema, migrationPlan: LatticeLensMigrationPlanV7.self,
+                                                  configurations: ModelConfiguration(url: sourceURL))
+        let author = Author(recid: 77, preferredName: "Legacy, Placeholder", nativeNames: [], bai: nil,
+                            arxivCategories: ["hep-lat"], hIndex: nil, hIndexState: .qualified,
+                            isTracked: false, lastSyncedAt: Date(timeIntervalSince1970: 1))
+        let paper = makePaper(11)
+        let snapshot = LibrarySnapshot(authors: [author.recid: author], papers: [paper.literatureID: paper],
+                                       paperAuthorLinks: [PaperAuthorLink(paperID: paper.literatureID, authorRecid: author.recid, position: 0)],
+                                       schemaVersion: 6)
+        sourceContainer.mainContext.insert(StoredLibraryDocument(schemaVersion: 6,
+                                                                 snapshotData: try JSONEncoder.latticeLens.encode(snapshot)))
+        try sourceContainer.mainContext.save()
+
+        // Simulate the bad first launch: a valid V8 marker but no domain rows.
+        let activeSchema = Schema(versionedSchema: LatticeLensSchemaV8.self)
+        let placeholder = try ModelContainer(for: activeSchema, configurations: ModelConfiguration(url: activeURL))
+        try V8TypedStoreCodec.materialize(LibrarySnapshot(schemaVersion: 8, v3SchemaVersion: 3), in: placeholder.mainContext, sourceSchemaVersion: 8)
+
+        try LibraryStoreFactory.recoverLegacyStoreIfNeeded(storeURL: activeURL, applicationSupportRoot: root)
+
+        let migrated = try ModelContainer(for: activeSchema, configurations: ModelConfiguration(url: activeURL))
+        XCTAssertEqual(try migrated.mainContext.fetchCount(FetchDescriptor<StoredV8Author>()), 1)
+        XCTAssertEqual(try migrated.mainContext.fetchCount(FetchDescriptor<StoredV8Paper>()), 1)
+        let backups = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("LatticeLens/LatticeLens-StoreBackups"), includingPropertiesForKeys: nil)
+        XCTAssertTrue(backups.contains { $0.lastPathComponent.hasPrefix("preexisting-empty-v8-") })
+    }
+
     func testRadarDiffClassifiesAddedRemovedAndModifiedWithFieldHashes() {
         let old = makePaper(11)
         var changed = old

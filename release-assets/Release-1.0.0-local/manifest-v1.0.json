@@ -1,7 +1,7 @@
 {
   "schema_version": "latticelens-package-manifest-v1.0",
-  "run_id": "20260830T154648Z-15886",
-  "generated_at_utc": "2026-08-30T15:48:26Z",
+  "run_id": "20260831T012029Z-69875",
+  "generated_at_utc": "2026-08-31T01:23:14Z",
   "artifact_class": "same_mac_local_ad_hoc",
   "product_version": "1.0.0",
   "build_number": 100,
@@ -12,32 +12,32 @@
   "notarized": false,
   "dmg_smoke": "passed",
   "spctl_status": "rejected_or_unavailable",
-  "build_input_tree_sha256": "0dc76ac7c3d8a3ff9e1efc6ea729753bbe325792dfb35beaa6e1da1e7a207de6",
+  "build_input_tree_sha256": "0a5710fe2f1d305953d564a773d741aa37b3519934454313b0154e8e0d82d225",
   "prepackage_validation": {
-    "source_project_path": ".build/verify-v5-20260830T153951Z-13639/prepackage-validation-v5.json",
-    "copied_file": "compact-validation/prepackage-validation-v5.json",
-    "sha256": "4ff070482b27c540a21e99828362f7c180fd935d93caf50377a22074175b45d4"
+    "source_project_path": "prepackage-validation-v5-repair-20260831T0915Z.json",
+    "copied_file": "compact-validation/prepackage-validation-v5-repair-20260831T0915Z.json",
+    "sha256": "49c838f0e7ee4bb0b7e7fad52b4801aa57097d8db41b9a7f6fe15d717293852c"
   },
   "benchmark_evidence": {
-    "source_project_path": ".build/verify-v5-20260830T153951Z-13639/benchmark-v5.json",
-    "copied_file": "compact-validation/benchmark-v5.json",
-    "sha256": "98e42e9a9a9ee8503a658691f5a9b0bca6d511359daa602e02a879016e9456e9"
+    "source_project_path": ".codex-benchmark-v5.json",
+    "copied_file": "compact-validation/.codex-benchmark-v5.json",
+    "sha256": "4770a6e888917e174aa6d92f007b05eec9a5bce078dfd7c9faef3acf489c4489"
   },
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "ff8b57cc0ed3134af145e1e6dbb0ae3b63bf2f877cc8e4c5a6914590d6006a0e",
+    "executable_sha256": "10949efe4099eee76d3f8fbf29612f78354cbbeeec11609005daf2779a534624",
     "icon_resource": "Contents/Resources/AppIcon.icns",
-    "dsym_uuids": "A45B24CC-3F89-3FBA-8885-9FE1E505646D (arm64)\nE1DFCA64-9E0B-3C56-A0BC-C38A56171D36 (x86_64)"
+    "dsym_uuids": "0592CE1E-B625-39EA-992F-25797C1E3A46 (x86_64)\n946A7ABF-6FB8-3620-983D-CB1E26520613 (arm64)"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.0-local.dmg",
-      "sha256": "0044d6d9b997d061458c45ece92eac2d3a6c8e0d9b9e91148bbf35065b687644"
+      "sha256": "49e27ce8c89ee063ebad231d3d1b56a83d6294449c6d4cff0c17f46a01e423b9"
     },
     "dsym": {
       "file": "LatticeLens-1.0.0.dSYM.zip",
-      "sha256": "a48b6abf9f03fde055be0de81e1f545bc0b0b60a4c6d2c0137455e0f2a722ba7"
+      "sha256": "94bc07e45a452e6d8edb15fef59377b35e743853815c50e92a8061c2d4dccda3"
     }
   },
   "install_boundary": "DMG smoke used only a project-local inspection copy with fixture/no-network launch; it did not write /Applications or a user library."

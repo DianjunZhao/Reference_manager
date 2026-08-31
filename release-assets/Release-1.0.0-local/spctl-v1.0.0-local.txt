@@ -1,1 +1,1 @@
-/Users/zhaodianjun/Desktop/Reference_manager/github/.codex-task-tmp-v5-package-20260830T154648Z-15886-J9vTHa/DerivedData/Build/Products/Release/LatticeLens.app: rejected
+/Users/zhaodianjun/Desktop/Reference_manager/github/.codex-task-tmp-v5-package-20260831T012029Z-69875-Qv5ksi/DerivedData/Build/Products/Release/LatticeLens.app: rejected

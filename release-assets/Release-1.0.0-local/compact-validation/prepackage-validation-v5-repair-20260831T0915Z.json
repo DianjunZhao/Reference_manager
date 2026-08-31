@@ -3,8 +3,8 @@
   "product_version": "1.0.0",
   "build_number": 100,
   "local_only": true,
-  "run_id": "20260830T153951Z-13639",
-  "build_input_tree_sha256": "0dc76ac7c3d8a3ff9e1efc6ea729753bbe325792dfb35beaa6e1da1e7a207de6",
+  "run_id": "revalidated-20260831T0915Z-empty-v9-repair",
+  "build_input_tree_sha256": "0a5710fe2f1d305953d564a773d741aa37b3519934454313b0154e8e0d82d225",
   "prepackage_eligible": true,
   "ui_evidence": {
     "scope": "selected_ui_delta_once_per_case",
@@ -31,22 +31,22 @@
   "migration_evidence": {
     "source_origin": "synthetic_v7_benchmark",
     "source_store_name": "synthetic-v7-benchmark-disposable.store",
-    "sha256": "e074500dbb9299382645a9d4d1676e9d32950cafd22126e1950a4670ebbe70e8"
+    "sha256": "dece21e2ab19726716f040eeb3c2f91371579da88424bbd6bfb4c88bb2497835"
   },
   "benchmarks": {
-    "legacy_v6_warm_search_p95_ms": 19,
-    "legacy_v6_disk_cold_open_p95_ms": 23,
+    "legacy_v6_warm_search_p95_ms": 23,
+    "legacy_v6_disk_cold_open_p95_ms": 25,
     "legacy_v6_disk_single_row_mutation_p95_ms": 2,
-    "compatibility_v7_warm_search_p95_ms": 17,
+    "compatibility_v7_warm_search_p95_ms": 29,
     "v9_final_typed": {
       "authors": 2000,
-      "backup_ms": 36,
+      "backup_ms": 32,
       "backup_verified": true,
       "chunks": 10000,
       "cold_open_p50_ms": 2,
-      "cold_open_p95_ms": 2,
+      "cold_open_p95_ms": 3,
       "cold_open_samples_ms": [
-        2,
+        3,
         2,
         2
       ],
@@ -63,27 +63,36 @@
       "single_row_mutation_p95_ms": 1,
       "source_store_name": "benchmark-v7-active.store",
       "store": "SwiftData-disk-backed-V9-final-typed-indexed",
-      "store_family_bytes": 40906752,
+      "store_family_bytes": 40058880,
       "tags": 100,
       "user_annotations": 200,
-      "v7_to_v8_staged_migration_ms": 13294,
-      "v9_index_build_ms": 14900,
+      "v7_to_v8_staged_migration_ms": 13064,
+      "v9_index_build_ms": 15817,
       "warm_search_breakdown": {
-        "candidate_paper_fetch_p95_ms": 2,
+        "candidate_paper_fetch_p95_ms": 3,
         "candidate_paper_row_count_p95": 100,
         "decoded_paper_count_p95": 100,
         "paper_decode_p95_ms": 1,
         "posting_candidate_count_p95": 20000,
-        "posting_decode_and_intersection_p95_ms": 19,
+        "posting_decode_and_intersection_p95_ms": 21,
         "posting_lookup_p95_ms": 0,
         "posting_row_count_p95": 1,
         "query_term_count_p95": 1,
         "result_sort_p95_ms": 0,
         "sample_count": 21
       },
-      "warm_search_p50_ms": 38,
-      "warm_search_p95_ms": 40,
+      "warm_search_p50_ms": 40,
+      "warm_search_p95_ms": 43,
       "warm_search_result_count": 100
     }
+  },
+  "incremental_revalidation": {
+    "reason": "post-fix targeted revalidation",
+    "tests": [
+      "CoreContractTests/testAuthorCandidatePaginationRecognizesPlusEncodedControlNumberPartition",
+      "CoreContractTests/testFirstPaintUsesBoundedStoreProjectionsInsteadOfWholeSnapshot",
+      "LatticeLensUITests/testFixtureAuthorSearchPaperSelectionAndFiveTabs"
+    ],
+    "status": "passed"
   }
 }

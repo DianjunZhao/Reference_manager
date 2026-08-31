@@ -58,18 +58,54 @@ enum LocalMarkdownTeX {
     /// one rendering path.
     private static func normalizedMathMarkup(_ source: String) -> String {
         var value = source
-        let patterns: [(String, Bool)] = [
-            (#"(?is)<math\s+display\s*=\s*['\"]inline['\"]\s*>(.*?)</math>"#, false),
-            (#"(?is)<math\s+display\s*=\s*['\"]block['\"]\s*>(.*?)</math>"#, true),
-            (#"(?is)<math\s*>(.*?)</math>"#, false),
-            (#"(?is)<tex\s*>(.*?)</tex>"#, false)
-        ]
-        for (pattern, display) in patterns {
-            value = replaceMathTags(in: value, pattern: pattern, display: display)
-        }
+        // INSPIRE/LLM payloads do not agree on MathML attribute order.  A
+        // pattern that requires `display` to be the first attribute leaves
+        // strings such as `<math alttext="..." display="inline">` visible
+        // to readers.  Capture the complete bounded wrapper, then inspect its
+        // attributes independently and prefer an explicit TeX/alttext value
+        // when the MathML body is empty.
+        value = replaceMathElements(in: value)
+        value = replaceMathTags(in: value, pattern: #"(?is)<tex\s*>(.*?)</tex>"#, display: false)
         value = replaceMathTags(in: value, pattern: #"(?s)\\\((.*?)\\\)"#, display: false)
         value = replaceMathTags(in: value, pattern: #"(?s)\\\[(.*?)\\\]"#, display: true)
         return value
+    }
+
+    private static func replaceMathElements(in source: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"(?is)<math\b([^>]*)>(.*?)</math>"#) else { return source }
+        let fullRange = NSRange(source.startIndex..., in: source)
+        let matches = regex.matches(in: source, range: fullRange)
+        guard !matches.isEmpty else { return source }
+        var output = "", cursor = source.startIndex
+        for match in matches {
+            guard let whole = Range(match.range, in: source),
+                  let attributes = Range(match.range(at: 1), in: source),
+                  let body = Range(match.range(at: 2), in: source) else { continue }
+            output += source[cursor..<whole.lowerBound]
+            let attributeText = String(source[attributes])
+            let bodyText = String(source[body])
+            let display = attributeText.range(of: #"(?is)\bdisplay\s*=\s*['\"]block['\"]"#, options: .regularExpression) != nil
+            let altText = firstAttribute(named: "alttext", in: attributeText) ??
+                firstAttribute(named: "tex", in: attributeText)
+            let payload = bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (altText ?? bodyText) : bodyText
+            let normalized = normalizedMathBody(payload)
+            if normalized.isEmpty {
+                output += ""
+            } else {
+                output += display ? "$$\(normalized)$$" : "$\(normalized)$"
+            }
+            cursor = whole.upperBound
+        }
+        output += source[cursor..<source.endIndex]
+        return output
+    }
+
+    private static func firstAttribute(named name: String, in attributes: String) -> String? {
+        let escaped = NSRegularExpression.escapedPattern(for: name)
+        guard let regex = try? NSRegularExpression(pattern: #"(?is)\b"# + escaped + #"\s*=\s*(['\"])(.*?)\1"#),
+              let match = regex.firstMatch(in: attributes, range: NSRange(attributes.startIndex..., in: attributes)),
+              let value = Range(match.range(at: 2), in: attributes) else { return nil }
+        return String(attributes[value])
     }
 
     /// `String.replacingOccurrences` treats every `$` in a regex replacement
@@ -104,7 +140,11 @@ enum LocalMarkdownTeX {
         let entities: [(String, String)] = [
             ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
             ("&nbsp;", " "), ("&#x2212;", "−"), ("&#x03B1;", "α"),
-            ("&#x03B2;", "β"), ("&#x03B3;", "γ"), ("&#x03B4;", "δ")
+            ("&#x03B2;", "β"), ("&#x03B3;", "γ"), ("&#x03B4;", "δ"),
+            ("&alpha;", "α"), ("&beta;", "β"), ("&gamma;", "γ"),
+            ("&delta;", "δ"), ("&epsilon;", "ε"), ("&theta;", "θ"),
+            ("&lambda;", "λ"), ("&mu;", "μ"), ("&pi;", "π"),
+            ("&sigma;", "σ"), ("&phi;", "φ"), ("&omega;", "ω")
         ]
         for (entity, replacement) in entities { value = value.replacingOccurrences(of: entity, with: replacement) }
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
