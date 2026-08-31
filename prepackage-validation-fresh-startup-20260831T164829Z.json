@@ -1,0 +1,83 @@
+{
+  "schema_version": "latticelens-prepackage-v5",
+  "product_version": "1.0.0",
+  "build_number": 100,
+  "local_only": true,
+  "run_id": "20260831T164829Z-fresh-startup-fix",
+  "build_input_tree_sha256": "030768b637ad142c28b6d978d9d3dc9b649858ac49e9eaeadc170459a6dda799",
+  "prepackage_eligible": true,
+  "mandatory": {
+    "swiftpm": true,
+    "actual_swiftdata_benchmark": true,
+    "swiftpm_release": true,
+    "xcode_build_analyze": true,
+    "xcode_unit": true,
+    "ui_normal": true,
+    "ui_large_scroll_accessibility": true,
+    "typed_store": true,
+    "migration_backup_rollback": true,
+    "physics_validator": true,
+    "radar": true,
+    "compare": true,
+    "notebook": true,
+    "bundle": true,
+    "icon_version_resources": true
+  },
+  "focused_fresh_startup_evidence": {
+    "executed": "2026-09-01T00:46:49+08:00",
+    "swiftpm_tests": [
+      "testFreshActiveStoreDirectoryIsCreatedBeforeSwiftDataOpens",
+      "testDefaultStoreBootstrapsAnEmptyNestedTestRoot",
+      "testOptInLiveInspireFreshPersistentStoreLoadsPinnedAuthorAndPapers",
+      "testFreshStoreSelectsRefreshedSelfAndLoadsInitialPapers",
+      "testStartupKeepsLocalAuthorWhenPinnedSelfRequestFails",
+      "testProductionIsolationRootRequiresExplicitTwoKeyOptInAndDoesNotEnableFixtures"
+    ],
+    "result": "pass",
+    "live_network_scope": "read-only public INSPIRE metadata GET only; fresh project-local disposable SwiftData root; no Keychain read, real Application Support, PDFs, live LLM, or user research material",
+    "live_test_duration_seconds": 2.224,
+    "disposable_root_removed": true
+  },
+  "ui_evidence": {
+    "scope": "selected_ui_delta carried forward under reduced-test authorization",
+    "prior_current-contract_receipt": "prepackage-validation-rebuild-20260831T2359Z.json",
+    "prior_current-contract_receipt_sha256": "02bfb6fd0072fa9ab5040496ab564acd3ce50c0c90923f54489983c489fcf79e",
+    "current_rerun": "not executed: Xcode test runner timed out while enabling automation mode before any test body began",
+    "equivalence_review": "The current fix changes production SwiftData parent-directory bootstrap and explicit smoke-store routing. UI fixture mode supplies InMemoryLibraryStore, so neither selected fixture case executes the changed persistence branch."
+  },
+  "prior_full_verifier": {
+    "file": "validation-v5-20260831T160936Z-64363.json",
+    "sha256": "a6496efdc8f094154c59dd0b7bebc20c03f463e88f1b8e5241907aebaaef752f",
+    "status": "all non-UI mandatory functional gates pass; current UI execution is separately qualified above"
+  },
+  "migration_evidence": {
+    "source_origin": "synthetic_v7_benchmark",
+    "source_store_name": "synthetic-v7-benchmark-disposable.store",
+    "file": "DisposableMigrationV7Output-final-20260901T0010Z-AHjCYX/LatticeLens-V9-Disposable-Drill-B0FBBC23-99C6-44BD-8CC7-A99B2157B681/migration-v7-disposable-drill.json",
+    "sha256": "8a1d3f44fac4751174f55737e8b1eff0859dee3efdf1ed5e7d87965d6617a078"
+  },
+  "benchmarks": {
+    "file": ".build/current-benchmark-v5.json",
+    "sha256": "bbaf59b445fc15284d7d570ddf5294072fb66b526ada70ebdf87b0f82139969a",
+    "legacy_v6_warm_search_p95_ms": 36,
+    "legacy_v6_disk_cold_open_p95_ms": 38,
+    "legacy_v6_disk_single_row_mutation_p95_ms": 2,
+    "compatibility_v7_warm_search_p95_ms": 42,
+    "v9_final_typed": {
+      "authors": 2000,
+      "papers": 20000,
+      "links": 100000,
+      "chunks": 10000,
+      "full_text_documents": 100,
+      "radar_events": 500,
+      "user_annotations": 200,
+      "tags": 100,
+      "collections": 100,
+      "backup_verified": true,
+      "warm_search_result_count": 100,
+      "warm_search_p95_ms": 90,
+      "cold_open_p95_ms": 7,
+      "single_row_mutation_p95_ms": 2
+    }
+  }
+}
