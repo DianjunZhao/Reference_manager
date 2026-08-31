@@ -1,0 +1,42 @@
+{
+  "schema_version": "latticelens-prepackage-v5",
+  "product_version": "1.0.0",
+  "build_number": 100,
+  "local_only": true,
+  "run_id": "20260831T142658Z-41566",
+  "build_input_tree_sha256": "597fba7f60e25d54edeaacfe05937965252cc6c1c631bb6bbbe4a3db210bd6bd",
+  "prepackage_eligible": true,
+  "ui_evidence": {
+    "scope": "selected_ui_delta_once_per_case",
+    "normal_case_count": 1,
+    "large_case_count": 1
+  },
+  "mandatory": {
+    "swiftpm": true,
+    "actual_swiftdata_benchmark": true,
+    "swiftpm_release": true,
+    "xcode_build_analyze": true,
+    "xcode_unit": true,
+    "ui_normal": true,
+    "ui_large_scroll_accessibility": true,
+    "typed_store": true,
+    "migration_backup_rollback": true,
+    "physics_validator": true,
+    "radar": true,
+    "compare": true,
+    "notebook": true,
+    "bundle": true,
+    "icon_version_resources": true
+  },
+  "migration_evidence": {
+    "source_origin": "synthetic_v7_benchmark",
+    "source_store_name": "synthetic-v7-benchmark-disposable.store",
+    "sha256": "858b0406be5b9db42e2a84ea9dce827033b24b5c420ddbfb27b0cd1b13485d7c"
+  },
+  "benchmarks": {
+    "warm_search_p95_ms": 49,
+    "disk_cold_open_p95_ms": 33,
+    "disk_single_row_mutation_p95_ms": 3,
+    "v7_warm_search_p95_ms": 48
+  }
+}

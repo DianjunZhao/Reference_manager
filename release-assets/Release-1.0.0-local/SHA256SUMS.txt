@@ -1,3 +1,3 @@
-9dca73625ca903cfc423620e6cc0a4a4618ebfee46a6d6c46f465f703fa2b402  LatticeLens-1.0.0-local.dmg
-40d8147c4066eb9211097d0f186baebcb738234b86f9b6341d3f2986d3bc34cf  LatticeLens-1.0.0.dSYM.zip
-f44bc147f7b820a2f83eb355612bcf9cf6c2c4c0d5a4d2da4463cc118ab06221  manifest-v1.0.json
+1ac7b963934c0fbdbee7cf5289e233bf5418411fc30a91add8693da7c1af2ee6  LatticeLens-1.0.0-local.dmg
+6679712668247dc8b47dd020f1f2161c73cbaacac87b3fc3d803796eccbefd2c  LatticeLens-1.0.0.dSYM.zip
+5d36467109abc4d134f8ff7ae6e97808d04aace35db8e986d872b05cfbf388fa  manifest-v1.0.json

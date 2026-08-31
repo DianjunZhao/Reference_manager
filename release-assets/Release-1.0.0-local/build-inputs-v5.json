@@ -89,7 +89,7 @@
 ,
 {"path":"Sources/LatticeLens/Core/Models/V3Models.swift","sha256":"54ba5f4d4f5082dad0805d37ebb0c4803c4c2cc8bb806ebf575a257e033157ad"}
 ,
-{"path":"Sources/LatticeLens/Core/Networking/InspireClient.swift","sha256":"954c1c6abb68d8267a449296eb1c2455a05cb455a01ef1f1c4f9f98785bc28c8"}
+{"path":"Sources/LatticeLens/Core/Networking/InspireClient.swift","sha256":"f3cd600b4f04513ef6d0831cf3300e9b3d85d8c9685b10d248016ab8a8127c46"}
 ,
 {"path":"Sources/LatticeLens/Core/Networking/InspireDTO.swift","sha256":"8ad432108208d98b9bef9862cd98bce45be1ca11ec731165513b211bea7ed67b"}
 ,
@@ -143,7 +143,7 @@
 ,
 {"path":"Sources/LatticeLens/LLM/Workflow/VisionWorkflow.swift","sha256":"6b47eb1e6b256a694f88cad987dd11d99657782a84f8d016dfc2eb8853365846"}
 ,
-{"path":"Tests/LatticeLensTests/CoreContractTests.swift","sha256":"1e37fffff185b54229f2e3058b0e01564c60322727782526ad07ab56a963fa5d"}
+{"path":"Tests/LatticeLensTests/CoreContractTests.swift","sha256":"0b8fb9c5b25bd16ca28f9a8d33a50762ae0379cd5b910bcec1607b0530696193"}
 ,
 {"path":"Tests/LatticeLensTests/EvidenceWorkflowTests.swift","sha256":"f24c68c3d6d1d55ac2eed425c6b9a83209d6a2aade68cf1cfa208c05d0391015"}
 ,
