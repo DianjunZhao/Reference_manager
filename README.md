@@ -20,6 +20,8 @@
 > 进行最终封存。该轻量脚本会校验两份 release DMG 的字节一致性、DMG image、当前
 > `/Applications/LatticeLens.app` 的版本/签名/executable hash，并要求 receipt 精确绑定
 > `manifest-v1.0.1.json`；它不把旧 1.0.0 的自动化记录冒充为 1.0.1 的新测试。
+> 需要人工观察的最小清单与可直接回复的确认语句见
+> [MANUAL_1_0_1_ACCEPTANCE.md](MANUAL_1_0_1_ACCEPTANCE.md)。
 >
 > 目前仍 fail-closed 的 1.0 边界是：真实 VoiceOver/Accessibility Inspector 与三种窗口尺寸观察、
 > 三篇 sanitized LQCD fixture rubric、用户选择下的 `/Applications` install/uninstall/app+data
