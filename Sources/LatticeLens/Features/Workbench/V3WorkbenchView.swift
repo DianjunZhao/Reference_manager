@@ -289,7 +289,7 @@ private struct CompareWorkbenchTab: View {
                 }
                 .disabled(!(2...6).contains(selectedPaperIDs.count))
                 .accessibilityIdentifier("createCompareWorkspace")
-                Text("当前选择：\(selectedPaperIDs.count) · direct 单元必须带同一论文锚点；缺失保持未知")
+                Text("当前选择：\(selectedPaperIDs.count) · 原文直接支持的单元必须带同一论文锚点；缺失保持未知")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding()
@@ -303,16 +303,16 @@ private struct CompareWorkbenchTab: View {
                     }
                     .accessibilityIdentifier("compareWorkspacePicker")
                     if let workspace = selectedWorkspace {
-                        Text("确定性规则只接受当前论文的明确格式；无法确认的 action、ensemble、Fourier 或重整化信息保持缺失。")
+                        Text("确定性规则只接受当前论文的明确格式；无法确认的作用量、ensemble、傅里叶约定或重整化信息保持缺失。")
                             .font(.caption).foregroundStyle(.secondary)
                         if let inspectorCell {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("检查器已选中：\(inspectorCell.rowKey) · 论文 \(inspectorCell.paperID)")
+                                Text("检查器已选中：\(PhysicsContract.displayNameZH(for: inspectorCell.rowKey)) · 论文 \(inspectorCell.paperID)")
                                     .font(.caption)
                                     .accessibilityIdentifier("physicsCellInspectorSelection")
                                 ForEach(inspectorCell.evidenceAnchorIDs, id: \.self) { anchorID in
                                     if let anchor = viewModel.workbenchSnapshot.evidenceAnchors[anchorID] {
-                                        let anchorLocation = anchor.page.map { "p" + String($0) } ?? "metadata"
+                                        let anchorLocation = anchor.page.map { "第 " + String($0) + " 页" } ?? "元数据"
                                         Button("打开 \(anchor.sourceKind.displayNameZH) \(anchorLocation)") {
                                             // This compact inspector strip stays
                                             // visible above the scrollable
@@ -421,7 +421,7 @@ private struct PhysicsMatrix: View {
                 }
                 ForEach(rowKeys, id: \.self) { rowKey in
                     GridRow {
-                        Text(rowKey).font(.caption).frame(width: 140, alignment: .leading)
+                        Text(PhysicsContract.displayNameZH(for: rowKey)).font(.caption).frame(width: 140, alignment: .leading)
                         ForEach(paperIDs, id: \.self) { paperID in
                             let cell = cells.first { $0.rowKey == rowKey && $0.paperID == paperID }
                             let displayValue = [cell?.value, cell?.unit].compactMap { $0 }.joined(separator: " ")
@@ -447,7 +447,7 @@ private struct PhysicsMatrix: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("physicsCell-\(rowKey)-\(paperID)")
-                            .accessibilityLabel("\(rowKey) 论文 \(paperID) \(displayValue.isEmpty ? "未知" : displayValue) \(state)")
+                            .accessibilityLabel("\(PhysicsContract.displayNameZH(for: rowKey)) 论文 \(paperID) \(displayValue.isEmpty ? "未知" : displayValue) \(state)")
                             .accessibilityValue("\(state)：\(displayValue.isEmpty ? "未知" : displayValue)")
                         }
                     }
@@ -456,7 +456,7 @@ private struct PhysicsMatrix: View {
             .padding(.vertical, 8)
         }
         .scrollIndicators(.visible)
-        .accessibilityLabel("Compare physics contract matrix")
+        .accessibilityLabel("论文物理约束对照矩阵")
     }
 }
 
@@ -484,7 +484,7 @@ private struct PhysicsCellInspector: View {
                 Spacer()
                 Button("关闭") { close() }
             }
-            Text(cell.rowKey).font(.headline)
+            Text(PhysicsContract.displayNameZH(for: cell.rowKey)).font(.headline)
             Text("论文 \(cell.paperID) · \(cell.status.displayNameZH) · \(cell.value ?? "未知") \(cell.unit ?? "")")
             Text("提取版本：\(cell.extractionVersion)").font(.caption).foregroundStyle(.secondary)
             if cell.evidenceAnchorIDs.isEmpty {
@@ -494,7 +494,7 @@ private struct PhysicsCellInspector: View {
                 ForEach(cell.evidenceAnchorIDs, id: \.self) { id in
                     if let anchor = snapshot.evidenceAnchors[id] {
                         VStack(alignment: .leading) {
-                            Button("\(anchor.sourceKind.displayNameZH) \(anchor.page.map { "p\($0)" } ?? "元数据")") {
+                            Button("\(anchor.sourceKind.displayNameZH) \(anchor.page.map { "第 \($0) 页" } ?? "元数据")") {
                                 openAnchor(anchor)
                             }
                             .buttonStyle(.link)
@@ -548,12 +548,12 @@ private struct PhysicsCellEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("编辑 \(cell.rowKey)").font(.title3)
+            Text("编辑 \(PhysicsContract.displayNameZH(for: cell.rowKey))").font(.title3)
             Picker("状态", selection: $status) { ForEach(PhysicsCellStatus.allCases, id: \.self) { Text($0.displayNameZH).tag($0) } }
             TextField("数值（缺失时留空）", text: $value).textFieldStyle(.roundedBorder)
             TextField("单位", text: $unit).textFieldStyle(.roundedBorder)
             TextField("锚点 ID（逗号分隔）", text: $anchorIDs).textFieldStyle(.roundedBorder)
-            Text("可用锚点：\(anchors.count)；direct/inference 必须选择同一论文锚点；没有数值的 caveat 可不带锚点，有数值时同样必须可回查。")
+            Text("可用锚点：\(anchors.count)；原文直接支持／基于原文的推断必须选择同一论文锚点；无数值的限制说明可不带锚点，有数值时同样必须可回查。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack { Spacer(); Button("取消") { dismiss() }; Button("验证并保存") {
                 let ids = anchorIDs.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }

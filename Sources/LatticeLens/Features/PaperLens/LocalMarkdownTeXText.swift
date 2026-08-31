@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 /// A process-local renderer for untrusted Markdown and TeX fragments.  It
@@ -56,12 +57,13 @@ enum LocalMarkdownTeX {
     /// native renderer sees the string.  We also accept standard TeX
     /// delimiters so formulas in titles, captions, evidence and notes share
     /// one rendering path.
-    private static func normalizedMathMarkup(_ source: String) -> String {
+    static func normalizedMathMarkup(_ source: String) -> String {
         var value = source
         // Some JSON/Markdown paths HTML-escape the transport marker itself,
         // leaving readers with literal `&lt;math ...&gt;`. Decode only complete
         // escaped math elements so ordinary prose entities remain untouched.
         value = replaceEscapedMathElements(in: value)
+        value = replaceSelfClosingMathElements(in: value)
         // INSPIRE/LLM payloads do not agree on MathML attribute order.  A
         // pattern that requires `display` to be the first attribute leaves
         // strings such as `<math alttext="..." display="inline">` visible
@@ -72,7 +74,35 @@ enum LocalMarkdownTeX {
         value = replaceMathTags(in: value, pattern: #"(?is)<tex\s*>(.*?)</tex>"#, display: false)
         value = replaceMathTags(in: value, pattern: #"(?s)\\\((.*?)\\\)"#, display: false)
         value = replaceMathTags(in: value, pattern: #"(?s)\\\[(.*?)\\\]"#, display: true)
-        return value
+        // Greek entities also occur in otherwise ordinary title/abstract
+        // prose.  Decode this conservative mathematical subset globally so a
+        // reader never encounters a transport entity such as `&alpha;`.
+        return decodeMathEntities(in: value)
+    }
+
+    /// A small number of sources use a self-closing MathML transport element
+    /// with the actual TeX in `alttext`.  It is mathematically meaningful and
+    /// must not be displayed as a literal XML tag or silently discarded.
+    private static func replaceSelfClosingMathElements(in source: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"(?is)<math\b([^>]*)/>"#) else { return source }
+        let fullRange = NSRange(source.startIndex..., in: source)
+        let matches = regex.matches(in: source, range: fullRange)
+        guard !matches.isEmpty else { return source }
+        var output = "", cursor = source.startIndex
+        for match in matches {
+            guard let whole = Range(match.range, in: source),
+                  let attributes = Range(match.range(at: 1), in: source) else { continue }
+            output += source[cursor..<whole.lowerBound]
+            let attributeText = String(source[attributes])
+            let payload = firstAttribute(named: "alttext", in: attributeText) ??
+                firstAttribute(named: "tex", in: attributeText) ?? ""
+            let display = attributeText.range(of: #"(?is)\bdisplay\s*=\s*['\"]block['\"]"#, options: .regularExpression) != nil
+            let normalized = normalizedMathBody(payload)
+            output += normalized.isEmpty ? "" : (display ? "$$\(normalized)$$" : "$\(normalized)$")
+            cursor = whole.upperBound
+        }
+        output += source[cursor..<source.endIndex]
+        return output
     }
 
     private static func replaceEscapedMathElements(in source: String) -> String {
@@ -114,7 +144,10 @@ enum LocalMarkdownTeX {
             let display = attributeText.range(of: #"(?is)\bdisplay\s*=\s*['\"]block['\"]"#, options: .regularExpression) != nil
             let altText = firstAttribute(named: "alttext", in: attributeText) ??
                 firstAttribute(named: "tex", in: attributeText)
-            let payload = bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (altText ?? bodyText) : bodyText
+            // MathML bodies are useful only as a fallback.  When a source
+            // explicitly supplies TeX alt text it carries fraction/script
+            // structure that tag stripping cannot faithfully recover.
+            let payload = altText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? altText! : bodyText
             let normalized = normalizedMathBody(payload)
             if normalized.isEmpty {
                 output += ""
@@ -163,18 +196,133 @@ enum LocalMarkdownTeX {
     /// element names here while preserving the mathematical characters and
     /// entities, so a title never renders the literal `<mi>…</mi>` markup.
     private static func normalizedMathBody(_ body: String) -> String {
-        var value = body.replacingOccurrences(of: #"(?is)<[^>]+>"#, with: "", options: .regularExpression)
+        let mathMLPreview = mathMLNativePreview(body)
+        let source = mathMLPreview.isEmpty ? body : mathMLPreview
+        let value = source.replacingOccurrences(of: #"(?is)<[^>]+>"#, with: "", options: .regularExpression)
+        return decodeMathEntities(in: value).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func decodeMathEntities(in source: String) -> String {
+        var value = source
         let entities: [(String, String)] = [
-            ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
-            ("&nbsp;", " "), ("&#x2212;", "−"), ("&#x03B1;", "α"),
-            ("&#x03B2;", "β"), ("&#x03B3;", "γ"), ("&#x03B4;", "δ"),
-            ("&alpha;", "α"), ("&beta;", "β"), ("&gamma;", "γ"),
-            ("&delta;", "δ"), ("&epsilon;", "ε"), ("&theta;", "θ"),
-            ("&lambda;", "λ"), ("&mu;", "μ"), ("&pi;", "π"),
-            ("&sigma;", "σ"), ("&phi;", "φ"), ("&omega;", "ω")
+            ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&nbsp;", " "),
+            ("&#x2212;", "−"), ("&minus;", "−"), ("&plusmn;", "±"),
+            ("&times;", "×"), ("&middot;", "·"), ("&rarr;", "→"),
+            ("&larr;", "←"), ("&infin;", "∞"), ("&part;", "∂"),
+            ("&#x03B1;", "α"), ("&#x03B2;", "β"), ("&#x03B3;", "γ"), ("&#x03B4;", "δ"),
+            ("&alpha;", "α"), ("&beta;", "β"), ("&gamma;", "γ"), ("&delta;", "δ"),
+            ("&epsilon;", "ε"), ("&zeta;", "ζ"), ("&eta;", "η"), ("&theta;", "θ"),
+            ("&iota;", "ι"), ("&kappa;", "κ"), ("&lambda;", "λ"), ("&mu;", "μ"),
+            ("&nu;", "ν"), ("&xi;", "ξ"), ("&pi;", "π"), ("&rho;", "ρ"),
+            ("&sigma;", "σ"), ("&tau;", "τ"), ("&upsilon;", "υ"), ("&phi;", "φ"),
+            ("&chi;", "χ"), ("&psi;", "ψ"), ("&omega;", "ω"),
+            ("&Gamma;", "Γ"), ("&Delta;", "Δ"), ("&Theta;", "Θ"), ("&Lambda;", "Λ"),
+            ("&Xi;", "Ξ"), ("&Pi;", "Π"), ("&Sigma;", "Σ"), ("&Phi;", "Φ"),
+            ("&Psi;", "Ψ"), ("&Omega;", "Ω")
         ]
         for (entity, replacement) in entities { value = value.replacingOccurrences(of: entity, with: replacement) }
-        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value
+    }
+
+    private indirect enum MathMLNode {
+        case element(String, [MathMLNode])
+        case text(String)
+    }
+
+    /// A no-network fallback for genuine MathML without TeX `alttext`.
+    /// It intentionally recognizes only presentational nodes and converts
+    /// them to the same native, selectable mathematical glyphs as the TeX
+    /// renderer.  This preserves fractions and scripts rather than flattening
+    /// `<mfrac>` into the misleading reader text "ab".
+    private static func mathMLNativePreview(_ source: String) -> String {
+        guard source.range(of: "<", options: .literal) != nil,
+              let nodes = parseMathML(source), !nodes.isEmpty else { return "" }
+        return nodes.map(renderMathML).joined()
+    }
+
+    private static func parseMathML(_ source: String) -> [MathMLNode]? {
+        var roots: [MathMLNode] = []
+        var stack: [(name: String, children: [MathMLNode])] = []
+        var cursor = source.startIndex
+
+        func append(_ node: MathMLNode) {
+            if stack.isEmpty { roots.append(node) }
+            else { stack[stack.count - 1].children.append(node) }
+        }
+
+        while let opening = source[cursor...].firstIndex(of: "<") {
+            if opening > cursor { append(.text(String(source[cursor..<opening]))) }
+            guard let closing = source[opening...].firstIndex(of: ">") else { return nil }
+            let tag = String(source[source.index(after: opening)..<closing]).trimmingCharacters(in: .whitespacesAndNewlines)
+            cursor = source.index(after: closing)
+            guard !tag.hasPrefix("!") && !tag.hasPrefix("?") else { continue }
+            if tag.hasPrefix("/") {
+                let name = tag.dropFirst().split(whereSeparator: { $0.isWhitespace }).first.map(String.init)?.lowercased() ?? ""
+                guard let top = stack.popLast(), top.name == name else { return nil }
+                append(.element(top.name, top.children))
+            } else {
+                let selfClosing = tag.hasSuffix("/")
+                let name = tag.drop(while: { $0.isWhitespace }).split(whereSeparator: { $0.isWhitespace || $0 == "/" }).first.map(String.init)?.lowercased() ?? ""
+                guard !name.isEmpty else { return nil }
+                if selfClosing { append(.element(name, [])) }
+                else { stack.append((name, [])) }
+            }
+        }
+        if cursor < source.endIndex { append(.text(String(source[cursor...]))) }
+        guard stack.isEmpty else { return nil }
+        return roots
+    }
+
+    private static func renderMathML(_ node: MathMLNode) -> String {
+        switch node {
+        case .text(let value): return decodeMathEntities(in: value)
+        case .element(let name, let children):
+            let rendered = children.map(renderMathML)
+            switch name {
+            case "math", "mrow": return rendered.joined()
+            case "semantics": return rendered.first ?? ""
+            case "annotation", "annotation-xml": return ""
+            case "mfrac" where rendered.count >= 2:
+                let numerator = parenthesizedMathComponent(rendered[0])
+                let denominator = parenthesizedMathComponent(rendered[1])
+                return "\(numerator)⁄\(denominator)"
+            case "msup" where rendered.count >= 2:
+                return rendered[0] + styledMathScript(rendered[1], superscript: true)
+            case "msub" where rendered.count >= 2:
+                return rendered[0] + styledMathScript(rendered[1], superscript: false)
+            case "msubsup" where rendered.count >= 3:
+                return rendered[0] + styledMathScript(rendered[1], superscript: false) + styledMathScript(rendered[2], superscript: true)
+            case "msqrt": return "√(\(rendered.joined()))"
+            case "mroot" where rendered.count >= 2: return "√[\(rendered[1])](\(rendered[0]))"
+            default: return rendered.joined()
+            }
+        }
+    }
+
+    private static func parenthesizedMathComponent(_ value: String) -> String {
+        value.count == 1 ? value : "⟮\(value)⟯"
+    }
+
+    private static func styledMathScript(_ value: String, superscript: Bool) -> String {
+        let map = superscript ? self.superscript : self.subscriptMap
+        return String(value.map { map[$0] ?? $0 })
+    }
+
+    static func formulaRawSource(_ source: String) -> String {
+        let segments = segments(in: source)
+        if segments.count == 1 {
+            switch segments[0] {
+            case .inlineTeX(let raw), .displayTeX(let raw): return raw
+            case .markdown: break
+            }
+        }
+        var raw = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        if raw.hasPrefix("$$"), raw.hasSuffix("$$"), raw.count >= 4 {
+            raw.removeFirst(2); raw.removeLast(2)
+        } else if raw.hasPrefix("$"), raw.hasSuffix("$"), raw.count >= 2 {
+            raw.removeFirst(); raw.removeLast()
+        }
+        return normalizedMathBody(raw)
     }
 
     static func nativeTeXPreview(_ raw: String) -> String {
@@ -364,6 +512,17 @@ struct LocalMarkdownTeXText: View {
             }
         }
         .accessibilityIdentifier("localMarkdownTeXRenderer")
+    }
+}
+
+/// Formula fields are structured TeX, not necessarily Markdown-delimited
+/// prose.  Render them as displayed mathematics even when the LLM/API stores
+/// the conventional bare `formula_tex` string.
+struct LocalTeXFormulaText: View {
+    let source: String
+
+    var body: some View {
+        TeXPreview(raw: LocalMarkdownTeX.formulaRawSource(source), display: true)
     }
 }
 

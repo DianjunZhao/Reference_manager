@@ -299,6 +299,28 @@ struct PhysicsContract: Codable, Hashable, Identifiable, Sendable {
         "continuum_chiral_volume_extrapolation", "statistics_systematics"
     ]
 
+    /// `rowKey` is a durable extraction/serialization key.  Keep it stable in
+    /// storage, while presenting a reader-facing Chinese name throughout the
+    /// Evidence Workbench.
+    static func displayNameZH(for rowKey: String) -> String {
+        return switch rowKey {
+        case "observable_research_question": "物理可观测量与研究问题"
+        case "action_ensemble": "格点作用量与 ensemble"
+        case "lattice_geometry": "格点几何与边界条件"
+        case "lattice_spacing": "格距"
+        case "pion_hadron_mass": "π 介子／强子质量"
+        case "momentum_boost_smearing": "动量、boost 与 smearing"
+        case "source_sink_tsep_operator": "source/sink、tsep 与算符"
+        case "correlator_ratio_fit": "相关函数、ratio 与拟合"
+        case "renormalization": "重整化"
+        case "fourier_convention": "傅里叶约定"
+        case "matching": "微扰匹配"
+        case "continuum_chiral_volume_extrapolation": "连续极限、手征与体积外推"
+        case "statistics_systematics": "统计与系统误差"
+        default: rowKey
+        }
+    }
+
     let id: UUID
     let workspaceID: UUID
     let rowKeys: [String]

@@ -126,6 +126,12 @@ final class AppViewModel: ObservableObject {
     private var pendingBibTeXExport: (paperIDs: [Int], format: V3ExportFormat, contents: String)?
     private var pendingMarkdownExport: (paperIDs: [Int], format: V3ExportFormat, contents: String)?
     private var pendingWorkbenchExport: (paperIDs: [Int], format: V3ExportFormat, contents: String)?
+    /// A durable index update can arrive every few hundred milliseconds.  The
+    /// SQLite row is committed for every outcome, but rebuilding a large
+    /// SwiftUI author sidebar at that cadence causes perceptible scrolling and
+    /// typing stalls.  This is only a view-projection throttle; explicit
+    /// completion/cancel/error paths always force a final refresh.
+    private var lastAuthorSidebarProjectionReloadAt = Date.distantPast
 
     private static let settingsKey = "LatticeLens.LLMSettings.v2"
     private static let keychainService = "org.latticelens.app"
@@ -1603,7 +1609,7 @@ final class AppViewModel: ObservableObject {
                 // Refresh the sidebar projection here so a long crawl never
                 // looks like a dead refresh button; only qualified rows are
                 // exposed by the projection until their h-index is verified.
-                await self.reloadAuthors()
+                await self.reloadAuthorsIfDue(force: progress.completedPages == 1 || progress.completedPages.isMultiple(of: 8))
             }
             // Candidate pagination can fail after several durable pages (for
             // example when INSPIRE rejects one stale page URL with HTTP 400).
@@ -1639,7 +1645,7 @@ final class AppViewModel: ObservableObject {
                     lastUpdatedAt: Date(),
                     remainingRecords: progress.remaining
                 )
-                await self.reloadAuthors()
+                await self.reloadAuthorsIfDue()
             }
             guard !Task.isCancelled, authorIndexSessionID == session else { return }
             authorIndexProgress = progress
@@ -2157,6 +2163,13 @@ final class AppViewModel: ObservableObject {
                                                   rejected: candidates.filter { $0.hIndexState == .rejected }.count,
                                                   remaining: candidates.filter { $0.hIndex == nil }.count,
                                                   state: .active)
+    }
+
+    private func reloadAuthorsIfDue(force: Bool = false) async {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastAuthorSidebarProjectionReloadAt) >= 0.75 else { return }
+        lastAuthorSidebarProjectionReloadAt = now
+        await reloadAuthors()
     }
 
     private static func loadSettings() -> LLMSettings {

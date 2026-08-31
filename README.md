@@ -1,9 +1,9 @@
 # LatticeLens
 
-> v5 / Reference_manager 1.0 状态：**same-Mac local candidate，尚非 final release。** 当前候选的
-> 唯一权威 provenance 是同一轮 `validation-v5-*.json` 与
-> `Release-1.0.0-local/manifest-v1.0.json`；每次 no-overwrite 重新打包后都必须直接核对这两个
-> 文件，而不能使用本文档中会过期的固定 manifest hash、历史 `.xcresult` 或单用例结果。
+> 当前开发候选为 **LatticeLens 1.0.1 (101)**，仍是 same-Mac local candidate，尚非
+> notarized/final release。它在 `release-assets/Release-1.0.1-local/` 中带有独立的
+> `manifest-v1.0.1.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
+> 版本号，而不能以同样显示为 `1.0.0 (100)` 的旧 `/Applications` 二进制代替它。
 > 当前 verifier 会执行 SwiftPM、actual SwiftData disk benchmark、Xcode build/analyze/unit、normal/
 > large fixture UI、synthetic disposable V7 migration、typed-store/physics/Radar/Compare/Notebook/
 > Bundle 与 same-Mac DMG smoke；其成功仍不替代下列人工 P0 gate。

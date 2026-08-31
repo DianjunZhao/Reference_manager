@@ -572,7 +572,7 @@ private struct EvidenceTab: View {
                 EvidenceScopeBadge(fullText: viewModel.selectedFullTextDocument?.extractionState == .extracted)
                 Spacer()
                 if let document = viewModel.selectedFullTextDocument, document.extractionState == .extracted {
-                    Button("生成全文证据解读") { viewModel.generateSelectedEvidenceInsight() }
+                    Button("生成重要公式推导") { viewModel.generateSelectedEvidenceInsight() }
                         .accessibilityIdentifier("generateEvidenceInsight")
                     Button("删除本地全文", role: .destructive) { viewModel.deleteSelectedFullText() }
                         .accessibilityIdentifier("deleteSelectedFullText")
@@ -600,7 +600,7 @@ private struct EvidenceTab: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("本标签专门展示论文重要公式及其逐步推导。请先下载并提取本地 PDF，再点击“生成全文证据解读”；LLM 结果会保留原始公式和 page anchor。")
+                        Text("本标签专门展示论文重要公式及其逐步推导。请先下载并提取本地 PDF，再点击“生成重要公式推导”；LLM 会把原文公式与自己的推导明确区分，并保留 page anchor。")
                             .font(.caption).foregroundStyle(.secondary)
                         if viewModel.selectedFullTextDocument?.extractionState == .extracted {
                             Text("PDF 已就绪，点击上方按钮生成公式推导。")
@@ -815,13 +815,13 @@ private struct FormulaDerivationSection: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                         if let formula = claim.formulaTeX {
-                            GroupBox("原始公式") {
-                                LocalMarkdownTeXText(source: formula)
+                            GroupBox("原文公式（direct）") {
+                                LocalTeXFormulaText(source: formula)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                         if !claim.derivationSteps.isEmpty {
-                            GroupBox("逐步推导") {
+                            GroupBox("LLM 推导（基于原文公式）") {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ForEach(Array(claim.derivationSteps.enumerated()), id: \.offset) { stepIndex, step in
                                         HStack(alignment: .top, spacing: 8) {

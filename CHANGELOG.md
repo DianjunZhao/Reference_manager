@@ -5,6 +5,16 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Prepared the local `1.0.1 (101)` candidate so its Finder-visible version
+  distinguishes it from the stale `1.0.0 (100)` `/Applications` binary.
+  The candidate was mounted and launched with a fresh disposable SwiftData
+  root against read-only INSPIRE: it persisted the pinned author, 10 papers,
+  and 10 author-paper links before its UI was inspected.
+- Hardened the hep-lat/hep-th candidate pagination and `HTTP 400` recovery,
+  throttled only the author-sidebar projection rather than durable progress,
+  improved MathML/TeX rendering, localized Evidence Workbench labels, and
+  centred the INSPIRE toolbar capsule.
+
 - Rebuilt the local 1.0.0 (100) DMG from the current source after fixing the
   refresh-resume path: when candidate pagination is complete but h-index retry
   IDs remain, “继续索引” now reopens the active generation and processes only

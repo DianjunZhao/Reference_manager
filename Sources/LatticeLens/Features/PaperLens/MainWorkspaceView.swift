@@ -40,22 +40,10 @@ struct MainWorkspaceView: View {
                     Button {
                         viewModel.presentSyncCenter = true
                     } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Image(systemName: viewModel.syncStatusSymbol)
-                                .accessibilityHidden(true)
-                                .imageScale(.small)
-                            Text("INSPIRE")
-                                .font(.body.weight(.medium))
-                            Text(viewModel.syncToolbarStatus)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        // The principal toolbar item can shrink when all four
-                        // trailing actions are visible.  Keep its rendered
-                        // status intentionally short rather than forcing a
-                        // multi-line text node out of the toolbar bounds.
-                        .frame(minWidth: 170, idealWidth: 250, maxWidth: 330, alignment: .leading)
+                        SyncToolbarStatusCapsule(
+                            symbol: viewModel.syncStatusSymbol,
+                            status: viewModel.syncToolbarStatus
+                        )
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(viewModel.syncStatus.phase == .failed ? .red : .secondary)
@@ -145,6 +133,37 @@ struct MainWorkspaceView: View {
         .alert("LatticeLens", isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { if !$0 { viewModel.dismissError() } })) {
             Button("好", role: .cancel) { viewModel.dismissError() }
         } message: { Text(viewModel.errorMessage ?? "") }
+    }
+}
+
+/// The principal toolbar is rendered by AppKit inside a compact, fixed-height
+/// host.  A first-baseline HStack mixes an SF Symbol with two text fonts and
+/// visibly shifts the INSPIRE status in that host.  This explicit centre-line
+/// layout keeps the icon, product label and changing count aligned at every
+/// supported window width.
+private struct SyncToolbarStatusCapsule: View {
+    let symbol: String
+    let status: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 7) {
+            Image(systemName: symbol)
+                .imageScale(.small)
+                .frame(width: 16, height: 16, alignment: .center)
+                .accessibilityHidden(true)
+            Text("INSPIRE")
+                .font(.callout.weight(.semibold))
+                .lineLimit(1)
+            Text(status)
+                .font(.callout)
+                .monospacedDigit()
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .frame(minWidth: 170, idealWidth: 240, maxWidth: 310, minHeight: 28, alignment: .leading)
+        .padding(.horizontal, 10)
+        .background(.quaternary, in: Capsule())
+        .contentShape(Capsule())
     }
 }
 

@@ -141,6 +141,13 @@ struct InspireClient: Sendable {
     /// every author remains verifiable and the queue can make progress.
     private static let hIndexLiteratureFields = "citation_count"
 
+    /// Candidate pages are deliberately a very small author projection.  The
+    /// index only needs a stable display name, aliases, INSPIRE BAI and the
+    /// two arXiv-category flags; fetching positions, URLs and legacy profile
+    /// metadata for 250 authors at a time both blocks first paint and makes a
+    /// proxy-size rejection look like a pagination failure.
+    private static let authorCandidateFields = "name,native_names,ids,arxiv_categories"
+
     init(
         transport: any HTTPTransport = URLSessionTransport(),
         origin: URL = InspireClient.defaultOrigin,
@@ -278,15 +285,29 @@ struct InspireClient: Sendable {
         let advertisedNextPage = advertisedNextComponents
             .flatMap { Int($0.queryItems?.first(where: { $0.name == "page" })?.value ?? "") }
         let nextBeyondWindow = advertisedNextPage.map { $0 > 40 } ?? false
-        let serverNext = (!hasMoreByTotal || exhaustedWindow || nextBeyondWindow) ? nil :
-            try trustedNextURL(responsePage.links?.next, expectedPath: "/api/authors")
         let next: URL?
-        if let serverNext {
-            next = serverNext
-        } else if isPartitioned && partition + 1 < Self.authorCandidatePartitions.count {
-            next = try authorCandidateURL(partition: partition + 1, page: 1)
+        if isPartitioned {
+            // Do not persist the service-supplied next link for the candidate
+            // crawl.  In production the link is normally correct, but some
+            // proxies have rewritten it with an unpartitioned q value or a
+            // stale encoding.  Following that URL can restart from the global
+            // page window and eventually produces the user-visible HTTP 400,
+            // while silently dropping later hep-th ranges.  The partition and
+            // page are already locally proven, so construct the next request
+            // from that immutable state instead.
+            if hasMoreByTotal, !exhaustedWindow, !nextBeyondWindow, pageNumber < 40 {
+                next = try authorCandidateURL(partition: partition, page: pageNumber + 1, size: pageSize)
+            } else if partition + 1 < Self.authorCandidatePartitions.count {
+                next = try authorCandidateURL(partition: partition + 1, page: 1)
+            } else {
+                next = nil
+            }
         } else {
-            next = nil
+            // Retain the generic trusted-next behaviour for tiny legacy
+            // fixture/compatibility queries that predate the partitioned
+            // author-index contract.
+            next = (!hasMoreByTotal || exhaustedWindow || nextBeyondWindow) ? nil :
+                try trustedNextURL(responsePage.links?.next, expectedPath: "/api/authors")
         }
         return (authors, next, responsePage.hits.total)
     }
@@ -313,7 +334,8 @@ struct InspireClient: Sendable {
         return try makeURL(path: "/api/authors", query: [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "size", value: String(max(1, min(size, 250)))),
-            URLQueryItem(name: "page", value: String(max(1, page)))
+            URLQueryItem(name: "page", value: String(max(1, page))),
+            URLQueryItem(name: "fields", value: Self.authorCandidateFields)
         ])
     }
 

@@ -1,0 +1,67 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.1",
+  "generated_at_utc": "2026-08-31T17:36:16Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.1",
+  "build_number": 101,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_head_before_dirty_changes": "e05a77209f18b7131fbee1b493d42333bc4e95b6",
+    "working_tree_was_dirty": true,
+    "build_input_tree_sha256": "3b6566db8af6944b78075c649046f04e5fb49d16c5bdb795fae3770f4f3454f2"
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "3c979edb0b49983d504725b3f65286f4c5d2146f5d5c7b45ec239ebb080c04f4"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.1-local.dmg",
+      "sha256": "49b9e5ba23bdd682e5ac2ff80a4e07c122a0e07dafebc3829a159f181b564945"
+    }
+  },
+  "verification": {
+    "swift_author_pagination_regression": {
+      "status": "PASS",
+      "tests": 10,
+      "command": "swift test --filter CoreContractTests.testAuthor"
+    },
+    "math_markup_regression": {
+      "status": "PASS",
+      "tests": 1,
+      "command": "swift test --filter CoreContractTests.testLocalMarkdownTeXPreservesRawSourceAndUsesOnlyNativePreview"
+    },
+    "evidence_workbench_contracts": {
+      "status": "PASS",
+      "tests": 16,
+      "command": "swift test --filter V3WorkbenchTests; swift test --filter EvidenceWorkflowTests.testEvidenceWorkflowValidatesSavesAndHitsIsolatedCache"
+    },
+    "public_inspire_read_only_shape_smoke": {
+      "status": "PASS",
+      "endpoints": 9,
+      "command": "zsh Scripts/live_smoke_v4.sh"
+    },
+    "empty_isolated_store_startup": {
+      "status": "PASS",
+      "scope": "mounted DMG, real public INSPIRE GET, project-local disposable SwiftData root",
+      "authors": 1,
+      "papers": 10,
+      "paper_author_links": 10
+    },
+    "mounted_dmg_ui_observation": {
+      "status": "PASS",
+      "scope": "author sidebar and first literature page visible after fresh isolated launch"
+    }
+  },
+  "release_status": {
+    "current_binary_distinguishable_from_1_0_0_100": true,
+    "manual_receipt_rebinding": "required_before_final_seal",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "This package was never copied to /Applications during automated verification and never opened a real Application Support library."
+  }
+}

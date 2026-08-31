@@ -101,29 +101,36 @@ struct HIndexQueue: Sendable {
 
 private actor HIndexCheckpointWriter {
     private let store: any LibraryStoring
-    private let generationID: String?
     private var checkpoint: SyncCheckpoint
     private var progressValue: AuthorIndexProgress
     private var states: [Int: HIndexState]
+    /// The queue owns the candidate rows it was created for.  Reusing this
+    /// small in-memory projection avoids decoding the complete SwiftData
+    /// snapshot after every single h-index response.  Each changed row and
+    /// checkpoint is still persisted atomically before the next request
+    /// starts, so this is a scheduling optimisation, not relaxed durability.
+    private var authors: [Int: Author]
+    private var generation: AuthorIndexGeneration?
     private var authorsWithHIndex: Set<Int>
     private var deliveredOutcomes = 0
 
-    init(store: any LibraryStoring, checkpoint: SyncCheckpoint, generationID: String? = nil,
+    init(store: any LibraryStoring, checkpoint: SyncCheckpoint,
+         generation: AuthorIndexGeneration? = nil,
          baseline: AuthorIndexProgress, initialAuthors: [Author]) {
         self.store = store
         self.checkpoint = checkpoint
-        self.generationID = generationID
+        self.generation = generation
         self.progressValue = baseline
         self.states = Dictionary(uniqueKeysWithValues: initialAuthors.map { ($0.recid, $0.hIndexState) })
+        self.authors = Dictionary(uniqueKeysWithValues: initialAuthors.map { ($0.recid, $0) })
         self.authorsWithHIndex = Set(initialAuthors.compactMap { $0.hIndex == nil ? nil : $0.recid })
     }
 
     func record(_ outcome: HIndexOutcome) async throws {
-        let snapshot = await store.snapshot()
         var updatedAuthor: Author?
         switch outcome {
         case .success(let recid, let hIndex):
-            guard var updated = snapshot.authors[recid] else { return }
+            guard var updated = authors[recid] else { return }
             let priorState = states[recid] ?? updated.hIndexState
             if !authorsWithHIndex.contains(recid) {
                 authorsWithHIndex.insert(recid)
@@ -146,12 +153,13 @@ private actor HIndexCheckpointWriter {
             if updated.hIndexState == .qualified { progressValue.qualified += 1 }
             if updated.hIndexState == .rejected { progressValue.rejected += 1 }
             states[recid] = updated.hIndexState
+            authors[recid] = updated
             updatedAuthor = updated
             checkpoint.successfulRecords += 1
             checkpoint.pendingIDs.removeAll { $0 == recid }
             checkpoint.retryableIDs.removeAll { $0 == recid }
         case .failure(let recid):
-            guard var updated = snapshot.authors[recid] else { return }
+            guard var updated = authors[recid] else { return }
             let priorState = states[recid] ?? updated.hIndexState
             if priorState == .qualified { progressValue.qualified = max(0, progressValue.qualified - 1) }
             if priorState == .rejected { progressValue.rejected = max(0, progressValue.rejected - 1) }
@@ -171,6 +179,7 @@ private actor HIndexCheckpointWriter {
             updated.hIndexState = updated.hIndex == nil ? .failed : .stale
             if updated.hIndexState == .failed { progressValue.failed += 1 }
             states[recid] = updated.hIndexState
+            authors[recid] = updated
             updatedAuthor = updated
             checkpoint.failedRecords += 1
             if !checkpoint.failedIDs.contains(recid) { checkpoint.failedIDs.append(recid) }
@@ -184,7 +193,7 @@ private actor HIndexCheckpointWriter {
         deliveredOutcomes += 1
         guard let author = updatedAuthor else { return }
         checkpoint.updatedAt = Date()
-        if let generationID, var generation = snapshot.authorIndexGenerations[generationID] {
+        if var generation {
             switch outcome {
             case .success: generation.hQueueCompleted += 1
             case .failure: generation.hQueueFailed += 1
@@ -192,6 +201,7 @@ private actor HIndexCheckpointWriter {
             }
             generation.hQueuePending = checkpoint.pendingIDs.count
             generation.lastCheckpointAt = checkpoint.updatedAt
+            self.generation = generation
             try await store.commitHIndexOutcome(author: author, checkpoint: checkpoint, generation: generation)
         } else {
             // Compatibility source stores can contain an older checkpoint with
@@ -210,11 +220,11 @@ private actor HIndexCheckpointWriter {
     func cancel() async throws {
         checkpoint.state = .cancelled
         checkpoint.updatedAt = Date()
-        let snapshot = await store.snapshot()
-        if let generationID, var generation = snapshot.authorIndexGenerations[generationID] {
+        if var generation {
             generation.state = .cancelled
             generation.hQueuePending = checkpoint.resumableIDs.count
             generation.lastCheckpointAt = checkpoint.updatedAt
+            self.generation = generation
             try await store.commitAuthorIndexState(checkpoint: checkpoint, generation: generation)
         } else {
             try await store.save(checkpoint: checkpoint)
@@ -227,11 +237,11 @@ private actor HIndexCheckpointWriter {
     func pause() async throws {
         checkpoint.state = .paused
         checkpoint.updatedAt = Date()
-        let snapshot = await store.snapshot()
-        if let generationID, var generation = snapshot.authorIndexGenerations[generationID] {
+        if var generation {
             generation.state = .active
             generation.hQueuePending = checkpoint.resumableIDs.count
             generation.lastCheckpointAt = checkpoint.updatedAt
+            self.generation = generation
             try await store.commitAuthorIndexState(checkpoint: checkpoint, generation: generation)
         } else {
             try await store.save(checkpoint: checkpoint)
@@ -247,11 +257,11 @@ private actor HIndexCheckpointWriter {
             // the previous active generation visible.
             checkpoint.state = .failed
             checkpoint.updatedAt = Date()
-            let snapshot = await store.snapshot()
-            if let generationID, var generation = snapshot.authorIndexGenerations[generationID] {
+            if var generation {
                 generation.state = .failed
                 generation.hQueuePending = checkpoint.resumableIDs.count
                 generation.lastCheckpointAt = checkpoint.updatedAt
+                self.generation = generation
                 try await store.commitAuthorIndexState(checkpoint: checkpoint, generation: generation)
             } else {
                 try await store.save(checkpoint: checkpoint)
@@ -263,8 +273,7 @@ private actor HIndexCheckpointWriter {
         checkpoint.updatedAt = Date()
         checkpoint.completedAt = checkpoint.updatedAt
         checkpoint.lastSuccessfulSyncAt = checkpoint.updatedAt
-        let snapshot = await store.snapshot()
-        if let generationID, var generation = snapshot.authorIndexGenerations[generationID] {
+        if var generation {
             // Membership becomes visible only after the same generation's
             // metadata pages and h-index queue have reached terminal outcomes.
             generation.activeMembership = generation.stagingMembership
@@ -273,6 +282,7 @@ private actor HIndexCheckpointWriter {
             generation.completedAt = checkpoint.completedAt
             generation.hQueuePending = 0
             generation.lastCheckpointAt = checkpoint.updatedAt
+            self.generation = generation
             try await store.commitAuthorIndexCompletion(checkpoint: checkpoint, generation: generation)
         } else {
             try await store.save(checkpoint: checkpoint)
@@ -287,9 +297,14 @@ struct AuthorIndexService: Sendable {
     /// Durable checkpoint identity, bumped when pagination mechanics change.
     /// This is metadata only; the network client builds the actual partitioned
     /// INSPIRE queries and never sends this suffix to the service.
-    static let candidateQueryCheckpoint = candidateQuery + " [pagination:control-number-v1]"
+    static let candidateQueryCheckpoint = candidateQuery + " [pagination:control-number-v2]"
     static let candidateJobID = "author-candidates:hep-lat-or-hep-th"
     static let hIndexJobID = "author-h-index:hep-lat-or-hep-th"
+    /// The API permits at most 40 250-row pages in a control-number range.
+    /// Keep the global guard aligned with all explicit partitions rather than
+    /// the old 100-page value, which would fail closed after only a subset if
+    /// future author ranges become denser.
+    private static let maximumCandidatePages = 7 * 40
 
     let client: InspireClient
     let store: any LibraryStoring
@@ -386,7 +401,7 @@ struct AuthorIndexService: Sendable {
         do {
             repeat {
                 try Task.checkCancellation()
-                guard checkpoint.completedPages < 100 else { throw LatticeLensError.paginationLimitExceeded }
+                guard checkpoint.completedPages < Self.maximumCandidatePages else { throw LatticeLensError.paginationLimitExceeded }
                 let page = try await client.authorCandidatesPage(nextURL: checkpoint.nextURL)
                 checkpoint.stagingMembership.formUnion(page.authors.map(\.recid))
                 checkpoint.completedPages += 1
@@ -476,10 +491,12 @@ struct AuthorIndexService: Sendable {
         }
         checkpoint.state = .active
         checkpoint.updatedAt = Date()
+        var writerGeneration: AuthorIndexGeneration?
         if var activeGeneration = generation, activeGeneration.id == checkpoint.generationID {
             activeGeneration.hQueuePending = checkpoint.resumableIDs.count
             activeGeneration.lastCheckpointAt = checkpoint.updatedAt
             try await store.commitAuthorIndexState(checkpoint: checkpoint, generation: activeGeneration)
+            writerGeneration = activeGeneration
         } else {
             try await store.save(checkpoint: checkpoint)
         }
@@ -487,7 +504,7 @@ struct AuthorIndexService: Sendable {
         let writer = HIndexCheckpointWriter(
             store: store,
             checkpoint: checkpoint,
-            generationID: generation?.id == checkpoint.generationID ? checkpoint.generationID : nil,
+            generation: writerGeneration,
             baseline: baseline,
             initialAuthors: candidates
         )

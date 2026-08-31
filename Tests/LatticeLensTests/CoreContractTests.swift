@@ -687,7 +687,7 @@ final class CoreContractTests: XCTestCase {
                        "a valid h-index response must not trigger a compatibility request")
     }
 
-    func testAuthorPaginationFollowsTrustedNextWithoutDuplicates() async throws {
+    func testAuthorPaginationRebuildsCanonicalPartitionNextWithoutDuplicates() async throws {
         let slashTerminatedNext = try String(decoding: fixtureData("authors-page-1"), as: UTF8.self)
             .replacingOccurrences(of: "/api/authors?page=2", with: "/api/authors/?page=2")
         let transport = SequentialTransport([Data(slashTerminatedNext.utf8), try fixtureData("authors-page-2")])
@@ -697,7 +697,29 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(first.authors.map(\.recid), [2_010_363, 21])
         XCTAssertEqual(second.authors.map(\.recid), [22])
         XCTAssertEqual(first.total, 3)
-        XCTAssertNil(second.nextURL)
+        let firstNextItems = URLComponents(url: try XCTUnwrap(first.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(firstNextItems.first(where: { $0.name == "q" })?.value?.contains("control_number:[0 TO 999999]") == true)
+        XCTAssertEqual(firstNextItems.first(where: { $0.name == "page" })?.value, "2")
+        let nextPartitionItems = URLComponents(url: try XCTUnwrap(second.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(nextPartitionItems.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
+        XCTAssertEqual(nextPartitionItems.first(where: { $0.name == "page" })?.value, "1")
+    }
+
+    func testAuthorPartitionIgnoresUntrustedServerNextQueryAndPreservesHepTHRange() async throws {
+        // A proxy can return a syntactically trusted next URL whose q value is
+        // no longer the selected partition.  The client must derive page 3
+        // from its own durable range, otherwise a later global page-41 400
+        // both aborts the job and omits hep-th candidates.
+        let payload = Data("""
+        {"hits":{"total":1000,"hits":[]},"links":{"next":"https://inspirehep.net/api/authors/?q=arxiv_categories%3Ahep-lat&page=3&size=250"}}
+        """.utf8)
+        let client = InspireClient(transport: SequentialTransport([payload]))
+        let current = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th%29%20AND%20control_number%3A%5B1000000%20TO%201249999%5D&size=250&page=2"))
+        let result = try await client.authorCandidatesPage(nextURL: current)
+        let items = URLComponents(url: try XCTUnwrap(result.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(items.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
+        XCTAssertEqual(items.first(where: { $0.name == "page" })?.value, "3")
+        XCTAssertEqual(items.first(where: { $0.name == "fields" })?.value, "name,native_names,ids,arxiv_categories")
     }
 
     func testAuthorPaginationRetriesHTTP400WithBoundedCanonicalVariant() async throws {
@@ -814,6 +836,13 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(LocalMarkdownTeX.segments(in: #"&lt;math display=&quot;inline&quot;&gt;\alpha&lt;/math&gt;"#),
                        [.inlineTeX(#"\alpha"#)],
                        "HTML-escaped MathML wrappers must never leak into reader-facing text")
+        XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math alttext="\frac{a}{b}" display="block"><mfrac><mi>a</mi><mi>b</mi></mfrac></math>"#),
+                       [.displayTeX(#"\frac{a}{b}"#)],
+                       "MathML TeX alt text must win over a lossy XML body")
+        XCTAssertEqual(LocalMarkdownTeX.segments(in: #"<math alttext="\alpha" display="inline"/>"#), [.inlineTeX(#"\alpha"#)])
+        XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview(#"<mfrac><mi>a</mi><mi>b</mi></mfrac>"#), "a⁄b")
+        XCTAssertEqual(LocalMarkdownTeX.nativeTeXPreview("&alpha;^2 + &Omega;"), "α² + Ω")
+        XCTAssertEqual(LocalMarkdownTeX.formulaRawSource(#"\frac{Z_A}{Z_V}"#), #"\frac{Z_A}{Z_V}"#)
     }
 
     func testInspireGETRetriesOnlyBoundedRetryableResponsesAndHonorsRetryAfter() async throws {
