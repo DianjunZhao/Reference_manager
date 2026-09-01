@@ -1,6 +1,6 @@
 {
   "schema_version": "latticelens-local-candidate-v1.0.1",
-  "generated_at_utc": "2026-08-31T23:54:33Z",
+  "generated_at_utc": "2026-09-01T03:05:19Z",
   "artifact_class": "same_mac_local_ad_hoc_candidate",
   "product_version": "1.0.1",
   "build_number": 101,
@@ -10,26 +10,26 @@
   "developer_id": false,
   "notarized": false,
   "source": {
-    "git_head_before_dirty_changes": "0fc4cc52f56498a3c60a74cc5889b6b94604975c",
+    "git_head_before_dirty_changes": "6ed0238a48b44ee48a8f8a2b09e2a2ea2c86ab00",
     "working_tree_was_dirty": false,
-    "build_input_tree_sha256": "57e8c96c09ee9577fdb59193089d3c307fd5efc2b10ab402586d1398892d2c6a"
+    "build_input_tree_sha256": "ac94866d11dfa0713b0f166ff233ca4cecde23819c37c49373c61b2e1df5d48f"
   },
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "8f7f664fcd2fe6e3f58dcbc7cbf9d7a70e52d7a32735ee061d72ac23c439a158"
+    "executable_sha256": "fb5608ec131fe5bf335c39498d02e109f11f2bde4f21bbff31e07c49bc875cd2"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.1-local.dmg",
-      "sha256": "6abbe429d342c636149b3b503bf3bd2fde023061d84f99f4ae06f7a31bd7ddac"
+      "sha256": "7d06499c383ff0feecec8e47a9740ade86ea9a1778c33cb591115356d4ec784f"
     }
   },
   "verification": {
     "swift_author_pagination_regression": {
       "status": "PASS",
-      "tests": 10,
-      "command": "swift test --filter CoreContractTests.testAuthor"
+      "tests": 11,
+      "command": "swift test --filter CoreContractTests.testAuthorPagination"
     },
     "math_markup_regression": {
       "status": "PASS",
@@ -73,6 +73,14 @@
       "unique_records": 17478,
       "http_400_failures": 0,
       "h_index_completion": "not asserted; h(all)>20 qualification remains a separate recoverable per-author queue"
+    },
+    "ar5iv_html_formula_smoke": {
+      "status": "PASS",
+      "url": "https://ar5iv.labs.arxiv.org/html/2509.09367",
+      "http_status": 200,
+      "content_type": "text/html",
+      "application_x_tex_annotations": 375,
+      "command": "curl -I/GET read-only smoke"
     }
   },
   "release_status": {
