@@ -1,0 +1,26 @@
+{
+  "schema_version": "latticelens-manual-acceptance-v1.0.1",
+  "generated_at_utc": "2026-09-01T03:09:14Z",
+  "package_manifest_sha256": "20182952eb452e3634e74c2221344111898d501ecec6f73da9f973a02fbd5c58",
+  "product_version": "1.0.1",
+  "build_number": 101,
+  "applications_installation_choice": "no_old_app",
+  "mandatory": {
+    "voiceover": true,
+    "lqcd_rubric": true,
+    "applications_install": true,
+    "disposable_library_drill": true
+  },
+  "attestation": "用户已确认：在 820×640、1120×700、1440×900 下完成 VoiceOver/Accessibility Inspector 观察；三篇 sanitized LQCD fixture 的 direct/inference/missing rubric 区分正确；按无旧 app 选择完成本地安装、离线浏览与 quit/relaunch；仅使用 synthetic/disposable V7 store 完成迁移、backup/hash/semantic verification、recovery 与 rollback。未读取或修改真实 Application Support library、真实科研资料、PDF library、Keychain、live INSPIRE 或 live LLM。",
+  "attestation_source": "user_confirmation_in_chat",
+  "scope": {
+    "voiceover_windows": [
+      "820x640",
+      "1120x700",
+      "1440x900"
+    ],
+    "fixture_only": true,
+    "real_library_access": false,
+    "live_llm": false
+  }
+}

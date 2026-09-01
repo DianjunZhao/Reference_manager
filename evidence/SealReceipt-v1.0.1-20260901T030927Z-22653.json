@@ -1,0 +1,45 @@
+{
+  "schema_version": "latticelens-seal-v1.0.1",
+  "result": "PASS",
+  "run_id": "20260901T030927Z-22653",
+  "product_version": "1.0.1",
+  "build_number": 101,
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "package_manifest": {
+    "path": "release-assets/Release-1.0.1-local/manifest-v1.0.1.json",
+    "sha256": "20182952eb452e3634e74c2221344111898d501ecec6f73da9f973a02fbd5c58"
+  },
+  "release_assets": {
+    "dmg_sha256": "7d06499c383ff0feecec8e47a9740ade86ea9a1778c33cb591115356d4ec784f",
+    "local_and_github_copies_byte_identical": true,
+    "hdiutil_verify": true
+  },
+  "installed_application": {
+    "bundle": "/Applications/LatticeLens.app",
+    "version": "1.0.1",
+    "build_number": 101,
+    "executable_sha256": "fb5608ec131fe5bf335c39498d02e109f11f2bde4f21bbff31e07c49bc875cd2",
+    "codesign_verify": true
+  },
+  "manual_acceptance": {
+    "path": "evidence/ManualAcceptanceReceipt-v1.0.1-20260901T030859Z.json",
+    "sha256": "41438cb44b0589540fedcecbd97b5dff8e649a11bb7280742759e574ec88e17e",
+    "applications_installation_choice": "no_old_app"
+  },
+  "mandatory": {
+    "manifest_and_checksums": true,
+    "dmg_image": true,
+    "installed_binary": true,
+    "manual_voiceover": true,
+    "manual_lqcd_rubric": true,
+    "manual_applications_install": true,
+    "manual_disposable_library_drill": true
+  },
+  "out_of_scope": {
+    "developer_id": true,
+    "notarization": true,
+    "cross_machine": true,
+    "live_llm": true
+  },
+  "failures": 0
+}
