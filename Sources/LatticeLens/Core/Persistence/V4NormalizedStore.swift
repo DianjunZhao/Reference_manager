@@ -1483,6 +1483,8 @@ actor V8TypedLibraryStore: LibraryStoring {
             let paper = try typedPaper(id: paperID)
             let documents = try modelContext.fetch(FetchDescriptor<StoredV8FullTextDocument>(predicate: #Predicate { $0.paperID == paperID }))
                 .map { try $0.decoded() }
+            let chunks = try modelContext.fetch(FetchDescriptor<StoredV8EvidenceChunk>(predicate: #Predicate { $0.paperID == paperID }))
+                .map { $0.decoded() }
             let anchors = try modelContext.fetch(FetchDescriptor<StoredV8EvidenceAnchor>(predicate: #Predicate { $0.paperID == paperID }))
                 .map { try $0.decoded() }
             let notes = try modelContext.fetch(FetchDescriptor<StoredV8Note>(predicate: #Predicate { $0.paperID == paperID }))
@@ -1516,6 +1518,7 @@ actor V8TypedLibraryStore: LibraryStoring {
                 paper: paper,
                 insight: cachedInsight,
                 fullTextDocuments: documents,
+                evidenceChunks: chunks,
                 evidenceAnchors: anchors,
                 evidenceInsights: evidenceInsights,
                 visionArtifacts: visionArtifacts,
@@ -1528,7 +1531,7 @@ actor V8TypedLibraryStore: LibraryStoring {
             )
         } catch {
             availabilityFailure = "V8 typed store 单篇上下文读取失败；资料库保持只读"
-            return LibraryPaperContextProjection(paper: nil, insight: nil, fullTextDocuments: [], evidenceAnchors: [],
+            return LibraryPaperContextProjection(paper: nil, insight: nil, fullTextDocuments: [], evidenceChunks: [], evidenceAnchors: [],
                                                  evidenceInsights: [], visionArtifacts: [], notes: [], bibTeXRecord: nil,
                                                  tags: [], availableTags: [], availableCollections: [], selectedCollectionIDs: [])
         }

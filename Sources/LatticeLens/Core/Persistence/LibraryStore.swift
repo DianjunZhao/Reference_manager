@@ -39,6 +39,7 @@ struct LibraryPaperContextProjection: Sendable {
     let paper: Paper?
     let insight: InsightArtifact?
     let fullTextDocuments: [FullTextDocument]
+    let evidenceChunks: [EvidenceChunk]
     let evidenceAnchors: [EvidenceAnchor]
     let evidenceInsights: [EvidenceInsightArtifact]
     let visionArtifacts: [VisionArtifact]
@@ -238,6 +239,7 @@ extension LibraryStoring {
             paper: snapshot.papers[paperID],
             insight: insightCacheKey.flatMap { snapshot.insights[$0] },
             fullTextDocuments: snapshot.fullTextDocuments.values.filter { $0.paperID == paperID },
+            evidenceChunks: snapshot.evidenceChunks.values.filter { $0.paperID == paperID },
             evidenceAnchors: snapshot.evidenceAnchors.values.filter { $0.paperID == paperID },
             evidenceInsights: snapshot.evidenceInsights.values.filter { $0.paperID == paperID },
             visionArtifacts: snapshot.visionArtifacts.values.filter { $0.paperID == paperID },
@@ -735,6 +737,7 @@ actor InMemoryLibraryStore: LibraryStoring {
             paper: value.papers[paperID],
             insight: insightCacheKey.flatMap { value.insights[$0] },
             fullTextDocuments: value.fullTextDocuments.values.filter { $0.paperID == paperID },
+            evidenceChunks: value.evidenceChunks.values.filter { $0.paperID == paperID },
             evidenceAnchors: value.evidenceAnchors.values.filter { $0.paperID == paperID },
             evidenceInsights: value.evidenceInsights.values.filter { $0.paperID == paperID },
             visionArtifacts: value.visionArtifacts.values.filter { $0.paperID == paperID },

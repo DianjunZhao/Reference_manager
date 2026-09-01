@@ -1,40 +1,7 @@
 # LatticeLens 1.0.1 (101) — local candidate
 
-This is a same-Mac, ad-hoc signed candidate, not a notarized public release.
-It contains `LatticeLens-1.0.1-local.dmg` and is intentionally distinguishable
-from the older `1.0.0 (100)` application.
+This DMG was rebuilt from the current source after the Evidence formula workflow responsiveness fix. It is ad-hoc signed for same-Mac local inspection; it is not Developer ID signed or notarized.
 
-## Verify and install
+Before installing, quit any running LatticeLens process. Verify `manifest-v1.0.1.json` and `SHA256SUMS.txt`, then drag `LatticeLens.app` into `/Applications` according to your chosen install policy. The fixture smoke used only a project-local disposable store and did not read a real library, Keychain, INSPIRE, or live LLM.
 
-1. Run `shasum -a 256 -c SHA256SUMS.txt` in this directory. The DMG hash must
-   match `manifest-v1.0.1.json`.
-2. Quit every running `LatticeLens` process before replacing an app bundle.
-3. Open the DMG and drag `LatticeLens.app` to `/Applications`, choosing the
-   explicit Finder replacement action only after the existing app is closed.
-4. In Finder, choose **Get Info** for `/Applications/LatticeLens.app`. It must
-   show **Version 1.0.1 (101)**. A `1.0.0 (100)` app is an older binary.
-5. On a fresh library with network access, the first screen should show the
-   pinned Zhao author and one initial page of papers. If it does not, use the
-   visible retry/sync action and retain the on-screen error text.
-6. In Paper Lens → Evidence, records with an arXiv ID show the direct ar5iv
-   HTML URL. Opening that link does not download a PDF; confirming the local
-   read extracts bounded anchors and important formulas. INSPIRE PDF remains a
-   separately labelled fallback.
-
-## Rollback and data safety
-
-- Replacing or removing the app bundle does not delete a library, PDFs or
-  Keychain entries.
-- Do not delete Application Support to troubleshoot a blank screen.
-- A V7 migration rollback must restore only to a new, explicit target using a
-  verified disposable backup; it must never overwrite an active library.
-
-## Verification boundary
-
-The package was mounted and launched against a new project-local disposable
-store. That test wrote 1 author, 10 papers and 10 author-paper links after
-real read-only INSPIRE requests. The refreshed DMG was subsequently copied to
-`/Applications/LatticeLens.app` after confirming no running LatticeLens process;
-the installed executable hash is recorded in `manifest-v1.0.1.json`. No real
-library was opened, and no live LLM was used. Manual observations are recorded
-separately in the bound acceptance receipt under `github/evidence/`.
+The Evidence tab now reads only the selected paper\x27s bounded document/chunk/anchor projection. It shows connecting, first-content wait, receiving, validating, elapsed seconds, a cancel action, and finite deadlines (15 s connect, 45 s first content, 30 s idle, 120 s hard per request; deep mode uses at most two requests).

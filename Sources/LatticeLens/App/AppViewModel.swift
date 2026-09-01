@@ -1573,7 +1573,7 @@ final class AppViewModel: ObservableObject {
     func generateSelectedEvidenceInsight() {
         guard let paper = selectedPaper else { return }
         guard selectedFullTextDocument?.extractionState == .extracted else {
-            errorMessage = "请先由用户明确下载全文，并成功生成可回查的全文 anchors。"
+            errorMessage = "请先读取 ar5iv HTML（或使用 PDF 回退）并成功生成可回查的全文 anchors。"
             return
         }
         guard settings.hasConsent(for: settings.activeProvider, sourceScope: PaperInsightV2Validator.sourceScope, sendsImagePixels: false) else {
@@ -2055,6 +2055,9 @@ final class AppViewModel: ObservableObject {
         let session = UUID()
         evidenceInsightSessionID = session
         evidenceInsightStartedAt = Date()
+        // Publish before entering the Task so keychain and bounded store
+        // reads are visible as work instead of looking like a dead button.
+        evidenceInsightState = .connecting
         evidenceInsightTask = Task { [weak self] in
             guard let self else { return }
             defer {

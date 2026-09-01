@@ -1,6 +1,6 @@
 {
   "schema_version": "latticelens-local-candidate-v1.0.1",
-  "generated_at_utc": "2026-09-01T06:31:40Z",
+  "generated_at_utc": "2026-09-01T08:11:07Z",
   "artifact_class": "same_mac_local_ad_hoc_candidate",
   "product_version": "1.0.1",
   "build_number": 101,
@@ -10,19 +10,20 @@
   "developer_id": false,
   "notarized": false,
   "source": {
-    "git_head_before_dirty_changes": "0fe0d990eec0eb17dba27a8ea0b6a94bee0d8f1e",
-    "working_tree_was_dirty": false,
-    "build_input_tree_sha256": "aa0b8b1018909ba4e45c6900a507592bdff0178dfe0dc9c374b04f3f644f5945"
+    "git_head_before_dirty_changes": "8f47ad2bcaa69b9c9cc9bc8ed8d38ff67e0104dd",
+    "working_tree_was_dirty": true,
+    "build_input_tree_sha256": "59f961fd87e464ef80881348787b862b0153904213aea6a2c12b2f522e21909e",
+    "source_tree_sha256": "f31b6b05732d5c772dcaee8d3a68504ff42572dfb7aa8cb16a77fb628c5d1e00"
   },
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "980f7a3b999cfe919515bad8cf10627d006762d998740563f787c02e0a9239d1"
+    "executable_sha256": "f5848e0c8cf3d823409e1a2a124b9a33227bd264f23658370b2cd174db71c7aa"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.1-local.dmg",
-      "sha256": "ac2b53b60ae5607c29d3453be06e5638e136904b526f9726ad2dab570d753138"
+      "sha256": "21c1ec23ce0612da32aa655e4c008160afc92d69e317889e04352472fc60fbef"
     }
   },
   "verification": {
@@ -74,6 +75,16 @@
       "status": "PASS",
       "scope": "Release-1.0.0-local/LatticeLens-1.0.1-local.dmg mounted read-only; disposable fixture store",
       "command": "mounted DMG executable; 5s alive; TERM clean exit; hdiutil verify"
+    },
+    "evidence_workflow_bounded_projection": {
+      "status": "PASS",
+      "tests": 1,
+      "command": "swift test --package-path github --filter EvidenceWorkflowTests.testAppFixtureDownloaderProducesExtractablePDFAndEvidenceResponse"
+    },
+    "evidence_deadline_budget": {
+      "status": "PASS",
+      "tests": 1,
+      "command": "swift test --package-path github --filter EvidenceWorkflowTests.testEvidenceAndVisionDeadlinesRejectOneRequestWithoutRetry"
     }
   },
   "release_status": {
@@ -81,6 +92,6 @@
     "pdf_download_is_fallback": true,
     "manual_receipt_rebinding": "required_before_final_seal",
     "developer_id_and_notarization": "out_of_scope",
-    "install_boundary": "Current DMG installed to /Applications only after confirming no LatticeLens process was running; fixture/no-network smoke used a new project-local disposable store. No real Application Support library, Keychain, or research material was opened."
+    "install_boundary": "DMG generated from current source; installation into /Applications is pending user confirmation that no LatticeLens process is running."
   }
 }

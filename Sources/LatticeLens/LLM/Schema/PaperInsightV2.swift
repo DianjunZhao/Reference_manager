@@ -62,10 +62,28 @@ struct LocalEvidenceRetriever: Sendable {
     init(maximumChunks: Int = 12) { self.maximumChunks = max(1, maximumChunks) }
 
     func retrieve(paper: Paper, snapshot: LibrarySnapshot) -> (document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor])? {
-        guard let document = snapshot.fullTextDocuments.values
+        return retrieve(
+            paper: paper,
+            documents: Array(snapshot.fullTextDocuments.values),
+            chunks: Array(snapshot.evidenceChunks.values),
+            anchors: Array(snapshot.evidenceAnchors.values)
+        )
+    }
+
+    /// Bounded single-paper path used by the interactive Evidence tab.  The
+    /// older snapshot overload remains for compatibility tests and exports,
+    /// but production generation must not decode unrelated authors, papers,
+    /// or V9 search postings merely to find twelve local chunks.
+    func retrieve(paper: Paper, context: LibraryPaperContextProjection) -> (document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor])? {
+        retrieve(paper: paper, documents: context.fullTextDocuments,
+                 chunks: context.evidenceChunks, anchors: context.evidenceAnchors)
+    }
+
+    private func retrieve(paper: Paper, documents: [FullTextDocument], chunks allChunks: [EvidenceChunk], anchors allAnchors: [EvidenceAnchor]) -> (document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor])? {
+        guard let document = documents
             .filter({ $0.paperID == paper.literatureID && $0.extractionState == .extracted })
             .sorted(by: { ($0.downloadedAt ?? .distantPast) > ($1.downloadedAt ?? .distantPast) }).first else { return nil }
-        let allChunks = snapshot.evidenceChunks.values.filter { $0.paperID == paper.literatureID && $0.documentHash == document.sha256 }
+        let allChunks = allChunks.filter { $0.paperID == paper.literatureID && $0.documentHash == document.sha256 }
         let terms = Set(SearchNormalizer.normalize(paper.displayTitle).split(whereSeparator: { $0 == " " }).map(String.init).filter { $0.count >= 3 })
         let ranked = allChunks.sorted { lhs, rhs in
             let lhsScore = terms.reduce(0) { $0 + (SearchNormalizer.normalize(lhs.text).contains($1) ? 1 : 0) }
@@ -74,10 +92,10 @@ struct LocalEvidenceRetriever: Sendable {
         }
         let chunks = Array(ranked.prefix(maximumChunks))
         let ids = Set(chunks.map(\.id))
-        let fullTextAnchors = snapshot.evidenceAnchors.values.filter { ids.contains($0.id) }
+        let fullTextAnchors = allAnchors.filter { ids.contains($0.id) }
         // Abstract/caption anchors are persisted independently of a full text and
         // are intentionally retained when a full-text document is deleted.
-        let metadataAnchors = snapshot.evidenceAnchors.values.filter {
+        let metadataAnchors = allAnchors.filter {
             $0.paperID == paper.literatureID && $0.sourceKind != .pdf
         }
         let anchors = (fullTextAnchors + metadataAnchors).sorted { $0.id < $1.id }

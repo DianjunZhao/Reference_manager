@@ -573,6 +573,7 @@ private struct EvidenceTab: View {
                 Spacer()
                 if let document = viewModel.selectedFullTextDocument, document.extractionState == .extracted {
                     Button("生成重要公式推导") { viewModel.generateSelectedEvidenceInsight() }
+                        .disabled(viewModel.isEvidenceInsightRunning)
                         .accessibilityIdentifier("generateEvidenceInsight")
                     Button("删除本地全文", role: .destructive) { viewModel.deleteSelectedFullText() }
                         .accessibilityIdentifier("deleteSelectedFullText")
@@ -584,6 +585,7 @@ private struct EvidenceTab: View {
                 }
             }
             .padding(.horizontal).padding(.top)
+            EvidenceInsightStatusBar(viewModel: viewModel)
             if let message = viewModel.fullTextStatusMessage {
                 Text(message).font(.caption).foregroundStyle(.secondary).padding(.horizontal)
                     .accessibilityIdentifier("fullTextStatus")
@@ -746,6 +748,62 @@ private struct EvidenceTab: View {
                 presentEvidenceJumpIfAvailable()
             }
         }
+    }
+}
+
+private struct EvidenceInsightStatusBar: View {
+    @ObservedObject var viewModel: AppViewModel
+
+    private var text: String {
+        switch viewModel.evidenceInsightState {
+        case .idle:
+            return "尚未生成公式推导 · 单次请求最长 120 秒（deep 模式最多 2 次请求）"
+        case .connecting:
+            return "正在连接模型 · 单次请求最长 120 秒"
+        case .waitingFirstContent:
+            return "已连接 · 等待首段内容（最长 45 秒）"
+        case .receiving(let characters, let bytes):
+            return "正在接收 · \(characters) 字符 / \(bytes) bytes · 空闲最长 30 秒"
+        case .validating:
+            return "正在验证公式、数值与 evidence anchor"
+        case .completed(let cacheHit, let requestCount):
+            return cacheHit ? "已从本地缓存显示 · 0 次请求" : "已完成 · \(requestCount) 次请求"
+        case .cancelled:
+            return viewModel.evidenceInsightArtifact == nil ? "已取消；本次没有保存结果" : "已取消；已保留先前成功结果"
+        case .failed(let message):
+            return "失败：\(message)"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("evidenceInsightStatus")
+                .accessibilityLabel("公式推导状态")
+                .accessibilityValue(text)
+            if viewModel.isEvidenceInsightRunning {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(elapsedSuffix(at: context.date))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                Button("取消") { viewModel.cancelEvidenceInsight() }
+                    .accessibilityIdentifier("cancelEvidenceInsight")
+                    .keyboardShortcut(.cancelAction)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+        .padding(.horizontal, 14)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func elapsedSuffix(at date: Date) -> String {
+        guard let started = viewModel.evidenceInsightStartedAt else { return "" }
+        return " · 已等待 \(max(0, Int(date.timeIntervalSince(started)))) 秒"
     }
 }
 

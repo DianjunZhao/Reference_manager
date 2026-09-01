@@ -12,7 +12,7 @@ actor EvidenceInsightWorkflow {
         store: any LibraryStoring,
         client: any LLMCompleting = OpenAICompatibleClient(),
         retriever: LocalEvidenceRetriever = LocalEvidenceRetriever(),
-        timeouts: V4AnalysisTimeouts = .default
+        timeouts: V4AnalysisTimeouts = .evidence
     ) {
         self.store = store
         self.client = client
@@ -26,9 +26,12 @@ actor EvidenceInsightWorkflow {
         apiKey: String,
         onState: @escaping @Sendable (InsightWorkflowState) async -> Void
     ) async throws -> EvidenceInsightArtifact {
-        let snapshot = await store.snapshot()
-        guard let retrieved = retriever.retrieve(paper: paper, snapshot: snapshot) else {
-            throw LatticeLensError.schemaViolation("尚无可回查的本地全文 anchors；请先明确下载并提取全文。")
+        // Evidence generation is an interactive, single-paper action. Do not
+        // decode the complete V8/V9 repository here: a large library can make
+        // the button appear frozen before the first state callback is emitted.
+        let context = await store.paperContext(paperID: paper.literatureID, insightCacheKey: nil)
+        guard let retrieved = retriever.retrieve(paper: paper, context: context) else {
+            throw LatticeLensError.schemaViolation("尚无可回查的本地全文 anchors；请先读取 ar5iv HTML（或使用 PDF 回退）并提取全文。")
         }
         let source = EvidenceInputPayload(
             paper: paper,
@@ -60,7 +63,7 @@ actor EvidenceInsightWorkflow {
             terminologyHash: StableHash.sha256(settings.terminology.map { "\($0.source)|\($0.preferredZH)|\($0.note)" }.sorted().joined(separator: "\n")),
             providerCapabilityHash: StableHash.sha256("stream=\(profile.usesStreaming)|vision=\(profile.supportsVision)")
         )
-        if let cached = snapshot.evidenceInsights[key.value] {
+        if let cached = context.evidenceInsights.first(where: { $0.cacheKey == key.value }) {
             await onState(.completed(cacheHit: true, requestCount: 0))
             return cached
         }
