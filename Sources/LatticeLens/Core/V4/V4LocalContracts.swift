@@ -343,7 +343,10 @@ struct V4AnalysisTimeouts: Sendable, Equatable {
     /// Evidence is initiated from a foreground paper tab. Keep its budget
     /// short enough that a stalled provider cannot look like an indefinitely
     /// hung button, while retaining enough time for a normal stream to start.
-    static let evidence = V4AnalysisTimeouts(connect: 120, firstContent: 180, idle: 120, hard: 600)
+    /// Evidence has no application-imposed total deadline.  Connection,
+    /// first-content and idle deadlines still fail closed; once a healthy
+    /// stream is producing bytes it may run until completion or cancellation.
+    static let evidence = V4AnalysisTimeouts(connect: 120, firstContent: 180, idle: 120, hard: .infinity)
 }
 
 /// A deadline identifies the transport phase that failed.  It deliberately
@@ -433,7 +436,7 @@ private actor V4AnalysisDeadlineMonitor {
 
     private func evaluate(at date: Date) {
         guard terminalFailure == nil else { return }
-        if date >= startedAt.addingTimeInterval(timeouts.hard) {
+        if timeouts.hard.isFinite && date >= startedAt.addingTimeInterval(timeouts.hard) {
             terminalFailure = .hard
         } else if connectedAt == nil, date >= startedAt.addingTimeInterval(timeouts.connect) {
             terminalFailure = .connect

@@ -42,6 +42,23 @@ protocol LLMCompleting: Sendable {
     ) async throws -> String
 }
 
+/// Optional transport capability used by the interactive Evidence workflow.
+/// The regular protocol remains source-compatible with fixture clients, while
+/// the production client can opt out of URLSession's finite request deadline
+/// when the workflow itself intentionally has no total hard timeout.
+protocol LLMRequestTimeoutConfiguring: Sendable {
+    func complete(
+        system: String,
+        userPayload: String,
+        profile: ProviderProfile,
+        apiKey: String,
+        maximumResponseBytes: Int,
+        requestTimeout: TimeInterval?,
+        onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
+        onDelta: @escaping @Sendable (String) async -> Void
+    ) async throws -> String
+}
+
 /// Kept separate from completion so the Settings screen can use the same
 /// fixture boundary as the analysis workflows.  A UI fixture must never turn
 /// a model-discovery tap into a request to a real provider.
@@ -237,9 +254,13 @@ private enum OpenAICompatiblePayloadDecoder {
     }
 }
 
-struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelDiscovering, ProviderConnectionTesting {
+struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfiguring, VisionCompleting, ModelDiscovering, ProviderConnectionTesting {
     private let session: URLSession
     private static let modelCache = ModelDiscoveryCache()
+    /// Used only when a caller explicitly requests an unbounded completion.
+    /// Phase deadlines and user cancellation still bound the interactive
+    /// workflow; this avoids URLSession cutting off a healthy long stream.
+    private static let unboundedRequestTimeout: TimeInterval = 24 * 60 * 60
 
     init(session: URLSession? = nil) { self.session = session ?? Self.makeSafeSession() }
 
@@ -282,6 +303,22 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
         onTransportState: @escaping @Sendable (LLMTransportState) async -> Void = { _ in },
         onDelta: @escaping @Sendable (String) async -> Void = { _ in }
     ) async throws -> String {
+        try await complete(system: system, userPayload: userPayload, profile: profile, apiKey: apiKey,
+                           maximumResponseBytes: maximumResponseBytes,
+                           requestTimeout: V4AnalysisTimeouts.default.hard,
+                           onTransportState: onTransportState, onDelta: onDelta)
+    }
+
+    func complete(
+        system: String,
+        userPayload: String,
+        profile: ProviderProfile,
+        apiKey: String,
+        maximumResponseBytes: Int,
+        requestTimeout: TimeInterval?,
+        onTransportState: @escaping @Sendable (LLMTransportState) async -> Void = { _ in },
+        onDelta: @escaping @Sendable (String) async -> Void = { _ in }
+    ) async throws -> String {
         guard !profile.effectiveModel.isEmpty else { throw LatticeLensError.missingCredential }
         guard !profile.provider.apiKeyIsRequired || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw LatticeLensError.missingCredential }
         let url = try APIEndpointBuilder.endpoint(baseURL: profile.baseURL, path: "chat/completions", provider: profile.provider)
@@ -312,7 +349,7 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
                                responseFormat: profile.provider == .deepSeek ? ResponseFormat(type: "json_object") : nil)
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: profile.provider)
         request.httpMethod = "POST"
-        request.timeoutInterval = V4AnalysisTimeouts.default.hard
+        request.timeoutInterval = requestTimeout ?? Self.unboundedRequestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         if profile.usesStreaming {
@@ -325,6 +362,8 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
             var responseBytes = 0
             var receivedFirstByte = false
             var lastActivityNotification = Date.distantPast
+            var inputBuffer = Data()
+            inputBuffer.reserveCapacity(16 * 1024)
             for try await byte in bytes {
                 if !receivedFirstByte {
                     receivedFirstByte = true
@@ -338,7 +377,22 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
                     await onTransportState(.receivedFirstContent)
                     lastActivityNotification = Date()
                 }
-                for delta in try parser.consume(Data([byte])) {
+                inputBuffer.append(byte)
+                // Feed the parser in blocks instead of allocating a Data
+                // value for every network byte. This reduces CPU and actor
+                // scheduling overhead for long formula derivations.
+                if inputBuffer.count >= 16 * 1024 {
+                    for delta in try parser.consume(inputBuffer) {
+                        responseBytes += delta.lengthOfBytes(using: .utf8)
+                        guard responseBytes <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("流式响应超过本地字节上限") }
+                        result += delta
+                        await onDelta(delta)
+                    }
+                    inputBuffer.removeAll(keepingCapacity: true)
+                }
+            }
+            if !inputBuffer.isEmpty {
+                for delta in try parser.consume(inputBuffer) {
                     responseBytes += delta.lengthOfBytes(using: .utf8)
                     guard responseBytes <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("流式响应超过本地字节上限") }
                     result += delta
@@ -455,8 +509,8 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, VisionCompleting, ModelD
 
     private static func makeSafeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = V4AnalysisTimeouts.default.hard
-        configuration.timeoutIntervalForResource = V4AnalysisTimeouts.default.hard + 60
+        configuration.timeoutIntervalForRequest = Self.unboundedRequestTimeout
+        configuration.timeoutIntervalForResource = Self.unboundedRequestTimeout + 60
         configuration.httpShouldSetCookies = false
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration, delegate: RedirectBlockingDelegate(), delegateQueue: nil)

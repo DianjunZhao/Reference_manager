@@ -71,8 +71,12 @@ actor EvidenceInsightWorkflow {
         await onState(.connecting)
         let counter = EvidenceCharacterCounter()
         let receive: @Sendable (String) async -> Void = { delta in
-            let characters = await counter.append(delta)
-            await onState(.receiving(characters: characters, bytes: delta.lengthOfBytes(using: .utf8)))
+            // Coalesce UI updates to at most ~4 per second.  The transport
+            // still accumulates every delta, but avoiding one MainActor update
+            // per token materially reduces back-pressure on slow streams.
+            if let progress = await counter.append(delta) {
+                await onState(.receiving(characters: progress.characters, bytes: progress.bytes))
+            }
         }
         let transport: @Sendable (LLMTransportState) async -> Void = { state in
             if state == .waitingFirstContent { await onState(.waitingFirstContent) }
@@ -129,6 +133,9 @@ actor EvidenceInsightWorkflow {
                 requestCount = 1
             }
             try Task.checkCancellation()
+            if let progress = await counter.flush() {
+                await onState(.receiving(characters: progress.characters, bytes: progress.bytes))
+            }
             await onState(.validating)
             let insight = try PaperInsightV2Validator.decode(
                 Data(response.utf8), source: source, maximumFigures: settings.maximumFigures
@@ -181,18 +188,45 @@ actor EvidenceInsightWorkflow {
             onTransportState: onTransportState,
             onDelta: onDelta
         ) { transport, delta in
-            try await client.complete(system: system, userPayload: userPayload, profile: profile, apiKey: apiKey,
-                                      maximumResponseBytes: maximumResponseBytes,
-                                      onTransportState: transport, onDelta: delta)
+            if let configurable = client as? any LLMRequestTimeoutConfiguring {
+                // A nil request timeout is deliberate: Evidence has no total
+                // application deadline. The enforcer still applies finite
+                // connect/first-content/idle phases and user cancellation.
+                return try await configurable.complete(
+                    system: system, userPayload: userPayload, profile: profile, apiKey: apiKey,
+                    maximumResponseBytes: maximumResponseBytes, requestTimeout: nil,
+                    onTransportState: transport, onDelta: delta
+                )
+            }
+            return try await client.complete(system: system, userPayload: userPayload, profile: profile, apiKey: apiKey,
+                                             maximumResponseBytes: maximumResponseBytes,
+                                             onTransportState: transport, onDelta: delta)
         }
     }
 }
 
-private actor EvidenceCharacterCounter {
-    private var value = 0
+private struct EvidenceProgress: Sendable {
+    let characters: Int
+    let bytes: Int
+}
 
-    func append(_ text: String) -> Int {
-        value += text.count
-        return value
+private actor EvidenceCharacterCounter {
+    private var characters = 0
+    private var bytes = 0
+    private var lastPublishedAt = Date.distantPast
+
+    func append(_ text: String) -> EvidenceProgress? {
+        characters += text.count
+        bytes += text.lengthOfBytes(using: .utf8)
+        let now = Date()
+        guard now.timeIntervalSince(lastPublishedAt) >= 0.25 else { return nil }
+        lastPublishedAt = now
+        return EvidenceProgress(characters: characters, bytes: bytes)
+    }
+
+    func flush() -> EvidenceProgress? {
+        guard characters > 0 else { return nil }
+        lastPublishedAt = Date()
+        return EvidenceProgress(characters: characters, bytes: bytes)
     }
 }

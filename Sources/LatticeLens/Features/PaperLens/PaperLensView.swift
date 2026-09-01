@@ -757,13 +757,13 @@ private struct EvidenceInsightStatusBar: View {
     private var text: String {
         switch viewModel.evidenceInsightState {
         case .idle:
-            return "尚未生成公式推导 · 单次请求最长 600 秒（deep 模式最多 2 次请求）"
+            return "尚未生成公式推导 · 无总时限（连接/首段/空闲超时，可随时取消）"
         case .connecting:
-            return "正在连接模型 · 连接最长 120 秒（总计最长 600 秒）"
+            return "正在连接模型 · 最长等待 120 秒（无总时限）"
         case .waitingFirstContent:
             return "已连接 · 等待首段内容（最长 180 秒）"
         case .receiving(let characters, let bytes):
-            return "正在接收 · \(characters) 字符 / \(bytes) bytes · 空闲最长 120 秒"
+            return "正在接收 · \(characters) 字符 / \(bytes) bytes · 空闲最长 120 秒 · 无总时限"
         case .validating:
             return "正在验证公式、数值与 evidence anchor"
         case .completed(let cacheHit, let requestCount):
