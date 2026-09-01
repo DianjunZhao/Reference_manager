@@ -3,7 +3,9 @@
 > 当前开发候选为 **LatticeLens 1.0.1 (101)**，仍是 same-Mac local candidate，尚非
 > notarized/final release。它在 `release-assets/Release-1.0.1-local/` 中带有独立的
 > `manifest-v1.0.1.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
-> 版本号，而不能以同样显示为 `1.0.0 (100)` 的旧 `/Applications` 二进制代替它。
+> 版本号和 executable SHA-256，而不能以同样显示为 `1.0.1 (101)` 的旧
+> `/Applications` 二进制代替它。当前发布包的 executable SHA-256 是
+> `c39214603c5a59ae56545530707e4dbf3638fde4fb71750f2c5795f1a137017f`。
 > 当前 verifier 会执行 SwiftPM、actual SwiftData disk benchmark、Xcode build/analyze/unit、normal/
 > large fixture UI、synthetic disposable V7 migration、typed-store/physics/Radar/Compare/Notebook/
 > Bundle 与 same-Mac DMG smoke；其成功仍不替代下列人工 P0 gate。
@@ -101,6 +103,8 @@ Sources/LatticeLens/
 - Release endpoint 必须是 HTTPS。Debug 仅允许 `localhost`、`127.0.0.1` 或 `::1` 使用 HTTP；拒绝 URL 中的 user/password、query 和 fragment。
 - Fast 模式发送一次请求。Deep 模式严格发送两次：先从原始标题/摘要取得严格 JSON 翻译，再携带冻结翻译和原始资料生成解释。SSE 失败不会静默回退成 non-streaming 或重发。
 - `paper-insight-v1` 会校验 JSON 大小、控制字符、重复 key、schema/source scope、figure key allowlist、caption-only 模式和数值陈述的摘要/caption token 锚点；不合格响应不会覆盖原始资料或既有成功 artifact。
+- Paper Lens 的“公式与证据”标签在全文提取后会生成**原文重要公式、逐步 LLM 推导、结论与可回查锚点**；它不会把没有 anchor 的内容标记为原文直接支持。该标签中的 TeX、MathML、HTML-escaped MathML 与常见 Greek entities 使用本地原生数学预览，不向页面显示 `<math ...>` transport markup。
+- 长公式推导没有应用层总时限：连接最长 120 秒、首段内容最长 180 秒、连续空闲最长 120 秒；健康流会持续到完成或用户取消。状态栏显示累计字符/UTF-8 字节、已等待时间和平均字符/秒，流解析和 UI 更新分别按 16 KiB 或 100 ms、约 250 ms 合并，避免客户端逐 token 更新反压。
 
 ### LLM 实际使用检查
 

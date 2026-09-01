@@ -21,7 +21,7 @@ private enum PaperLensTab: String, CaseIterable, Identifiable {
     case overview, physics, figures, evidence, source
     var id: String { rawValue }
     var title: String {
-        switch self { case .overview: "概览"; case .physics: "物理解释"; case .figures: "重要图像"; case .evidence: "证据"; case .source: "原始资料" }
+        switch self { case .overview: "概览"; case .physics: "物理解释"; case .figures: "重要图像"; case .evidence: "公式与证据"; case .source: "原始资料" }
     }
 }
 
@@ -538,9 +538,9 @@ private struct EvidenceBadge: View {
 private struct EvidenceScopeBadge: View {
     let fullText: Bool
     var body: some View {
-        Label(fullText ? "证据范围：本地提取的全文 anchor + metadata" : "证据范围：标题 + 摘要 + figure captions", systemImage: "checkmark.shield")
+        Label(fullText ? "证据范围：本地提取的全文锚点与元数据" : "证据范围：标题、摘要与图注", systemImage: "checkmark.shield")
             .font(.caption).padding(.horizontal, 8).padding(.vertical, 5).background(.blue.opacity(0.12), in: Capsule())
-            .accessibilityLabel(fullText ? "证据范围：本地提取的全文锚点与 metadata；不含图像像素" : "证据范围：标题、摘要和图像 caption；不含全文或图像像素")
+            .accessibilityLabel(fullText ? "证据范围：本地提取的全文锚点与元数据；不含图像像素" : "证据范围：标题、摘要和图注；不含全文或图像像素")
     }
 }
 
@@ -763,9 +763,9 @@ private struct EvidenceInsightStatusBar: View {
         case .waitingFirstContent:
             return "已连接 · 等待首段内容（最长 180 秒）"
         case .receiving(let characters, let bytes):
-            return "正在接收 · \(characters) 字符 / \(bytes) bytes · 空闲最长 120 秒 · 无总时限"
+            return "正在接收 · \(characters) 字符 / \(bytes) 字节 · 空闲最长 120 秒 · 无总时限"
         case .validating:
-            return "正在验证公式、数值与 evidence anchor"
+            return "正在验证公式、数值与证据锚点"
         case .completed(let cacheHit, let requestCount):
             return cacheHit ? "已从本地缓存显示 · 0 次请求" : "已完成 · \(requestCount) 次请求"
         case .cancelled:
@@ -803,7 +803,13 @@ private struct EvidenceInsightStatusBar: View {
 
     private func elapsedSuffix(at date: Date) -> String {
         guard let started = viewModel.evidenceInsightStartedAt else { return "" }
-        return " · 已等待 \(max(0, Int(date.timeIntervalSince(started)))) 秒"
+        let elapsed = max(0, Int(date.timeIntervalSince(started)))
+        guard elapsed > 0 else { return " · 已等待 0 秒" }
+        guard case .receiving(let characters, _) = viewModel.evidenceInsightState else {
+            return " · 已等待 \(elapsed) 秒"
+        }
+        let rate = Double(characters) / Double(elapsed)
+        return " · 已等待 \(elapsed) 秒 · 平均 \(String(format: "%.1f", rate)) 字符/秒"
     }
 }
 
@@ -830,13 +836,13 @@ private struct EvidenceArtifactSummary: View {
     let artifact: EvidenceInsightArtifact
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("已验证 paper-insight-v2").font(.headline)
-            Text("检索 chunk：\(artifact.chunkIDs.count) · 生成于 \(artifact.createdAt.formatted(date: .abbreviated, time: .shortened))")
+            Text("已验证公式推导（paper-insight-v2）").font(.headline)
+            Text("检索片段：\(artifact.chunkIDs.count) · 生成于 \(artifact.createdAt.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                StatusCount(label: "direct", claims: [artifact.insight.physics.researchQuestion] + artifact.insight.physics.methodAndDataFlow + artifact.insight.physics.mainResults)
-                StatusCount(label: "inference", claims: artifact.insight.physics.reasonableInferences)
-                StatusCount(label: "missing", claims: artifact.insight.physics.missingInformation)
+                StatusCount(label: "原文直接支持", claims: [artifact.insight.physics.researchQuestion] + artifact.insight.physics.methodAndDataFlow + artifact.insight.physics.mainResults)
+                StatusCount(label: "基于原文推断", claims: artifact.insight.physics.reasonableInferences)
+                StatusCount(label: "原文未提供", claims: artifact.insight.physics.missingInformation)
             }
         }
     }
@@ -907,7 +913,7 @@ private struct FormulaDerivationSection: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
                         if let formula = claim.formulaTeX {
-                            GroupBox("原文公式（direct）") {
+                            GroupBox("原文公式（直接支持）") {
                                 LocalTeXFormulaText(source: formula)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -934,7 +940,7 @@ private struct FormulaDerivationSection: View {
                             }
                         }
                         if claim.evidenceIDs.isEmpty {
-                            Text("无全文锚点；此项不能作为 direct 公式结论。")
+                            Text("无全文锚点；此项不能作为原文直接支持的公式结论。")
                                 .font(.caption2).foregroundStyle(.orange)
                         } else {
                             VStack(alignment: .leading, spacing: 3) {

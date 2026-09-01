@@ -1,6 +1,6 @@
 {
   "schema_version": "latticelens-local-candidate-v1.0.1",
-  "generated_at_utc": "2026-09-01T23:26:21Z",
+  "generated_at_utc": "2026-09-01T23:53:31Z",
   "artifact_class": "same_mac_local_ad_hoc_candidate",
   "product_version": "1.0.1",
   "build_number": 101,
@@ -10,94 +10,71 @@
   "developer_id": false,
   "notarized": false,
   "source": {
-    "git_head_before_dirty_changes": "6d823d8c90c9823fb1c1f5e49428ba07ec1952d0",
+    "git_head_before_dirty_changes": "01fd6721e79a5d5416b346ac937d12e114061534",
     "working_tree_was_dirty": true,
-    "build_input_tree_sha256": "878d1d4893a7345b2f039240f923f5280926758971b4afa8ce8ecd1d7fb364e4",
-    "source_tree_sha256": "8c08312243beee8a28e5808d01dd0a651d768a988f382ec18e1e09a73cf96ac4"
+    "build_input_tree_sha256": "2a9509293a4097f043434b9d33b72b98da8724d5f7804e35a61abb76ac4fb119",
+    "source_patch_sha256": "8bcf57f86bf10f66b87d7ca1eb5f65341bcbdb4bb795a8ee2474b778d154267e"
   },
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "1b60fd545177319a05bfcd420aae5a678b63678ac740ec7bf48d9c7228612c42"
+    "executable_sha256": "c39214603c5a59ae56545530707e4dbf3638fde4fb71750f2c5795f1a137017f"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.1-local.dmg",
-      "sha256": "68481a15360905a7fbfad4a7f66429688b5277c789c3e15cfa22614cd7b8d224"
+      "sha256": "4e20298b8ba37b60986c78f8949122de28590ae2efb4c018376b7720efa5af67"
     }
   },
   "verification": {
-    "swift_author_pagination_regression": {
+    "release_xcode_build": {
       "status": "PASS",
-      "tests": 11,
-      "command": "swift test --package-path github --filter CoreContractTests.testAuthorPagination"
+      "command": "xcodebuild -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO",
+      "scope": "current source, x86_64 + arm64, warnings-as-errors"
     },
-    "arxiv_html_link_normalization": {
+    "author_index_http_400_recovery": {
+      "status": "PASS",
+      "tests": 3,
+      "command": "swift test --package-path github --filter CoreContractTests.testAuthorPaginationHTTP400RecoveryNeverDropsPartitionRange; CoreContractTests.testHIndexHTTP400FallsBackToLocalMostCitedComputation; CoreContractTests.testTrackedAuthorsArePinnedAndHepThAuthorsAreEligible"
+    },
+    "current_read_only_author_index_ui": {
+      "status": "PASS",
+      "scope": "/Applications/LatticeLens.app visible state: verified=17477, candidates=17477, qualified=4472, failed=0"
+    },
+    "evidence_formula_derivation": {
       "status": "PASS",
       "tests": 1,
-      "command": "swift test --package-path github --filter CoreContractTests.testArxivHTMLLinkNormalizesINSPIREVariantsAndRejectsUntrustedInput"
+      "command": "swift test --package-path github --filter EvidenceWorkflowTests.testAppFixtureDownloaderProducesExtractablePDFAndEvidenceResponse",
+      "scope": "fixture ar5iv/PDF anchor extraction, important_formula_derivations validation and cache"
     },
-    "ar5iv_html_formula_smoke": {
+    "math_markup_normalization": {
       "status": "PASS",
       "tests": 1,
-      "command": "swift test --package-path github --filter V4LocalTests.testArxivHTMLFallbackExtractsBoundedTextAndFormulaSource"
+      "command": "swift test --package-path github --filter CoreContractTests.testLocalMarkdownTeXPreservesRawSourceAndUsesOnlyNativePreview",
+      "scope": "TeX, MathML, escaped math elements and Greek entities"
     },
-    "evidence_workbench_contracts": {
+    "network_responsiveness": {
       "status": "PASS",
-      "tests": 55,
-      "command": "swift test --package-path github --filter V4LocalTests"
+      "tests": 2,
+      "command": "swift test --package-path github --filter CoreContractTests.testInspireConditionalGETUsesETagAndSafelyReusesCachedBodyOn304; CoreContractTests.testSavedCredentialReadNeverBlocksTheInteractiveMainActor",
+      "scope": "conditional GET cache and responsive main actor during credential read"
     },
-    "core_author_contracts": {
+    "evidence_long_stream": {
       "status": "PASS",
-      "tests": 57,
-      "skipped": 2,
-      "command": "swift test --package-path github --filter CoreContractTests"
+      "tests": 2,
+      "command": "swift test --package-path github --filter V4LocalTests.testEvidenceProfileHasNoTotalDeadlineWhileHealthyTransportContinues; EvidenceWorkflowTests.testEvidenceAndVisionDeadlinesRejectOneRequestWithoutRetry",
+      "scope": "no total application deadline; finite connect/first-content/idle budgets, cumulative progress and cancellation"
     },
-    "public_inspire_read_only_shape_smoke": {
+    "dmg_fixture_no_network_smoke": {
       "status": "PASS",
-      "scope": "previous read-only smoke retained; not rerun for this UI-only source change"
-    },
-    "full_author_candidate_pagination": {
-      "status": "PASS",
-      "scope": "previous seven disjoint hep-lat/hep-th partitions retained; not rerun for this UI-only source change"
-    },
-    "installed_fixture_no_network_smoke": {
-      "status": "PASS",
-      "scope": "/Applications/LatticeLens.app 1.0.1 (101), unbounded Evidence request with phase deadlines and coalesced stream progress",
-      "command": "direct executable signature/hash verification after replacement",
-      "executable_sha256": "1b60fd545177319a05bfcd420aae5a678b63678ac740ec7bf48d9c7228612c42"
-    },
-    "author_index_progress_state_fix": {
-      "status": "PASS",
-      "tests": 1,
-      "command": "swift test --package-path github --filter CoreContractTests.testFirstPaintUsesBoundedStoreProjectionsInsteadOfWholeSnapshot"
-    },
-    "latest_dmg_fixture_no_network_smoke": {
-      "status": "PASS",
-      "scope": "Release-1.0.0-local/LatticeLens-1.0.1-local.dmg mounted read-only; disposable fixture store",
-      "command": "mounted DMG executable; 5s alive; TERM clean exit; hdiutil verify"
-    },
-    "evidence_workflow_bounded_projection": {
-      "status": "PASS",
-      "tests": 1,
-      "command": "swift test --package-path github --filter EvidenceWorkflowTests.testAppFixtureDownloaderProducesExtractablePDFAndEvidenceResponse"
-    },
-    "evidence_deadline_budget": {
-      "status": "PASS",
-      "tests": 1,
-      "command": "swift test --package-path github --filter EvidenceWorkflowTests.testEvidenceAndVisionDeadlinesRejectOneRequestWithoutRetry",
-      "note": "production Evidence has phase deadlines only: connect=120 s, firstContent=180 s, idle=120 s; no total application deadline"
-    },
-    "evidence_streaming_throughput": {
-      "status": "PASS",
-      "scope": "16 KiB-or-100 ms SSE parse batching; UI progress coalesced at 250 ms; cumulative UTF-8 bytes"
+      "scope": "mounted read-only DMG; verified signature; project-local fixture/no-network copy launch alive for 5 s, then TERM clean exit; no real library, Keychain, INSPIRE or LLM access"
     }
   },
   "release_status": {
     "ar5iv_preferred": true,
     "pdf_download_is_fallback": true,
-    "manual_receipt_rebinding": "required_before_final_seal",
+    "manual_receipt_rebinding": "required_before_final_seal_for_this_exact_dmg",
     "developer_id_and_notarization": "out_of_scope",
-    "install_boundary": "Current responsive unbounded Evidence DMG was installed to /Applications after confirming no LatticeLens process was running; no real Application Support library, Keychain, or research material was opened."
+    "install_boundary": "This release was built and fixture-smoked without replacing the running /Applications/LatticeLens.app. Quit the installed app before manually replacing it."
   }
 }
