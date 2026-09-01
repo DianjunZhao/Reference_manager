@@ -1391,6 +1391,22 @@ actor V8TypedLibraryStore: LibraryStoring {
         }
     }
 
+    /// Read only the compact generation rows for the progress capsule.  Do
+    /// not materialize the complete compatibility snapshot on every sidebar
+    /// refresh (the author index can deliver thousands of queue outcomes).
+    func authorIndexProgressState() -> SyncCheckpointState? {
+        do {
+            let rows = try modelContext.fetch(FetchDescriptor<StoredV8AuthorIndexGeneration>())
+            return rows.compactMap { row -> AuthorIndexGeneration? in
+                try? JSONDecoder.latticeLens.decode(AuthorIndexGeneration.self, from: row.generationData)
+            }
+            .max { $0.startedAt < $1.startedAt }?.state
+        } catch {
+            availabilityWarning = "V8 typed store 作者索引状态读取失败；继续显示可读作者行"
+            return nil
+        }
+    }
+
     func author(recid: Int) -> Author? {
         do {
             let descriptor = FetchDescriptor<StoredV8Author>(predicate: #Predicate { $0.recid == recid })

@@ -56,6 +56,10 @@ protocol LibraryStoring: Sendable {
     /// Startup/sidebar projection.  Production stores override the default
     /// snapshot compatibility path with a bounded typed-row query.
     func authorSidebarProjection() async -> LibraryAuthorSidebarProjection
+    /// State of the most recent author-index generation.  This is kept
+    /// separate from the sidebar membership projection so a completed queue
+    /// is not painted as perpetually active after relaunch.
+    func authorIndexProgressState() async -> SyncCheckpointState?
     func author(recid: Int) async -> Author?
     func papers(forAuthorRecid authorRecid: Int) async -> [Paper]
     func papers(forIDs: [Int]) async -> [Int: Paper]
@@ -183,6 +187,13 @@ struct PaperSyncPageCommit: Sendable {
 }
 
 extension LibraryStoring {
+    func authorIndexProgressState() async -> SyncCheckpointState? {
+        // Compatibility stores predate the typed generation projection.  A
+        // nil result deliberately avoids forcing a whole-library snapshot on
+        // the first paint; callers use a bounded count-based fallback.
+        nil
+    }
+
     func authorSidebarProjection() async -> LibraryAuthorSidebarProjection {
         let snapshot = await snapshot()
         let activeMembership = snapshot.authorIndexGenerations.values

@@ -2204,13 +2204,23 @@ final class AppViewModel: ObservableObject {
         let candidates = projection.activeMembership.map { membership in
             projection.authors.filter { !$0.isSelf && membership.contains($0.recid) }
         } ?? projection.authors.filter { $0.isHIndexCandidate && !$0.isSelf }
-        authorIndexProgress = AuthorIndexProgress(verified: candidates.filter { $0.hIndex != nil }.count,
+        let verified = candidates.filter { $0.hIndex != nil }.count
+        let failed = candidates.filter { $0.hIndexState == .failed }.count
+        // The generation row is the durable source of truth.  The fallback
+        // keeps compatibility/fixture stores useful when they predate the
+        // generation model, while avoiding the old unconditional `.active`
+        // state that made a completed index look stuck after relaunch.
+        let fallbackState: SyncCheckpointState = candidates.isEmpty
+            ? .active
+            : (verified == candidates.count && failed == 0 ? .completed : .active)
+        let state = await store.authorIndexProgressState() ?? fallbackState
+        authorIndexProgress = AuthorIndexProgress(verified: verified,
                                                   candidates: candidates.count,
-                                                  failed: candidates.filter { $0.hIndexState == .failed }.count,
+                                                  failed: failed,
                                                   qualified: candidates.filter { $0.hIndexState == .qualified }.count,
                                                   rejected: candidates.filter { $0.hIndexState == .rejected }.count,
                                                   remaining: candidates.filter { $0.hIndex == nil }.count,
-                                                  state: .active)
+                                                  state: state)
     }
 
     private func reloadAuthorsIfDue(force: Bool = false) async {
