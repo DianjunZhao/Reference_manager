@@ -364,6 +364,7 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
             var lastActivityNotification = Date.distantPast
             var inputBuffer = Data()
             inputBuffer.reserveCapacity(16 * 1024)
+            var lastParserFlush = Date()
             for try await byte in bytes {
                 if !receivedFirstByte {
                     receivedFirstByte = true
@@ -381,14 +382,17 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
                 // Feed the parser in blocks instead of allocating a Data
                 // value for every network byte. This reduces CPU and actor
                 // scheduling overhead for long formula derivations.
-                if inputBuffer.count >= 16 * 1024 {
-                    for delta in try parser.consume(inputBuffer) {
+                let now = Date()
+                if inputBuffer.count >= 16 * 1024 || now.timeIntervalSince(lastParserFlush) >= 0.1 {
+                    let buffered = inputBuffer
+                    inputBuffer.removeAll(keepingCapacity: true)
+                    for delta in try parser.consume(buffered) {
                         responseBytes += delta.lengthOfBytes(using: .utf8)
                         guard responseBytes <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("流式响应超过本地字节上限") }
                         result += delta
                         await onDelta(delta)
                     }
-                    inputBuffer.removeAll(keepingCapacity: true)
+                    lastParserFlush = now
                 }
             }
             if !inputBuffer.isEmpty {

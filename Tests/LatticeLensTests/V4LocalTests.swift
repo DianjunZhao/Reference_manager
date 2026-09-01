@@ -1343,6 +1343,30 @@ final class V4LocalTests: XCTestCase {
         XCTAssertEqual(result, "{}")
     }
 
+    func testEvidenceProfileHasNoTotalDeadlineWhileHealthyTransportContinues() async throws {
+        XCTAssertEqual(V4AnalysisTimeouts.evidence.connect, 120)
+        XCTAssertEqual(V4AnalysisTimeouts.evidence.firstContent, 180)
+        XCTAssertEqual(V4AnalysisTimeouts.evidence.idle, 120)
+        XCTAssertFalse(V4AnalysisTimeouts.evidence.hard.isFinite)
+
+        let timeouts = V4AnalysisTimeouts(connect: 0.02, firstContent: 0.02, idle: 0.02, hard: .infinity)
+        let result = try await V4AnalysisDeadlineEnforcer.perform(
+            timeouts: timeouts, maximumResponseBytes: 100,
+            onTransportState: { _ in }, onDelta: { _ in }
+        ) { transport, delta in
+            await transport(.connected)
+            await transport(.waitingFirstContent)
+            await delta("{")
+            for _ in 0..<4 {
+                try await Task.sleep(nanoseconds: 12_000_000)
+                await transport(.receivedFirstContent)
+            }
+            await delta("}")
+            return "{}"
+        }
+        XCTAssertEqual(result, "{}")
+    }
+
     func testAnalysisDeadlineEnforcerDropsLateCallbacksAndDoesNotRetry() async throws {
         let recorder = V4DeadlineCallbackRecorder()
         let invocations = V4DeadlineInvocationCounter()
