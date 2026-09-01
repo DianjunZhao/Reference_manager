@@ -2,6 +2,19 @@ import XCTest
 @testable import LatticeLens
 
 final class CoreContractTests: XCTestCase {
+    func testArxivHTMLLinkNormalizesINSPIREVariantsAndRejectsUntrustedInput() throws {
+        let bare = try XCTUnwrap(ArxivHTMLLink.url(for: "2608.12345"))
+        XCTAssertEqual(bare.absoluteString, "https://ar5iv.labs.arxiv.org/html/2608.12345")
+        XCTAssertEqual(ArxivHTMLLink.normalizedIdentifier(from: "arXiv:hep-lat/9901001"), "hep-lat/9901001")
+        XCTAssertEqual(ArxivHTMLLink.url(for: "https://arxiv.org/abs/2608.12345v2")?.absoluteString,
+                       "https://ar5iv.labs.arxiv.org/html/2608.12345v2")
+        XCTAssertEqual(ArxivHTMLLink.url(for: "https://arxiv.org/pdf/hep-lat/9901001.pdf")?.absoluteString,
+                       "https://ar5iv.labs.arxiv.org/html/hep-lat/9901001")
+        XCTAssertNil(ArxivHTMLLink.url(for: "https://arxiv.org/abs/2608.12345?download=1"))
+        XCTAssertNil(ArxivHTMLLink.url(for: "https://evil.example/html/2608.12345"))
+        XCTAssertNil(ArxivHTMLLink.url(for: "../2608.12345"))
+    }
+
     func testFixtureLaunchConfigurationFailsClosedForProductionAndProtectsXCTestStoreRoot() {
         XCTAssertFalse(AppLaunchConfiguration.usesFixtureDependencies(environment: [:], arguments: []))
         XCTAssertTrue(AppLaunchConfiguration.usesFixtureDependencies(

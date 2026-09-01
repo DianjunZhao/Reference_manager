@@ -147,6 +147,10 @@ struct Paper: Codable, Hashable, Identifiable, Sendable {
 
     var id: Int { literatureID }
     var displayTitle: String { titles.first?.value ?? "Untitled record \(literatureID)" }
+    /// A deterministic ar5iv HTML source when INSPIRE supplied an arXiv
+    /// identifier.  This is a URL-only convenience; it performs no network
+    /// request and does not imply that ar5iv successfully rendered the paper.
+    var arxivHTMLURL: URL? { arxivID.flatMap(ArxivHTMLLink.url(for:)) }
     var preferredAbstract: String? { abstracts.first?.value }
     /// INSPIRE's publication year is authoritative when present.  A paper's
     /// preprint date remains available for provenance and is only used when no

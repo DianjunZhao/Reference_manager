@@ -349,7 +349,7 @@ private struct CompareWorkbenchTab: View {
                                 Divider()
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack {
-                                        Text("PDF p.\(previewAnchor.page ?? 0)")
+                                        Text("全文第 \(previewAnchor.page ?? 0) 页")
                                             .font(.headline)
                                             .accessibilityIdentifier("pdfAnchorPreviewPageTitle-\(previewAnchor.page ?? 0)")
                                         Spacer()
@@ -910,7 +910,7 @@ private struct NotebookEntryEditor: View {
                                     // native picker action changed this draft
                                     // before its anchor choices are exposed.
                                     .accessibilityIdentifier("notebookSelectedPaper")
-                                    .accessibilityLabel("Notebook selected paper")
+                                    .accessibilityLabel("笔记本当前论文")
                                     // The record ID remains in the visible selected-paper
                                     // text. Do not publish it as a bare accessibility value:
                                     // AppKit localizes digit sequences (for example,
@@ -920,10 +920,10 @@ private struct NotebookEntryEditor: View {
                                     // its own visible INSPIRE record ID.
                                     .accessibilityValue("selected")
                             } else {
-                                Text("必须选择一个 paper。更改 paper 会清空未保存的 anchor 草稿。")
+                                Text("必须选择一篇论文。更改论文会清空未保存的锚点草稿。")
                                     .font(.caption).foregroundStyle(.secondary)
                                     .accessibilityIdentifier("notebookSelectedPaper")
-                                    .accessibilityLabel("Notebook selected paper")
+                                    .accessibilityLabel("笔记本当前论文")
                                     .accessibilityValue("none")
                             }
                             TextField("筛选标题或 INSPIRE 记录 ID", text: $paperFilter)
@@ -964,7 +964,7 @@ private struct NotebookEntryEditor: View {
                             .scrollIndicators(.visible)
                             .accessibilityElement(children: .contain)
                             .accessibilityIdentifier("notebookPapersScrollableList")
-                            .accessibilityLabel("Notebook paper selection list")
+                            .accessibilityLabel("笔记本论文选择列表")
                         }
                     }
                     GroupBox("已选锚点 · 稳定顺序") {
@@ -985,22 +985,22 @@ private struct NotebookEntryEditor: View {
                             }
                         }
                         if !selectedAnchorsAreValid {
-                            Text("有选中的 anchor 已失效、隔离或不属于当前 paper。移除它后才能保存；不会进行模糊重定位。")
+                            Text("有选中的锚点已失效、隔离或不属于当前论文。移除它后才能保存；不会进行模糊重定位。")
                                 .font(.caption).foregroundStyle(.red)
                         }
                     }
                     if selectedPaperID != nil {
                         GroupBox("可用的有效锚点") {
                             if availableAnchors.isEmpty {
-                                Text("该论文暂无可用锚点。可先在 PDF 或证据页面创建。")
+                            Text("该论文暂无可用锚点。可先在全文或证据页面创建。")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text("已选择 \(selectedAnchorIDs.count) 个 anchor")
+                                    Text("已选择 \(selectedAnchorIDs.count) 个锚点")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .accessibilityIdentifier("notebookSelectedAnchorCount")
-                                        .accessibilityLabel("Notebook draft anchor count")
+                                        .accessibilityLabel("笔记本草稿锚点数量")
                                         .accessibilityValue("\(selectedAnchorIDs.count)")
                                     ScrollView(.vertical, showsIndicators: true) {
                                         LazyVStack(alignment: .leading, spacing: 7) {
@@ -1048,7 +1048,7 @@ private struct NotebookEntryEditor: View {
                                     .scrollIndicators(.visible)
                                     .accessibilityElement(children: .contain)
                                     .accessibilityIdentifier("notebookAnchorsScrollableList")
-                                    .accessibilityLabel("Available valid notebook anchors")
+                                        .accessibilityLabel("可用的有效笔记本锚点")
                                 }
                             }
                         }

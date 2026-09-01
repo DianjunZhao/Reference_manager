@@ -5,13 +5,13 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
-- Added an explicit ar5iv HTML fallback for papers with an arXiv identifier but
-  no INSPIRE full-text document. The source is fetched only after user
-  confirmation, stored with a content hash, and converted into bounded
-  full-text anchors while preserving MathML TeX annotations for formula
-  derivations. Extracted MathML annotations are emitted as real `$…$` math
-  delimiters, so the native renderer does not expose transport markers.
-  Existing INSPIRE/arXiv PDF downloads remain supported.
+- Made the deterministic ar5iv HTML link the preferred Evidence source for
+  records with an arXiv identifier, independent of INSPIRE PDF coverage. The
+  URL is shown directly and can be opened without a local download; reading it
+  into the app-owned cache still requires explicit confirmation. Extracted
+  MathML TeX annotations become real `$…$` math delimiters and feed bounded
+  formula derivations. Existing INSPIRE/arXiv PDF downloads remain an explicit
+  fallback.
 
 - Fixed author-index pagination after a bounded HTTP 400 recovery: when the
   service accepts a smaller page size, the durable next URL now keeps that

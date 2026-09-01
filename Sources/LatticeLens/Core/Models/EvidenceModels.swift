@@ -1,5 +1,55 @@
 import Foundation
 
+/// Builds the deterministic ar5iv HTML URL used by the Evidence reader.
+/// INSPIRE has historically emitted an arXiv eprint as a bare identifier,
+/// `arXiv:<id>`, or an abs/pdf URL.  Normalize those equivalent forms before
+/// interpolating the identifier into the allow-listed HTTPS path.  This helper
+/// never performs network I/O and returns nil for malformed/untrusted input.
+enum ArxivHTMLLink {
+    static let host = "ar5iv.labs.arxiv.org"
+
+    static func normalizedIdentifier(from raw: String) -> String? {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.count <= 256 else { return nil }
+
+        if let url = URL(string: value), let urlHost = url.host?.lowercased() {
+            if ["arxiv.org", "export.arxiv.org", host].contains(urlHost) {
+                guard url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return nil }
+                let path = url.path
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if let marker = ["abs/", "pdf/", "html/"].first(where: { path.lowercased().hasPrefix($0) }) {
+                    value = String(path.dropFirst(marker.count))
+                }
+            }
+        }
+
+        if let colon = value.firstIndex(of: ":"), value[..<colon].lowercased() == "arxiv" {
+            value = String(value[value.index(after: colon)...])
+        }
+        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        if value.lowercased().hasSuffix(".pdf") { value.removeLast(4) }
+        guard !value.isEmpty, value.count <= 128,
+              !value.contains(".."), !value.contains("\\"),
+              !value.contains("//"),
+              value.range(of: #"^[A-Za-z0-9][A-Za-z0-9._/-]*$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        return value
+    }
+
+    static func url(for raw: String) -> URL? {
+        guard let identifier = normalizedIdentifier(from: raw) else { return nil }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = host
+        components.path = "/html/\(identifier)"
+        guard let url = components.url,
+              url.scheme == "https", url.host == host,
+              url.query == nil, url.fragment == nil else { return nil }
+        return url
+    }
+}
+
 struct ReadingState: Codable, Hashable, Sendable {
     let paperID: Int
     var isRead: Bool

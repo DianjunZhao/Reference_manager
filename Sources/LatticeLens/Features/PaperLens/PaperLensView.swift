@@ -377,7 +377,7 @@ private struct SourceTab: View {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(paper.titles) { title in
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("[\(title.source ?? "unknown")]").font(.caption).foregroundStyle(.secondary)
+                                Text("[\(title.source ?? "未知来源")]").font(.caption).foregroundStyle(.secondary)
                                 LocalMarkdownTeXText(source: title.value)
                             }
                         }
@@ -387,7 +387,7 @@ private struct SourceTab: View {
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(paper.abstracts) { abstract in
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("[\(abstract.source ?? "unknown")]").font(.caption).foregroundStyle(.secondary)
+                                Text("[\(abstract.source ?? "未知来源")]").font(.caption).foregroundStyle(.secondary)
                                 LocalMarkdownTeXText(source: abstract.value)
                             }
                         }
@@ -577,7 +577,7 @@ private struct EvidenceTab: View {
                     Button("删除本地全文", role: .destructive) { viewModel.deleteSelectedFullText() }
                         .accessibilityIdentifier("deleteSelectedFullText")
                     if let anchor = firstAvailablePDFAnchor, viewModel.selectedFullTextDocument?.sourceKind != .arxivHTML {
-                        Button("打开当前 PDF anchor") { previewAnchor = anchor }
+                        Button("打开当前全文锚点") { previewAnchor = anchor }
                             .accessibilityIdentifier("openFirstPDFEvidenceAnchor")
                             .keyboardShortcut("o", modifiers: [.command, .shift])
                     }
@@ -591,7 +591,7 @@ private struct EvidenceTab: View {
             GroupBox("重要公式推导（LLM）") {
                 if let artifact = viewModel.evidenceInsightArtifact {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("以下推导仅来自已提取的全文 chunks，并逐条绑定可回查的 anchor；不会把摘要级猜测当作公式。")
+                        Text("以下推导仅来自已提取的全文片段，并逐条绑定可回查的锚点；不会把摘要级猜测当作公式。")
                             .font(.caption).foregroundStyle(.secondary)
                         FormulaDerivationSection(
                             claims: artifact.insight.physics.importantFormulaDerivations,
@@ -610,27 +610,53 @@ private struct EvidenceTab: View {
                 }
             }
             .padding(.horizontal)
+            if let arxivURL = paper.arxivHTMLURL {
+                GroupBox("ar5iv HTML（优先全文来源）") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: "globe")
+                                .foregroundStyle(.blue)
+                                .accessibilityHidden(true)
+                            Text("不下载 INSPIRE PDF，直接读取 ar5iv HTML；公式可从原文 MathML/TeX 提取并回查。")
+                                .font(.caption)
+                            Spacer(minLength: 4)
+                            Link("打开链接", destination: arxivURL)
+                                .accessibilityIdentifier("openArxivHTML-\(paper.literatureID)")
+                        }
+                        Text(arxivURL.absoluteString)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        if viewModel.selectedFullTextDocument == nil {
+                            Button {
+                                viewModel.requestArxivHTMLPreflight()
+                            } label: {
+                                Label("预检并读取 ar5iv HTML（不下载 PDF）", systemImage: "arrow.down.doc")
+                            }
+                            .accessibilityIdentifier("downloadArxivHTML-\(paper.literatureID)")
+                        } else if viewModel.selectedFullTextDocument?.sourceKind == .arxivHTML {
+                            Text("当前 Evidence 已使用该 ar5iv HTML；本地只保存受限、带 SHA-256 的 HTML 副本。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal)
+            }
             if viewModel.selectedFullTextDocument == nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("尚未下载全文：当前只可浏览 abstract/caption anchors。")
+                    Text("尚未下载全文：当前只可浏览摘要/图注锚点。")
                     ForEach(paper.documents.filter { $0.isFullText && $0.url != nil }) { document in
                         Button {
                             viewModel.requestFullTextPreflight(document)
                         } label: {
-                            Label("预检并下载 \(document.source ?? "INSPIRE") 全文", systemImage: "arrow.down.doc")
+                            Label("PDF 回退：预检并读取 \(document.source ?? "INSPIRE") 全文", systemImage: "arrow.down.doc")
                         }
                             .accessibilityIdentifier("downloadFullText-\(document.key)")
                     }
-                    if let arxivID = paper.arxivID, !arxivID.isEmpty {
-                        Button {
-                            viewModel.requestArxivHTMLPreflight()
-                        } label: {
-                            Label("从 ar5iv 获取 HTML 全文（arXiv:\(arxivID)）", systemImage: "globe")
-                        }
-                        .accessibilityIdentifier("downloadArxivHTML-\(paper.literatureID)")
-                    }
                     if paper.documents.filter({ $0.isFullText && $0.url != nil }).isEmpty {
-                        Text(paper.arxivID == nil ? "INSPIRE record 未提供受信任的 public fulltext URL。" : "无 INSPIRE 全文时，可使用上方 ar5iv HTML 来源。")
+                        Text(paper.arxivHTMLURL == nil ? "INSPIRE record 未提供可用的 arXiv ID 或 public fulltext URL。" : "未读取 INSPIRE PDF；可使用上方 ar5iv HTML 来源。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -662,7 +688,7 @@ private struct EvidenceTab: View {
                     .foregroundStyle(annotationStatus.contains("失败") ? .red : .secondary)
                     .padding(.horizontal)
                     .accessibilityIdentifier("annotationSaveStatus")
-                    .accessibilityLabel("Local annotation save status")
+                    .accessibilityLabel("本地标注保存状态")
                     .accessibilityValue(annotationStatus)
             }
             List(anchors) { anchor in
@@ -683,7 +709,7 @@ private struct EvidenceTab: View {
                     // to the v3 document/hash-derived identifier payload.
                     .accessibilityIdentifier("evidenceAnchor-\(anchor.sourceKind.rawValue):\(anchor.id)")
                     HStack {
-                        Button("加 annotation") { viewModel.createUserAnnotation(from: anchor) }
+                        Button("添加标注") { viewModel.createUserAnnotation(from: anchor) }
                             .buttonStyle(.link)
                             .fixedSize(horizontal: true, vertical: false)
                             .accessibilityIdentifier("annotateEvidence-\(anchor.id)")
@@ -729,7 +755,7 @@ private struct EvidenceAnchorRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(anchor.sourceKind.displayNameZH).font(.caption).foregroundStyle(.secondary)
-                if let page = anchor.page { Text("PDF p.\(page)").font(.caption).foregroundStyle(.secondary) }
+                if let page = anchor.page { Text("全文第 \(page) 页").font(.caption).foregroundStyle(.secondary) }
                 if let section = anchor.section { Text(section).font(.caption).lineLimit(1).foregroundStyle(.secondary) }
             }
             LocalMarkdownTeXText(source: anchor.quote)
@@ -886,7 +912,7 @@ struct PDFAnchorPreview: View {
     @State private var selection: PDFTextSelectionAnchor?
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("PDF p.\(anchor.page ?? 0)")
+            Text("全文第 \(anchor.page ?? 0) 页")
                 .font(.headline)
                 // As with the nested Compare inspector, identify a concrete
                 // visible child instead of relying solely on a sheet root.
@@ -898,14 +924,14 @@ struct PDFAnchorPreview: View {
                     .accessibilityIdentifier("pdfKitReader")
                 if let selection, let createAnnotation {
                     HStack {
-                        Text("已选 p.\(selection.page) · range \(selection.characterRangeStart)–\(selection.characterRangeEnd)")
+                        Text("已选第 \(selection.page) 页 · 范围 \(selection.characterRangeStart)–\(selection.characterRangeEnd)")
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        Button("将选中文本加 annotation") { createAnnotation(selection) }
+                        Button("将选中文本添加为标注") { createAnnotation(selection) }
                             .accessibilityIdentifier("annotatePDFSelection")
                     }
                 } else if createAnnotation != nil {
-                    Text("选择同一 PDF 页中唯一出现的文本后可创建 annotation；跨页或重复文本不会做模糊定位。")
+                    Text("选择同一 PDF 页中唯一出现的文本后可创建标注；跨页或重复文本不会做模糊定位。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             } else {
@@ -1065,7 +1091,7 @@ private struct ReferenceControls: View {
                         .frame(minHeight: 90)
                         .overlay(alignment: .topLeading) {
                             if note.isEmpty {
-                                Text("本地阅读 note（不发送至 provider）")
+                                Text("本地阅读笔记（不发送至 provider）")
                                     .foregroundStyle(.secondary)
                                     .padding(8)
                                     .allowsHitTesting(false)

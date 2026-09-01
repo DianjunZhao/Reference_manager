@@ -46,9 +46,9 @@ LatticeLens 是一个原生 macOS SwiftUI 文献工作台，面向 INSPIRE 的 h
 - 作者候选仅指 `author.arxiv_categories` 含 `hep-lat` 或 `hep-th` 的 INSPIRE author record；完成 h-index 校验后仅展示 `h > 20`，不是历史 cross-list 合作者全集。
 - 固定 INSPIRE recid `2010363` 为“我的主页”，无论 h-index 都置顶。
 - 正式作者列表仅包含经验证的 `INSPIRE h(all, including self-citations) > 20`。`20` 不合格；请求失败保持 `failed/unknown`，绝不写成 `0` 或“不合格”。
-- Paper Lens 默认只使用标题、摘要和 INSPIRE figure captions；用户明确确认后可从 INSPIRE PDF 或 arXiv 对应的 ar5iv HTML 获取全文并生成 bounded evidence anchors。全文来源、URL、SHA-256 和提取状态会保留；不声称模型看过图像像素。
+- Paper Lens 默认只使用标题、摘要和 INSPIRE figure captions；有 arXiv ID 时优先提供对应的 ar5iv HTML 直链。用户明确确认后才读取受限 HTML（不下载 INSPIRE PDF）并生成 bounded evidence anchors；PDF 仅作为明确标注的回退路径。全文来源、URL、SHA-256 和提取状态会保留；不声称模型看过图像像素。
 
-当 INSPIRE record 没有 `documents[].fulltext` 时，Paper Lens 会在存在 arXiv ID 的情况下提供明确标注的 ar5iv HTML 备用入口（`https://ar5iv.labs.arxiv.org/html/<arXiv-ID>`）。ar5iv 是 LaTeX→HTML 的渲染服务，个别论文可能转换失败或缺少公式/结构；失败时应用保持原始 metadata 可用，不把失败伪装成全文成功。
+当记录存在 arXiv ID 时，Paper Lens 会提供明确标注的 ar5iv HTML 入口（`https://ar5iv.labs.arxiv.org/html/<arXiv-ID>`），无论 INSPIRE 是否提供 PDF。该链接可直接在浏览器打开；若要生成证据和公式推导，用户再确认一次受限 HTML 读取。ar5iv 是 LaTeX→HTML 的渲染服务，个别论文可能转换失败或缺少公式/结构；失败时应用保持原始 metadata 可用，不把失败伪装成全文成功。没有 arXiv ID 的记录仍只能使用其受信任的 INSPIRE 文档。
 
 ## 打开与运行
 
@@ -296,8 +296,10 @@ VoiceOver、Developer ID、公证、Gatekeeper 与跨机安装均未验证。
 - paper-insight-v2 accepts only bounded retrieved chunks plus the anchor
   allowlist from that run. Direct/inference claims require anchors; a missing
   information claim cannot carry one. v2 artifacts are separate from v1 cache.
-- Before PDF download, Evidence Lens can show local abstract/caption anchors
-  without labelling them as full-text evidence.
+- Before any full-text read, Evidence Lens shows the direct ar5iv URL (when an
+  arXiv ID exists) and local abstract/caption anchors without labelling them as
+  full-text evidence. Confirming the ar5iv path reads HTML once into the
+  app-owned cache; it does not fetch an INSPIRE PDF.
 - The UI contains local read/favorite/note/tag/collection controls and global
   paper search. Markdown export is secret-free; a BibTeX record is never
   fabricated if the INSPIRE endpoint fails.

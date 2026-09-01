@@ -95,7 +95,7 @@ struct MainWorkspaceView: View {
             Button("了解并继续") { viewModel.acceptEvidencePrivacyDisclosure() }
                 .accessibilityIdentifier("acceptEvidenceDisclosure")
         } message: {
-            Text("将向当前 provider endpoint 发送本次本地检索出的全文 chunks、对应 quote anchors，以及标题/摘要/captions。不会发送图像像素或整份全文；只有 validator 通过且所有 direct/inference claim 可回查时才保存结果。")
+            Text("将向当前 provider endpoint 发送本次本地检索出的全文片段、对应引用锚点，以及标题/摘要/图注。不会发送图像像素或整份全文；只有验证器通过且所有 direct/inference claim 可回查时才保存结果。")
         }
         .alert("发送缩放后的 figure 图像像素", isPresented: $viewModel.presentVisionPrivacyDisclosure) {
             Button("暂不发送", role: .cancel) { viewModel.declineVisionPrivacyDisclosure() }
@@ -111,21 +111,24 @@ struct MainWorkspaceView: View {
                     let resized = preflight.resizedDimensions[key].map { "\($0.first ?? 0)×\($0.dropFirst().first ?? 0)" } ?? "unknown"
                     return "\(key): \(original) → \(resized), \(preflight.imageBytes[key] ?? 0) B"
                 }.joined(separator: "；")
-                Text("本地已冻结 payload hash：\(preflight.frozenHash)。figure：\(figures)。原始/发送尺寸：\(sizes)。总发送 bytes：\(bytes)；endpoint：\(preflight.endpoint)；provider request：\(preflight.requestCount)。确认仅对该 hash 有效；不会发送 PDF 页面或其它图像。")
+                Text("本地已冻结 payload hash：\(preflight.frozenHash)。图像：\(figures)。原始/发送尺寸：\(sizes)。总发送字节数：\(bytes)；endpoint：\(preflight.endpoint)；provider 请求次数：\(preflight.requestCount)。确认仅对该 hash 有效；不会发送 PDF 页面或其它图像。")
             } else {
                 Text("没有冻结的 Vision preflight；不会发送像素。")
             }
         }
-        .alert("下载本地全文？", isPresented: $viewModel.presentFullTextPreflight) {
+        .alert(viewModel.fullTextPreflight?.sourceKind == .arxivHTML ? "读取 ar5iv HTML？" : "下载本地全文？", isPresented: $viewModel.presentFullTextPreflight) {
             Button("取消", role: .cancel) { viewModel.cancelFullTextPreflight() }
                 .accessibilityIdentifier("cancelFullTextPreflight")
-            Button("下载并提取") { viewModel.confirmFullTextDownload() }
+            Button(viewModel.fullTextPreflight?.sourceKind == .arxivHTML ? "读取并提取 HTML" : "下载并提取") { viewModel.confirmFullTextDownload() }
                 .accessibilityIdentifier("confirmFullTextDownload")
         } message: {
             if let preflight = viewModel.fullTextPreflight {
                 let estimate = preflight.advertisedByteCount.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "服务器未提供"
                 let limit = ByteCountFormatter.string(fromByteCount: Int64(preflight.hardByteLimit), countStyle: .file)
-                Text("来源：\(preflight.sourceKind.displayNameZH)\n\(preflight.finalURL.absoluteString)\nContent-Length：\(estimate)\n硬上限：\(limit)\n存储：\(preflight.cacheCategory)。确认后才会发送一次受限 GET；完成后会显示实际 bytes、SHA-256 和提取状态。")
+                let storage = preflight.sourceKind == .arxivHTML
+                    ? "确认后只读取一次受限 HTML GET，并在 app-owned cache 保存带 SHA-256 的副本；不会下载 INSPIRE PDF。"
+                    : "确认后才会发送一次受限 GET；完成后会显示实际字节数、SHA-256 和提取状态。"
+                Text("来源：\(preflight.sourceKind.displayNameZH)\n\(preflight.finalURL.absoluteString)\n预计大小：\(estimate)\n硬上限：\(limit)\n\(storage)")
             } else {
                 Text("尚无有效全文下载预检；不会发送 GET。")
             }
@@ -237,7 +240,7 @@ private struct V4ResearchHomeView: View {
             }
             GroupBox("阅读收件箱") {
                 let inbox = viewModel.papers.filter { !$0.isRead }.prefix(8)
-                if inbox.isEmpty { Text("当前没有来自本地 library 的未读论文。").foregroundStyle(.secondary) }
+                if inbox.isEmpty { Text("当前没有来自本地资料库的未读论文。").foregroundStyle(.secondary) }
                 else {
                     ForEach(Array(inbox)) { paper in
                         LocalMarkdownTeXInlineText(source: paper.displayTitle)
@@ -403,7 +406,7 @@ private struct AuthorSidebar: View {
                 }
                 .scrollIndicators(.visible)
                 .accessibilityIdentifier("authorsScrollableList")
-                .accessibilityLabel("Authors scrollable list")
+                .accessibilityLabel("作者可滚动列表")
                 .onChange(of: localAuthorSearch) { _, query in
                     // Filtering a long native List may retain the prior A-Z
                     // scroll position.  Preserve the durable selected author,
@@ -462,7 +465,7 @@ private struct AuthorSidebar: View {
                 .background(.bar)
             }
         }
-        .navigationTitle("AUTHORS")
+        .navigationTitle("作者")
     }
 
     /// AppKit delivers a List selection while SwiftUI is reconciling the
@@ -531,7 +534,7 @@ private struct SyncCenterView: View {
                         }
                         .font(.caption)
                     }
-                    Text("暂停/取消均保留已成功写入的页面、论文与 checkpoint；继续只请求未完成部分。provider、PDF 和 Vision 请求不会在此处自动重试。")
+                    Text("暂停/取消均保留已成功写入的页面、论文与 checkpoint；继续只请求未完成部分。provider、PDF 和图像请求不会在此处自动重试。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -743,7 +746,7 @@ private struct PaperTimeline: View {
             }
             .scrollIndicators(.visible)
             .accessibilityIdentifier("papersScrollableList")
-            .accessibilityLabel("Papers scrollable list")
+            .accessibilityLabel("论文可滚动列表")
         }
         .navigationTitle(viewModel.selectedAuthor?.preferredName ?? "文献时间线")
     }

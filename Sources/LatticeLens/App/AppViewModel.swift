@@ -1449,15 +1449,17 @@ final class AppViewModel: ObservableObject {
 
     /// HEAD-only, bounded preflight.  It deliberately runs before the GET and
     /// freezes the selected source for the following consent alert.  When
-    /// INSPIRE has no public document, an arXiv identifier can be resolved to
-    /// the deterministic ar5iv HTML rendering as an explicitly labelled
-    /// fallback source.
+    /// When an arXiv identifier is available, the Evidence tab can resolve it
+    /// to the deterministic ar5iv HTML rendering without relying on an
+    /// INSPIRE PDF.  The actual HTML GET remains a separate user-confirmed
+    /// action.
     func requestFullTextPreflight(_ source: PaperDocument) {
         guard let paper = selectedPaper, let url = source.url else { return }
         guard source.isFullText else { errorMessage = "该 INSPIRE document 未标记为可用全文。"; return }
-        let sourceKind: FullTextSourceKind = source.source?.lowercased().contains("ar5iv") == true ? .arxivHTML :
-            (source.source?.lowercased().contains("arxiv") == true ? .arxivPDF : .inspireDocument)
-        fullTextStatusMessage = "正在读取全文下载预检（未发送 GET）…"
+        let sourceKind = Self.fullTextSourceKind(for: source)
+        fullTextStatusMessage = sourceKind == .arxivHTML
+            ? "正在读取 ar5iv HTML 预检（未发送 GET）…"
+            : "正在读取全文下载预检（未发送 GET）…"
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -1465,10 +1467,14 @@ final class AppViewModel: ObservableObject {
                 guard self.selectedPaperID == paper.literatureID else { return }
                 self.pendingFullTextSource = source
                 self.fullTextPreflight = preflight
-                self.fullTextStatusMessage = "全文下载预检完成；等待确认。"
+                self.fullTextStatusMessage = sourceKind == .arxivHTML
+                    ? "ar5iv HTML 预检完成；等待确认。"
+                    : "全文下载预检完成；等待确认。"
                 self.presentFullTextPreflight = true
             } catch {
-                self.fullTextStatusMessage = "全文下载预检失败；未开始下载：\(error.localizedDescription)"
+                self.fullTextStatusMessage = sourceKind == .arxivHTML
+                    ? "ar5iv HTML 预检失败；未开始 GET：\(error.localizedDescription)"
+                    : "全文下载预检失败；未开始下载：\(error.localizedDescription)"
             }
         }
     }
@@ -1479,17 +1485,11 @@ final class AppViewModel: ObservableObject {
         requestFullTextPreflight(source)
     }
 
-    private static func arxivHTMLDocument(for arxivID: String) -> PaperDocument? {
-        let normalized = arxivID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty, normalized.count <= 128,
-              !normalized.contains(".."),
-              normalized.range(of: #"^[A-Za-z0-9._/-]+$"#, options: .regularExpression) != nil else { return nil }
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = "ar5iv.labs.arxiv.org"
-        components.path = "/html/\(normalized)"
-        guard let url = components.url else { return nil }
-        return PaperDocument(key: "ar5iv-html-\(normalized)", url: url, source: "ar5iv", filename: "ar5iv-\(normalized).html", isFullText: true)
+    static func arxivHTMLDocument(for arxivID: String) -> PaperDocument? {
+        guard let normalized = ArxivHTMLLink.normalizedIdentifier(from: arxivID),
+              let url = ArxivHTMLLink.url(for: normalized) else { return nil }
+        return PaperDocument(key: "ar5iv-html-\(normalized)", url: url, source: "ar5iv",
+                             filename: "ar5iv-\(normalized).html", isFullText: true)
     }
 
     func confirmFullTextDownload() {
@@ -1511,12 +1511,13 @@ final class AppViewModel: ObservableObject {
     func downloadFullText(_ source: PaperDocument) {
         guard let paper = selectedPaper, let url = source.url else { return }
         guard source.isFullText else { errorMessage = "该 INSPIRE document 未标记为可用全文。"; return }
-        let sourceKind: FullTextSourceKind = source.source?.lowercased().contains("ar5iv") == true ? .arxivHTML :
-            ((source.source?.lowercased().contains("arxiv") ?? false) ? .arxivPDF : .inspireDocument)
+        let sourceKind = Self.fullTextSourceKind(for: source)
         fullTextTask?.cancel()
         let session = UUID()
         fullTextSessionID = session
-        fullTextStatusMessage = "正在按用户请求下载全文…"
+        fullTextStatusMessage = sourceKind == .arxivHTML
+            ? "正在按用户请求读取 ar5iv HTML…"
+            : "正在按用户请求下载全文…"
         fullTextTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -1527,15 +1528,32 @@ final class AppViewModel: ObservableObject {
                 // This success message is an observable completion boundary:
                 // its page-level anchors and local document must already be
                 // present in the selected-paper projection when it appears.
-                self.fullTextStatusMessage = document.extractionState == .extracted ? "全文已提取为页级 evidence anchors。" : "全文下载完成，但无法提取文本。"
+                if document.extractionState == .extracted {
+                    self.fullTextStatusMessage = sourceKind == .arxivHTML
+                        ? "ar5iv HTML 已提取为 bounded evidence anchors。"
+                        : "全文已提取为页级 evidence anchors。"
+                } else {
+                    self.fullTextStatusMessage = sourceKind == .arxivHTML
+                        ? "ar5iv HTML 已读取，但无法提取文本。"
+                        : "全文下载完成，但无法提取文本。"
+                }
             } catch is CancellationError {
                 guard self.fullTextSessionID == session else { return }
-                self.fullTextStatusMessage = "全文下载已取消。"
+                self.fullTextStatusMessage = sourceKind == .arxivHTML ? "ar5iv HTML 读取已取消。" : "全文下载已取消。"
             } catch {
                 guard self.fullTextSessionID == session else { return }
-                self.fullTextStatusMessage = "全文下载/提取失败：\(error.localizedDescription)"
+                self.fullTextStatusMessage = sourceKind == .arxivHTML
+                    ? "ar5iv HTML 读取/提取失败：\(error.localizedDescription)"
+                    : "全文下载/提取失败：\(error.localizedDescription)"
             }
         }
+    }
+
+    private static func fullTextSourceKind(for source: PaperDocument) -> FullTextSourceKind {
+        let sourceText = source.source?.lowercased() ?? ""
+        if sourceText.contains("ar5iv") || source.url?.host?.lowercased() == ArxivHTMLLink.host { return .arxivHTML }
+        if sourceText.contains("arxiv") { return .arxivPDF }
+        return .inspireDocument
     }
 
     func deleteSelectedFullText() {
