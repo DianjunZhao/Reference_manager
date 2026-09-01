@@ -1,2 +1,2 @@
 d621f9c1c4fab6b69ecf596da50fe17fa8817270b3247aa9abc30bed703f610b  LatticeLens-1.0.1-local.dmg
-e0a28144c699d86d9e962a83fead066d07f875f40a85eef80e7f73a67f40cdb8  manifest-v1.0.1.json
+b52707fc1cddf54e846ddf4423d6994a13ea0fcb1428ffc8eae1573a2a0095d8  manifest-v1.0.1.json
