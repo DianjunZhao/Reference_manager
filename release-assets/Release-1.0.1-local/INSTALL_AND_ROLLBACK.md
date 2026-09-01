@@ -29,5 +29,8 @@ from the older `1.0.0 (100)` application.
 
 The package was mounted and launched against a new project-local disposable
 store. That test wrote 1 author, 10 papers and 10 author-paper links after
-real read-only INSPIRE requests. It did not copy anything to `/Applications`,
-read a real library, use a live LLM, or perform a manual-acceptance recheck.
+real read-only INSPIRE requests. The refreshed DMG was subsequently copied to
+`/Applications/LatticeLens.app` after confirming no running LatticeLens process;
+the installed executable hash is recorded in `manifest-v1.0.1.json`. No real
+library was opened, and no live LLM was used. Manual observations are recorded
+separately in the bound acceptance receipt under `github/evidence/`.
