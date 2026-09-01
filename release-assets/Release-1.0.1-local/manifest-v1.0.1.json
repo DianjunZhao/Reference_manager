@@ -1,6 +1,6 @@
 {
   "schema_version": "latticelens-local-candidate-v1.0.1",
-  "generated_at_utc": "2026-09-01T08:11:07Z",
+  "generated_at_utc": "2026-09-01T10:08:19Z",
   "artifact_class": "same_mac_local_ad_hoc_candidate",
   "product_version": "1.0.1",
   "build_number": 101,
@@ -10,20 +10,20 @@
   "developer_id": false,
   "notarized": false,
   "source": {
-    "git_head_before_dirty_changes": "8f47ad2bcaa69b9c9cc9bc8ed8d38ff67e0104dd",
+    "git_head_before_dirty_changes": "88bbed584a294e8578ad178fa7863a153b6e8904",
     "working_tree_was_dirty": true,
-    "build_input_tree_sha256": "59f961fd87e464ef80881348787b862b0153904213aea6a2c12b2f522e21909e",
-    "source_tree_sha256": "f31b6b05732d5c772dcaee8d3a68504ff42572dfb7aa8cb16a77fb628c5d1e00"
+    "build_input_tree_sha256": "bf9afd5ffaa61fdfb4a3098d229a373fe75fdcea0573267f6ecd152ec60fbc49",
+    "source_tree_sha256": "09da9f5a381b05b3d4a9b48f091a8a54a2a53986240903e0dd275bc91c21319a"
   },
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "f5848e0c8cf3d823409e1a2a124b9a33227bd264f23658370b2cd174db71c7aa"
+    "executable_sha256": "714faf917dcb3f1442039d4c6378e8b68ebc86a01c0a71b206f18c788ee02ade"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.1-local.dmg",
-      "sha256": "21c1ec23ce0612da32aa655e4c008160afc92d69e317889e04352472fc60fbef"
+      "sha256": "d621f9c1c4fab6b69ecf596da50fe17fa8817270b3247aa9abc30bed703f610b"
     }
   },
   "verification": {
@@ -62,10 +62,9 @@
       "scope": "previous seven disjoint hep-lat/hep-th partitions retained; not rerun for this UI-only source change"
     },
     "installed_fixture_no_network_smoke": {
-      "status": "PASS",
-      "scope": "/Applications/LatticeLens.app 1.0.1 (101), fixture/no-network, project-local disposable store",
-      "command": "direct executable launch remains available for user acceptance; executable verified after replacement",
-      "executable_sha256": "f5848e0c8cf3d823409e1a2a124b9a33227bd264f23658370b2cd174db71c7aa"
+      "status": "PENDING_INSTALL",
+      "scope": "new 600-second Evidence build; installation pending user exit",
+      "reason": "Do not overwrite an active app process"
     },
     "author_index_progress_state_fix": {
       "status": "PASS",
@@ -85,7 +84,8 @@
     "evidence_deadline_budget": {
       "status": "PASS",
       "tests": 1,
-      "command": "swift test --package-path github --filter EvidenceWorkflowTests.testEvidenceAndVisionDeadlinesRejectOneRequestWithoutRetry"
+      "command": "swift test --package-path github --filter EvidenceWorkflowTests.testEvidenceAndVisionDeadlinesRejectOneRequestWithoutRetry",
+      "note": "production Evidence hard deadline is 600 s; test uses an injected 60 ms timeout"
     }
   },
   "release_status": {
@@ -93,6 +93,6 @@
     "pdf_download_is_fallback": true,
     "manual_receipt_rebinding": "required_before_final_seal",
     "developer_id_and_notarization": "out_of_scope",
-    "install_boundary": "Current DMG was installed to /Applications after confirming no LatticeLens process was running; no real Application Support library, Keychain, or research material was opened."
+    "install_boundary": "New 600-second Evidence DMG generated; installation into /Applications is pending user confirmation that no LatticeLens process is running."
   }
 }

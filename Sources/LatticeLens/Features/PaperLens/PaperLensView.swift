@@ -757,9 +757,9 @@ private struct EvidenceInsightStatusBar: View {
     private var text: String {
         switch viewModel.evidenceInsightState {
         case .idle:
-            return "尚未生成公式推导 · 单次请求最长 120 秒（deep 模式最多 2 次请求）"
+            return "尚未生成公式推导 · 单次请求最长 600 秒（deep 模式最多 2 次请求）"
         case .connecting:
-            return "正在连接模型 · 单次请求最长 120 秒"
+            return "正在连接模型 · 单次请求最长 600 秒"
         case .waitingFirstContent:
             return "已连接 · 等待首段内容（最长 45 秒）"
         case .receiving(let characters, let bytes):
