@@ -46,7 +46,9 @@ LatticeLens 是一个原生 macOS SwiftUI 文献工作台，面向 INSPIRE 的 h
 - 作者候选仅指 `author.arxiv_categories` 含 `hep-lat` 或 `hep-th` 的 INSPIRE author record；完成 h-index 校验后仅展示 `h > 20`，不是历史 cross-list 合作者全集。
 - 固定 INSPIRE recid `2010363` 为“我的主页”，无论 h-index 都置顶。
 - 正式作者列表仅包含经验证的 `INSPIRE h(all, including self-citations) > 20`。`20` 不合格；请求失败保持 `failed/unknown`，绝不写成 `0` 或“不合格”。
-- Paper Lens 的证据范围严格为标题、摘要和 INSPIRE figure captions。v1 不读取 PDF 全文，也不声称模型看过图像像素。
+- Paper Lens 默认只使用标题、摘要和 INSPIRE figure captions；用户明确确认后可从 INSPIRE PDF 或 arXiv 对应的 ar5iv HTML 获取全文并生成 bounded evidence anchors。全文来源、URL、SHA-256 和提取状态会保留；不声称模型看过图像像素。
+
+当 INSPIRE record 没有 `documents[].fulltext` 时，Paper Lens 会在存在 arXiv ID 的情况下提供明确标注的 ar5iv HTML 备用入口（`https://ar5iv.labs.arxiv.org/html/<arXiv-ID>`）。ar5iv 是 LaTeX→HTML 的渲染服务，个别论文可能转换失败或缺少公式/结构；失败时应用保持原始 metadata 可用，不把失败伪装成全文成功。
 
 ## 打开与运行
 

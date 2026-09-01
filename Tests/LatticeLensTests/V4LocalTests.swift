@@ -93,6 +93,25 @@ final class V4LocalTests: XCTestCase {
         }
     }
 
+    func testArxivHTMLFallbackExtractsBoundedTextAndFormulaSource() async throws {
+        let root = try makeProjectLocalTestDirectory(prefix: "v4-arxiv-html")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = InMemoryLibraryStore()
+        let service = FullTextService(store: store, cacheDirectory: root, downloader: AppFixtureFullTextDownloader())
+        let source = try XCTUnwrap(URL(string: "https://ar5iv.labs.arxiv.org/html/2509.09367"))
+        let preflight = try await service.preflight(sourceURL: source, sourceKind: .arxivHTML)
+        XCTAssertEqual(preflight.sourceKind, .arxivHTML)
+        XCTAssertEqual(preflight.expectedMIME, "text/html")
+        XCTAssertEqual(preflight.finalURL, source)
+        let document = try await service.downloadAndExtract(paperID: 2_509_093_67, sourceURL: source, sourceKind: .arxivHTML)
+        XCTAssertEqual(document.sourceKind, .arxivHTML)
+        XCTAssertNil(document.pageCount)
+        let snapshot = await store.snapshot()
+        let anchors = snapshot.evidenceAnchors.values.filter { $0.paperID == 2_509_093_67 }
+        XCTAssertFalse(anchors.isEmpty)
+        XCTAssertTrue(anchors.contains { $0.quote.contains("formula:") && $0.quote.contains("C(t)=A e^{-mt}") })
+    }
+
     func testFixtureSharedPDFDrivesComparePDFAnchorAndSurvivesFirstDelete() async throws {
         let root = try makeProjectLocalTestDirectory(prefix: "fixture-shared-pdf")
         defer { try? FileManager.default.removeItem(at: root) }

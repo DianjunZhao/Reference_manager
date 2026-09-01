@@ -10,10 +10,10 @@ enum FullTextServiceError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .invalidSource: "全文 URL 必须是受信任的 HTTPS PDF 来源。"
-        case .unsupportedMIME: "服务器未返回 PDF MIME type。"
+        case .invalidSource: "全文 URL 必须是受信任的 HTTPS PDF 或 ar5iv HTML 来源。"
+        case .unsupportedMIME: "服务器未返回受支持的 PDF 或 HTML MIME type。"
         case .fileTooLarge: "全文文件超过本地下载上限。"
-        case .noText: "PDF 没有可提取文本；v2 不执行 OCR。"
+        case .noText: "全文没有可提取文本；v2 不执行 OCR。"
         case .unableToOpenPDF: "PDF 无法由本地 PDFKit 打开。"
         }
     }
@@ -34,6 +34,8 @@ struct FullTextDownload: Sendable {
 struct FullTextDownloadPreflight: Sendable, Equatable {
     let sourceURL: URL
     let finalURL: URL
+    let sourceKind: FullTextSourceKind
+    let expectedMIME: String
     let advertisedByteCount: Int?
     let hardByteLimit: Int
     let cacheCategory: String
@@ -127,18 +129,19 @@ struct FullTextService: Sendable {
 
     /// Performs no GET.  The UI must show this result and wait for a separate
     /// explicit confirmation before calling `downloadAndExtract`.
-    func preflight(sourceURL: URL) async throws -> FullTextDownloadPreflight {
-        guard Self.isAllowedSourceURL(sourceURL) else { throw FullTextServiceError.invalidSource }
+    func preflight(sourceURL: URL, sourceKind: FullTextSourceKind = .inspireDocument) async throws -> FullTextDownloadPreflight {
+        guard Self.isAllowedSourceURL(sourceURL, sourceKind: sourceKind) else { throw FullTextServiceError.invalidSource }
         var request = URLRequest(url: sourceURL)
         request.httpMethod = "HEAD"
-        request.setValue("application/pdf", forHTTPHeaderField: "Accept")
+        request.setValue(Self.acceptHeader(for: sourceKind), forHTTPHeaderField: "Accept")
         let response = try await downloader.preflight(request: request)
-        guard (200..<300).contains(response.statusCode), Self.isAllowedFinalURL(response.url, sourceURL: sourceURL) else {
+        guard (200..<300).contains(response.statusCode), Self.isAllowedFinalURL(response.url, sourceURL: sourceURL, sourceKind: sourceKind) else {
             throw FullTextServiceError.invalidSource
         }
         let advertised = response.value(forHTTPHeaderField: "Content-Length").flatMap(Int.init)
         guard advertised.map({ $0 >= 0 && $0 <= Self.maximumBytes }) ?? true else { throw FullTextServiceError.fileTooLarge }
         return FullTextDownloadPreflight(sourceURL: sourceURL, finalURL: response.url ?? sourceURL,
+                                         sourceKind: sourceKind, expectedMIME: Self.expectedMIME(for: sourceKind),
                                          advertisedByteCount: advertised, hardByteLimit: Self.maximumBytes,
                                          cacheCategory: "app-owned full-text cache")
     }
@@ -150,22 +153,23 @@ struct FullTextService: Sendable {
         // retirement.  A retry never scans cache directories or infers that an
         // arbitrary PDF is orphaned.
         await retryOrphanedBlobDeletions()
-        guard Self.isAllowedSourceURL(sourceURL) else { throw FullTextServiceError.invalidSource }
+        guard Self.isAllowedSourceURL(sourceURL, sourceKind: sourceKind) else { throw FullTextServiceError.invalidSource }
         var request = URLRequest(url: sourceURL)
         request.httpMethod = "GET"
-        request.setValue("application/pdf", forHTTPHeaderField: "Accept")
+        request.setValue(Self.acceptHeader(for: sourceKind), forHTTPHeaderField: "Accept")
         let download = try await downloader.download(request: request, maximumBytes: Self.maximumBytes)
         let http = download.response
         guard
               (200..<300).contains(http.statusCode),
-              Self.isAllowedFinalURL(http.url, sourceURL: sourceURL) else { throw FullTextServiceError.invalidSource }
+              Self.isAllowedFinalURL(http.url, sourceURL: sourceURL, sourceKind: sourceKind) else { throw FullTextServiceError.invalidSource }
         let mime = http.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
-        guard mime.contains("application/pdf") else { throw FullTextServiceError.unsupportedMIME }
+        let expectedMIME = Self.expectedMIME(for: sourceKind)
+        guard mime.contains(expectedMIME) else { throw FullTextServiceError.unsupportedMIME }
         let data = download.data
         guard data.count <= Self.maximumBytes else { throw FullTextServiceError.fileTooLarge }
         let hash = StableHash.sha256(data)
         try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-        let filename = "\(hash).pdf"
+        let filename = "\(hash).\(sourceKind == .arxivHTML ? "html" : "pdf")"
         let localURL = cacheDirectory.appendingPathComponent(filename)
         if !FileManager.default.fileExists(atPath: localURL.path) { try data.write(to: localURL, options: .atomic) }
         let provisional = FullTextDocument(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, sha256: hash,
@@ -174,7 +178,9 @@ struct FullTextService: Sendable {
         let provisionalPlan = try await store.saveFullTextAndPlan(document: provisional, chunks: [], anchors: [])
         try await retireCommittedBlobs(provisionalPlan)
         do {
-            let extracted = try extract(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, localURL: localURL, hash: hash, byteCount: data.count)
+            let extracted = try sourceKind == .arxivHTML
+                ? extractHTML(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, localURL: localURL, hash: hash, byteCount: data.count)
+                : extract(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, localURL: localURL, hash: hash, byteCount: data.count)
             let extractedPlan = try await store.saveFullTextAndPlan(document: extracted.document, chunks: extracted.chunks, anchors: extracted.anchors)
             try await retireCommittedBlobs(extractedPlan)
             return extracted.document
@@ -274,8 +280,9 @@ struct FullTextService: Sendable {
     }
 
     private static func contentHash(fromCanonicalFilename filename: String) -> String? {
-        guard filename.hasSuffix(".pdf") else { return nil }
-        let candidate = String(filename.dropLast(4))
+        guard filename.hasSuffix(".pdf") || filename.hasSuffix(".html") else { return nil }
+        let suffixLength = filename.hasSuffix(".pdf") ? 4 : 5
+        let candidate = String(filename.dropLast(suffixLength))
         guard candidate.count == 64,
               candidate.unicodeScalars.allSatisfy({ CharacterSet(charactersIn: "0123456789abcdef").contains($0) }) else { return nil }
         return candidate
@@ -305,6 +312,61 @@ struct FullTextService: Sendable {
                                         byteCount: byteCount, localFilename: localURL.lastPathComponent, pageCount: pdf.pageCount,
                                         extractionState: .extracted, downloadedAt: Date(), lastErrorCategory: nil)
         return (document, chunks, anchors)
+    }
+
+    /// ar5iv exposes the TeX source as semantic HTML/MathML. Preserve the
+    /// source TeX annotation in each bounded text chunk so formula-focused
+    /// prompts can cite and derive the original expression.
+    private func extractHTML(paperID: Int, sourceURL: URL, sourceKind: FullTextSourceKind, localURL: URL, hash: String, byteCount: Int) throws -> (document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor]) {
+        guard let data = try? Data(contentsOf: localURL),
+              let html = String(data: data, encoding: .utf8) else { throw FullTextServiceError.noText }
+        let text = Self.plainTextFromArxivHTML(html)
+        guard !text.isEmpty else { throw FullTextServiceError.noText }
+        var chunks: [EvidenceChunk] = []
+        var anchors: [EvidenceAnchor] = []
+        for (chunkIndex, fragment) in Self.chunkRanges(text).enumerated() {
+            let quoteHash = StableHash.sha256(fragment.text)
+            let identifier = V3EvidenceIdentity.chunkID(paperID: paperID, documentHash: hash,
+                                                         page: 1, ordinal: chunkIndex + 1, quoteHash: quoteHash)
+            let chunk = EvidenceChunk(id: identifier, paperID: paperID, documentHash: hash, page: 1,
+                                      section: Self.guessSection(in: fragment.text), characterRangeStart: fragment.start,
+                                      characterRangeEnd: fragment.end, text: fragment.text, textHash: quoteHash)
+            chunks.append(chunk)
+            // EvidenceSourceKind.pdf is the existing full-text anchor contract;
+            // page is nil here because HTML has sections, not PDF coordinates.
+            anchors.append(EvidenceAnchor(id: identifier, paperID: paperID, sourceKind: .pdf, page: nil,
+                                          section: chunk.section, quote: fragment.text, quoteHash: quoteHash, figureKey: nil))
+        }
+        guard !chunks.isEmpty else { throw FullTextServiceError.noText }
+        let document = FullTextDocument(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, sha256: hash,
+                                        byteCount: byteCount, localFilename: localURL.lastPathComponent, pageCount: nil,
+                                        extractionState: .extracted, downloadedAt: Date(), lastErrorCategory: nil)
+        return (document, chunks, anchors)
+    }
+
+    private static func plainTextFromArxivHTML(_ html: String) -> String {
+        var value = html
+        value = replacing(value, pattern: #"(?is)<(script|style|noscript|svg)\b[^>]*>.*?</\1>"#, with: " ")
+        value = replacing(value, pattern: #"(?is)<math\b[^>]*>.*?<annotation[^>]*encoding=[\"']application/x-tex[\"'][^>]*>(.*?)</annotation>.*?</math>"#, withTemplate: " [formula: $1] ")
+        value = replacing(value, pattern: #"(?is)<math\b[^>]*alttext=[\"']([^\"']+)[\"'][^>]*>.*?</math>"#, withTemplate: " [formula: $1] ")
+        value = replacing(value, pattern: #"(?is)<br\s*/?>"#, with: "\n")
+        value = replacing(value, pattern: #"(?is)</(p|div|section|article|h[1-6]|li|tr|figcaption|table)>"#, with: "\n")
+        value = replacing(value, pattern: #"(?is)<[^>]+>"#, with: " ")
+        let entities: [(String, String)] = [
+            ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")
+        ]
+        for (entity, replacement) in entities { value = value.replacingOccurrences(of: entity, with: replacement) }
+        value = value.replacingOccurrences(of: #"[ \t\r\f\v]+"#, with: " ", options: .regularExpression)
+        value = value.replacingOccurrences(of: #" *\n+ *"#, with: "\n", options: .regularExpression)
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func replacing(_ value: String, pattern: String, with replacement: String? = nil, withTemplate template: String? = nil) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return value }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        if let template { return regex.stringByReplacingMatches(in: value, range: range, withTemplate: template) }
+        return regex.stringByReplacingMatches(in: value, range: range, withTemplate: replacement ?? "")
     }
 
     static func chunk(_ text: String) -> [String] {
@@ -356,27 +418,46 @@ struct FullTextService: Sendable {
         return URLSession(configuration: configuration, delegate: PDFRedirectDelegate(), delegateQueue: nil)
     }
 
-    private static func isAllowedFinalURL(_ finalURL: URL?, sourceURL: URL) -> Bool {
+    private static func isAllowedFinalURL(_ finalURL: URL?, sourceURL: URL, sourceKind: FullTextSourceKind) -> Bool {
         guard let finalURL,
               finalURL.scheme?.lowercased() == "https",
               finalURL.port == nil || finalURL.port == 443,
               finalURL.user == nil, finalURL.password == nil, finalURL.query == nil, finalURL.fragment == nil,
               let finalHost = finalURL.host?.lowercased(), let sourceHost = sourceURL.host?.lowercased() else { return false }
-        let publicAllowlist = Set(["inspirehep.net", "arxiv.org", "export.arxiv.org", "cds.cern.ch", "fixture.invalid"])
+        let publicAllowlist = Set(["inspirehep.net", "arxiv.org", "export.arxiv.org", "cds.cern.ch", "ar5iv.labs.arxiv.org", "fixture.invalid"])
         guard publicAllowlist.contains(sourceHost), publicAllowlist.contains(finalHost) else { return false }
-        return isPDFPath(finalURL.path)
+        if sourceKind == .arxivHTML {
+            guard sourceHost == "ar5iv.labs.arxiv.org", finalHost == "ar5iv.labs.arxiv.org" else { return false }
+        }
+        return isAllowedPath(finalURL.path, sourceKind: sourceKind)
     }
 
-    private static func isAllowedSourceURL(_ url: URL) -> Bool {
-        let allowedHosts = Set(["inspirehep.net", "arxiv.org", "export.arxiv.org", "cds.cern.ch", "fixture.invalid"])
-        return url.scheme?.lowercased() == "https" && (url.port == nil || url.port == 443) &&
-            url.host.map { allowedHosts.contains($0.lowercased()) } == true &&
-            url.user == nil && url.password == nil && url.query == nil && url.fragment == nil && isPDFPath(url.path)
+    private static func isAllowedSourceURL(_ url: URL, sourceKind: FullTextSourceKind) -> Bool {
+        let allowedHosts = Set(["inspirehep.net", "arxiv.org", "export.arxiv.org", "cds.cern.ch", "ar5iv.labs.arxiv.org", "fixture.invalid"])
+        guard url.scheme?.lowercased() == "https", (url.port == nil || url.port == 443),
+            url.host.map({ allowedHosts.contains($0.lowercased()) }) == true &&
+            url.user == nil && url.password == nil && url.query == nil && url.fragment == nil,
+            isAllowedPath(url.path, sourceKind: sourceKind) else { return false }
+        if sourceKind == .arxivHTML { return url.host?.lowercased() == "ar5iv.labs.arxiv.org" }
+        return true
     }
 
     fileprivate static func isPDFPath(_ path: String) -> Bool {
         let normalized = path.lowercased()
         return normalized.hasSuffix(".pdf") || normalized.contains("/files/") || normalized.contains("/pdf/")
+    }
+
+    private static func isAllowedPath(_ path: String, sourceKind: FullTextSourceKind) -> Bool {
+        if sourceKind == .arxivHTML { return path.lowercased().contains("/html/") }
+        return isPDFPath(path)
+    }
+
+    private static func acceptHeader(for sourceKind: FullTextSourceKind) -> String {
+        sourceKind == .arxivHTML ? "text/html" : "application/pdf"
+    }
+
+    private static func expectedMIME(for sourceKind: FullTextSourceKind) -> String {
+        sourceKind == .arxivHTML ? "text/html" : "application/pdf"
     }
 
     private static var usesFixtureLaunch: Bool { AppLaunchConfiguration.usesFixtureDependencies }
@@ -394,11 +475,11 @@ private final class PDFRedirectDelegate: NSObject, URLSessionTaskDelegate, @unch
               url.scheme?.lowercased() == "https",
               url.port == nil || url.port == 443,
               url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
-              FullTextService.isPDFPath(url.path),
+              ((task.originalRequest?.url?.host?.lowercased() == "ar5iv.labs.arxiv.org") ? url.path.lowercased().contains("/html/") : FullTextService.isPDFPath(url.path)),
               let originalHost = task.originalRequest?.url?.host?.lowercased(),
               let redirectHost = url.host?.lowercased(),
-              ["inspirehep.net", "arxiv.org", "export.arxiv.org", "cds.cern.ch"].contains(originalHost),
-              ["inspirehep.net", "arxiv.org", "export.arxiv.org", "cds.cern.ch"].contains(redirectHost) else {
+              ["inspirehep.net", "arxiv.org", "export.arxiv.org", "cds.cern.ch", "ar5iv.labs.arxiv.org"].contains(originalHost),
+              ["inspirehep.net", "arxiv.org", "export.arxiv.org", "cds.cern.ch", "ar5iv.labs.arxiv.org"].contains(redirectHost) else {
             completionHandler(nil)
             return
         }

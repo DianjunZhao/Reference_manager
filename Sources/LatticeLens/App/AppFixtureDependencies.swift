@@ -176,16 +176,17 @@ struct AppFixtureFullTextDownloader: FullTextDownloading {
     private static let allowedURLs: Set<String> = [
         "https://fixture.invalid/fulltext/1234567.pdf",
         "https://fixture.invalid/fulltext/1234568.pdf",
-        "https://fixture.invalid/fulltext/large.pdf"
+        "https://fixture.invalid/fulltext/large.pdf",
+        "https://ar5iv.labs.arxiv.org/html/2509.09367"
     ]
 
     func preflight(request: URLRequest) async throws -> HTTPURLResponse {
         guard let url = request.url, Self.allowedURLs.contains(url.absoluteString) else {
             throw FullTextServiceError.invalidSource
         }
-        let data = try AppFixturePDF.data()
+        let data = url.host == "ar5iv.labs.arxiv.org" ? AppFixtureHTML.data() : try AppFixturePDF.data()
         guard let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
-                                             headerFields: ["Content-Type": "application/pdf", "Content-Length": "\(data.count)"]) else {
+                                             headerFields: ["Content-Type": url.host == "ar5iv.labs.arxiv.org" ? "text/html" : "application/pdf", "Content-Length": "\(data.count)"]) else {
             throw FullTextServiceError.invalidSource
         }
         return response
@@ -195,13 +196,24 @@ struct AppFixtureFullTextDownloader: FullTextDownloading {
         guard let url = request.url, Self.allowedURLs.contains(url.absoluteString) else {
             throw FullTextServiceError.invalidSource
         }
-        let data = try AppFixturePDF.data()
+        let data = url.host == "ar5iv.labs.arxiv.org" ? AppFixtureHTML.data() : try AppFixturePDF.data()
         guard data.count <= maximumBytes,
               let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil,
-                                             headerFields: ["Content-Type": "application/pdf"]) else {
+                                             headerFields: ["Content-Type": url.host == "ar5iv.labs.arxiv.org" ? "text/html" : "application/pdf"]) else {
             throw FullTextServiceError.fileTooLarge
         }
         return FullTextDownload(data: data, response: response)
+    }
+}
+
+private enum AppFixtureHTML {
+    static func data() -> Data {
+        Data("""
+        <!doctype html><html><head><title>Fixture ar5iv paper</title></head><body>
+        <main><h1>Fixture lattice paper</h1><p>We define a reduced correlator.</p>
+        <math alttext="C(t)=A exp(-m t)"><semantics><mrow><mi>C</mi><mo>(</mo><mi>t</mi><mo>)</mo><mo>=</mo><mi>A</mi><mi>e</mi><mo>−</mo><mi>m</mi><mi>t</mi></mrow><annotation encoding="application/x-tex">C(t)=A e^{-mt}</annotation></semantics></math>
+        <p>The fit parameter is constrained by the displayed equation.</p></main></body></html>
+        """.utf8)
     }
 }
 

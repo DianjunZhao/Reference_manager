@@ -37,13 +37,13 @@ struct EvidenceInputPayload: Codable, Sendable {
         }
         let selectedIDs = Set(selectedChunks.map(\.id))
         self.chunks = selectedChunks
-        // A v2 request contains only retrieved PDF anchors plus a small,
+        // A v2 request contains only retrieved full-text anchors plus a small,
         // deterministic metadata allowance.  Metadata provenance remains
         // useful before/alongside full text, but it must not turn an unbounded
         // collection of captions into an implicit whole-library prompt.
-        let pdfAnchors = anchors.filter { selectedIDs.contains($0.id) }.sorted { $0.id < $1.id }
+        let fullTextAnchors = anchors.filter { selectedIDs.contains($0.id) }.sorted { $0.id < $1.id }
         let metadataAnchors = anchors.filter { $0.sourceKind != .pdf }.sorted { $0.id < $1.id }
-        self.anchors = Array((pdfAnchors + metadataAnchors).prefix(Self.maximumAnchors))
+        self.anchors = Array((fullTextAnchors + metadataAnchors).prefix(Self.maximumAnchors))
         figureKeys = Array(paper.figures.prefix(12).map(\.key))
         retrievalQuery = SearchNormalizer.normalize(paper.displayTitle)
         rankerVersion = "local-title-token-v1"
@@ -74,14 +74,14 @@ struct LocalEvidenceRetriever: Sendable {
         }
         let chunks = Array(ranked.prefix(maximumChunks))
         let ids = Set(chunks.map(\.id))
-        let pdfAnchors = snapshot.evidenceAnchors.values.filter { ids.contains($0.id) }
-        // Abstract/caption anchors are persisted independently of a PDF and
+        let fullTextAnchors = snapshot.evidenceAnchors.values.filter { ids.contains($0.id) }
+        // Abstract/caption anchors are persisted independently of a full text and
         // are intentionally retained when a full-text document is deleted.
         let metadataAnchors = snapshot.evidenceAnchors.values.filter {
             $0.paperID == paper.literatureID && $0.sourceKind != .pdf
         }
-        let anchors = (pdfAnchors + metadataAnchors).sorted { $0.id < $1.id }
-        guard !chunks.isEmpty, !pdfAnchors.isEmpty else { return nil }
+        let anchors = (fullTextAnchors + metadataAnchors).sorted { $0.id < $1.id }
+        guard !chunks.isEmpty, !fullTextAnchors.isEmpty else { return nil }
         return (document, chunks, anchors)
     }
 }
@@ -184,7 +184,7 @@ enum PaperInsightV2Validator {
             if anchor.sourceKind == .pdf {
                 guard let chunk = chunksByID[anchor.id], chunk.page == anchor.page,
                       chunk.textHash == anchor.quoteHash, chunk.text == anchor.quote else {
-                    throw LatticeLensError.schemaViolation("v2 PDF anchor 不属于本次受限 document payload")
+                    throw LatticeLensError.schemaViolation("v2 全文 anchor 不属于本次受限 document payload")
                 }
             }
         }

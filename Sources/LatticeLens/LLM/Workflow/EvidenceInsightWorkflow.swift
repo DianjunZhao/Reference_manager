@@ -1,7 +1,7 @@
 import Foundation
 
 /// v2 evidence analysis is separate from the v1 title/abstract artifact.  It
-/// can run only after local PDF extraction produced retrievable page anchors.
+/// can run only after local full-text extraction produced retrievable anchors.
 actor EvidenceInsightWorkflow {
     private let store: any LibraryStoring
     private let client: any LLMCompleting
@@ -28,7 +28,7 @@ actor EvidenceInsightWorkflow {
     ) async throws -> EvidenceInsightArtifact {
         let snapshot = await store.snapshot()
         guard let retrieved = retriever.retrieve(paper: paper, snapshot: snapshot) else {
-            throw LatticeLensError.schemaViolation("尚无可回查的本地 PDF page anchors；请先明确下载并提取全文。")
+            throw LatticeLensError.schemaViolation("尚无可回查的本地全文 anchors；请先明确下载并提取全文。")
         }
         let source = EvidenceInputPayload(
             paper: paper,

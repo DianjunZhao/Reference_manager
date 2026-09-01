@@ -625,7 +625,7 @@ struct ProductionSettingsView: View {
                                        optionTitle: { $0.displayName })
                     SettingsMenuButton(title: "重要图像", selection: $draft.maximumFigures,
                                        options: [0, 3, 5], optionTitle: String.init)
-                    Text("证据范围：标题 + 摘要 + captions；不发送 PDF 全文或图像像素。")
+                    Text("证据范围：标题 + 摘要 + captions；不发送全文或图像像素。")
                         .font(.caption).foregroundStyle(.secondary)
                     Divider()
                     Text("本地缓存").font(.headline)

@@ -538,9 +538,9 @@ private struct EvidenceBadge: View {
 private struct EvidenceScopeBadge: View {
     let fullText: Bool
     var body: some View {
-        Label(fullText ? "证据范围：本地提取的 PDF 页级 anchor + metadata" : "证据范围：标题 + 摘要 + figure captions", systemImage: "checkmark.shield")
+        Label(fullText ? "证据范围：本地提取的全文 anchor + metadata" : "证据范围：标题 + 摘要 + figure captions", systemImage: "checkmark.shield")
             .font(.caption).padding(.horizontal, 8).padding(.vertical, 5).background(.blue.opacity(0.12), in: Capsule())
-            .accessibilityLabel(fullText ? "证据范围：本地提取的 PDF 页级锚点与 metadata；不含图像像素" : "证据范围：标题、摘要和图像 caption；不含 PDF 全文或图像像素")
+            .accessibilityLabel(fullText ? "证据范围：本地提取的全文锚点与 metadata；不含图像像素" : "证据范围：标题、摘要和图像 caption；不含全文或图像像素")
     }
 }
 
@@ -562,7 +562,7 @@ private struct EvidenceTab: View {
     private func presentEvidenceJumpIfAvailable() {
         guard let anchor = viewModel.evidenceJumpAnchor, anchor.paperID == paper.literatureID else { return }
         filter = anchor.sourceKind
-        if anchor.sourceKind == .pdf { previewAnchor = anchor }
+        if anchor.sourceKind == .pdf, viewModel.selectedFullTextDocument?.sourceKind != .arxivHTML { previewAnchor = anchor }
         viewModel.consumeEvidenceJump(anchor.id)
     }
 
@@ -576,7 +576,7 @@ private struct EvidenceTab: View {
                         .accessibilityIdentifier("generateEvidenceInsight")
                     Button("删除本地全文", role: .destructive) { viewModel.deleteSelectedFullText() }
                         .accessibilityIdentifier("deleteSelectedFullText")
-                    if let anchor = firstAvailablePDFAnchor {
+                    if let anchor = firstAvailablePDFAnchor, viewModel.selectedFullTextDocument?.sourceKind != .arxivHTML {
                         Button("打开当前 PDF anchor") { previewAnchor = anchor }
                             .accessibilityIdentifier("openFirstPDFEvidenceAnchor")
                             .keyboardShortcut("o", modifiers: [.command, .shift])
@@ -591,7 +591,7 @@ private struct EvidenceTab: View {
             GroupBox("重要公式推导（LLM）") {
                 if let artifact = viewModel.evidenceInsightArtifact {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("以下推导仅来自已提取的 PDF chunks，并逐条绑定可回查的 page anchor；不会把摘要级猜测当作公式。")
+                        Text("以下推导仅来自已提取的全文 chunks，并逐条绑定可回查的 anchor；不会把摘要级猜测当作公式。")
                             .font(.caption).foregroundStyle(.secondary)
                         FormulaDerivationSection(
                             claims: artifact.insight.physics.importantFormulaDerivations,
@@ -600,10 +600,10 @@ private struct EvidenceTab: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("本标签专门展示论文重要公式及其逐步推导。请先下载并提取本地 PDF，再点击“生成重要公式推导”；LLM 会把原文公式与自己的推导明确区分，并保留 page anchor。")
+                        Text("本标签专门展示论文重要公式及其逐步推导。请先下载并提取全文，再点击“生成重要公式推导”；LLM 会把原文公式与自己的推导明确区分，并保留来源 anchor。")
                             .font(.caption).foregroundStyle(.secondary)
                         if viewModel.selectedFullTextDocument?.extractionState == .extracted {
-                            Text("PDF 已就绪，点击上方按钮生成公式推导。")
+                            Text("全文已就绪，点击上方按钮生成公式推导。")
                                 .font(.caption)
                         }
                     }
@@ -619,10 +619,18 @@ private struct EvidenceTab: View {
                         } label: {
                             Label("预检并下载 \(document.source ?? "INSPIRE") PDF", systemImage: "arrow.down.doc")
                         }
-                        .accessibilityIdentifier("downloadFullText-\(document.key)")
+                            .accessibilityIdentifier("downloadFullText-\(document.key)")
+                    }
+                    if let arxivID = paper.arxivID, !arxivID.isEmpty {
+                        Button {
+                            viewModel.requestArxivHTMLPreflight()
+                        } label: {
+                            Label("从 ar5iv 获取 HTML 全文（arXiv:\(arxivID)）", systemImage: "globe")
+                        }
+                        .accessibilityIdentifier("downloadArxivHTML-\(paper.literatureID)")
                     }
                     if paper.documents.filter({ $0.isFullText && $0.url != nil }).isEmpty {
-                        Text("INSPIRE record 未提供受信任的 public fulltext URL。")
+                        Text(paper.arxivID == nil ? "INSPIRE record 未提供受信任的 public fulltext URL。" : "无 INSPIRE 全文时，可使用上方 ar5iv HTML 来源。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -665,10 +673,10 @@ private struct EvidenceTab: View {
                 // on a narrow window, where it is no longer clickable.
                 VStack(alignment: .leading, spacing: 8) {
                     Button {
-                        if anchor.sourceKind == .pdf { previewAnchor = anchor }
+                        if anchor.sourceKind == .pdf, viewModel.selectedFullTextDocument?.sourceKind != .arxivHTML { previewAnchor = anchor }
                     } label: { EvidenceAnchorRow(anchor: anchor) }
                     .buttonStyle(.plain)
-                    .disabled(anchor.sourceKind != .pdf)
+                    .disabled(anchor.sourceKind != .pdf || viewModel.selectedFullTextDocument?.sourceKind == .arxivHTML)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // Keep the source kind at the stable prefix boundary so
                     // UI automation can select PDF anchors without coupling
@@ -789,7 +797,7 @@ private struct EvidenceClaimSection: View {
 }
 
 /// Formula claims deserve a more explicit presentation than ordinary prose:
-/// the epistemic label, native local math rendering, and every PDF page anchor
+/// the epistemic label, native local math rendering, and every full-text anchor
 /// are kept in one bounded card so a reader can verify the derivation without
 /// parsing raw `<math>` markup or opaque UUIDs.
 private struct FormulaDerivationSection: View {
@@ -798,7 +806,7 @@ private struct FormulaDerivationSection: View {
 
     var body: some View {
         if claims.isEmpty {
-            Text("未找到可回查的论文重要公式；当前 PDF chunks 没有足够的公式文本。")
+            Text("未找到可回查的论文重要公式；当前全文 chunks 没有足够的公式文本。")
                 .font(.caption).foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 10) {

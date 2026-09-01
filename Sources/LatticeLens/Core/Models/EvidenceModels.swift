@@ -61,11 +61,15 @@ struct BibTeXRecord: Codable, Hashable, Identifiable, Sendable {
 enum FullTextSourceKind: String, Codable, CaseIterable, Sendable {
     case inspireDocument
     case arxivPDF
+    /// ar5iv renders the arXiv source as HTML.  It is kept separate from the
+    /// PDF source so provenance is visible in the paper context and exports.
+    case arxivHTML
 
     var displayNameZH: String {
         switch self {
         case .inspireDocument: "INSPIRE 文档"
         case .arxivPDF: "arXiv PDF"
+        case .arxivHTML: "ar5iv HTML"
         }
     }
 }
@@ -170,7 +174,7 @@ enum EvidenceSourceKind: String, Codable, CaseIterable, Sendable {
     case pdf
 
     var displayNameZH: String {
-        switch self { case .abstract: "摘要"; case .caption: "图注"; case .pdf: "PDF 全文" }
+        switch self { case .abstract: "摘要"; case .caption: "图注"; case .pdf: "全文" }
     }
 }
 

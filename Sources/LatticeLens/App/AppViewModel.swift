@@ -1448,24 +1448,48 @@ final class AppViewModel: ObservableObject {
     }
 
     /// HEAD-only, bounded preflight.  It deliberately runs before the GET and
-    /// freezes the selected source for the following consent alert.
+    /// freezes the selected source for the following consent alert.  When
+    /// INSPIRE has no public document, an arXiv identifier can be resolved to
+    /// the deterministic ar5iv HTML rendering as an explicitly labelled
+    /// fallback source.
     func requestFullTextPreflight(_ source: PaperDocument) {
         guard let paper = selectedPaper, let url = source.url else { return }
         guard source.isFullText else { errorMessage = "该 INSPIRE document 未标记为可用全文。"; return }
-        fullTextStatusMessage = "正在读取 PDF 下载预检（未发送 GET）…"
+        let sourceKind: FullTextSourceKind = source.source?.lowercased().contains("ar5iv") == true ? .arxivHTML :
+            (source.source?.lowercased().contains("arxiv") == true ? .arxivPDF : .inspireDocument)
+        fullTextStatusMessage = "正在读取全文下载预检（未发送 GET）…"
         Task { [weak self] in
             guard let self else { return }
             do {
-                let preflight = try await self.fullTextService.preflight(sourceURL: url)
+                let preflight = try await self.fullTextService.preflight(sourceURL: url, sourceKind: sourceKind)
                 guard self.selectedPaperID == paper.literatureID else { return }
                 self.pendingFullTextSource = source
                 self.fullTextPreflight = preflight
-                self.fullTextStatusMessage = "PDF 下载预检完成；等待确认。"
+                self.fullTextStatusMessage = "全文下载预检完成；等待确认。"
                 self.presentFullTextPreflight = true
             } catch {
-                self.fullTextStatusMessage = "PDF 下载预检失败；未开始下载：\(error.localizedDescription)"
+                self.fullTextStatusMessage = "全文下载预检失败；未开始下载：\(error.localizedDescription)"
             }
         }
+    }
+
+    func requestArxivHTMLPreflight() {
+        guard let paper = selectedPaper, let arxivID = paper.arxivID,
+              let source = Self.arxivHTMLDocument(for: arxivID) else { return }
+        requestFullTextPreflight(source)
+    }
+
+    private static func arxivHTMLDocument(for arxivID: String) -> PaperDocument? {
+        let normalized = arxivID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, normalized.count <= 128,
+              !normalized.contains(".."),
+              normalized.range(of: #"^[A-Za-z0-9._/-]+$"#, options: .regularExpression) != nil else { return nil }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "ar5iv.labs.arxiv.org"
+        components.path = "/html/\(normalized)"
+        guard let url = components.url else { return nil }
+        return PaperDocument(key: "ar5iv-html-\(normalized)", url: url, source: "ar5iv", filename: "ar5iv-\(normalized).html", isFullText: true)
     }
 
     func confirmFullTextDownload() {
@@ -1487,7 +1511,8 @@ final class AppViewModel: ObservableObject {
     func downloadFullText(_ source: PaperDocument) {
         guard let paper = selectedPaper, let url = source.url else { return }
         guard source.isFullText else { errorMessage = "该 INSPIRE document 未标记为可用全文。"; return }
-        let sourceKind: FullTextSourceKind = (source.source?.lowercased().contains("arxiv") ?? false) ? .arxivPDF : .inspireDocument
+        let sourceKind: FullTextSourceKind = source.source?.lowercased().contains("ar5iv") == true ? .arxivHTML :
+            ((source.source?.lowercased().contains("arxiv") ?? false) ? .arxivPDF : .inspireDocument)
         fullTextTask?.cancel()
         let session = UUID()
         fullTextSessionID = session
@@ -1519,7 +1544,7 @@ final class AppViewModel: ObservableObject {
             guard let self else { return }
             do {
                 try await self.fullTextService.delete(document: document)
-                self.fullTextStatusMessage = "已删除本地全文、PDF chunks 和依赖的 v2 evidence artifact；metadata anchors 被保留。"
+                self.fullTextStatusMessage = "已删除本地全文、全文 chunks 和依赖的 v2 evidence artifact；metadata anchors 被保留。"
                 await self.reloadSelectedPaperContext(for: document.paperID)
             } catch { self.errorMessage = "无法删除本地全文：\(error.localizedDescription)" }
         }
@@ -1530,7 +1555,7 @@ final class AppViewModel: ObservableObject {
     func generateSelectedEvidenceInsight() {
         guard let paper = selectedPaper else { return }
         guard selectedFullTextDocument?.extractionState == .extracted else {
-            errorMessage = "请先由用户明确下载全文，并成功生成 PDF page anchors。"
+            errorMessage = "请先由用户明确下载全文，并成功生成可回查的全文 anchors。"
             return
         }
         guard settings.hasConsent(for: settings.activeProvider, sourceScope: PaperInsightV2Validator.sourceScope, sendsImagePixels: false) else {

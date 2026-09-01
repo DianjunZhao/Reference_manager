@@ -95,7 +95,7 @@ struct MainWorkspaceView: View {
             Button("了解并继续") { viewModel.acceptEvidencePrivacyDisclosure() }
                 .accessibilityIdentifier("acceptEvidenceDisclosure")
         } message: {
-            Text("将向当前 provider endpoint 发送本次本地检索出的 PDF page chunks、对应 quote anchors，以及标题/摘要/captions。不会发送图像像素或整份 PDF；只有 validator 通过且所有 direct/inference claim 可回查时才保存结果。")
+            Text("将向当前 provider endpoint 发送本次本地检索出的全文 chunks、对应 quote anchors，以及标题/摘要/captions。不会发送图像像素或整份全文；只有 validator 通过且所有 direct/inference claim 可回查时才保存结果。")
         }
         .alert("发送缩放后的 figure 图像像素", isPresented: $viewModel.presentVisionPrivacyDisclosure) {
             Button("暂不发送", role: .cancel) { viewModel.declineVisionPrivacyDisclosure() }
@@ -116,7 +116,7 @@ struct MainWorkspaceView: View {
                 Text("没有冻结的 Vision preflight；不会发送像素。")
             }
         }
-        .alert("下载本地全文 PDF？", isPresented: $viewModel.presentFullTextPreflight) {
+        .alert("下载本地全文？", isPresented: $viewModel.presentFullTextPreflight) {
             Button("取消", role: .cancel) { viewModel.cancelFullTextPreflight() }
                 .accessibilityIdentifier("cancelFullTextPreflight")
             Button("下载并提取") { viewModel.confirmFullTextDownload() }
@@ -125,9 +125,9 @@ struct MainWorkspaceView: View {
             if let preflight = viewModel.fullTextPreflight {
                 let estimate = preflight.advertisedByteCount.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "服务器未提供"
                 let limit = ByteCountFormatter.string(fromByteCount: Int64(preflight.hardByteLimit), countStyle: .file)
-                Text("来源：\(preflight.finalURL.absoluteString)\nContent-Length：\(estimate)\n硬上限：\(limit)\n存储：\(preflight.cacheCategory)。确认后才会发送一次受限 GET；完成后会显示实际 bytes、SHA-256 和页数。")
+                Text("来源：\(preflight.sourceKind.displayNameZH)\n\(preflight.finalURL.absoluteString)\nContent-Length：\(estimate)\n硬上限：\(limit)\n存储：\(preflight.cacheCategory)。确认后才会发送一次受限 GET；完成后会显示实际 bytes、SHA-256 和提取状态。")
             } else {
-                Text("尚无有效 PDF 下载预检；不会发送 GET。")
+                Text("尚无有效全文下载预检；不会发送 GET。")
             }
         }
         .alert("LatticeLens", isPresented: Binding(get: { viewModel.errorMessage != nil }, set: { if !$0 { viewModel.dismissError() } })) {
