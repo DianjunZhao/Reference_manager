@@ -600,7 +600,7 @@ private struct EvidenceTab: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("本标签专门展示论文重要公式及其逐步推导。请先下载并提取全文，再点击“生成重要公式推导”；LLM 会把原文公式与自己的推导明确区分，并保留来源 anchor。")
+                        Text("本标签专门展示论文重要公式及其逐步推导。请先读取 ar5iv HTML（或使用 PDF 回退）并提取全文，再点击“生成重要公式推导”；LLM 会把原文公式与自己的推导明确区分，并保留来源 anchor。")
                             .font(.caption).foregroundStyle(.secondary)
                         if viewModel.selectedFullTextDocument?.extractionState == .extracted {
                             Text("全文已就绪，点击上方按钮生成公式推导。")
@@ -646,7 +646,7 @@ private struct EvidenceTab: View {
             }
             if viewModel.selectedFullTextDocument == nil {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("尚未下载全文：当前只可浏览摘要/图注锚点。")
+                    Text("尚未读取全文：当前只可浏览摘要/图注锚点。")
                     ForEach(paper.documents.filter { $0.isFullText && $0.url != nil }) { document in
                         Button {
                             viewModel.requestFullTextPreflight(document)
