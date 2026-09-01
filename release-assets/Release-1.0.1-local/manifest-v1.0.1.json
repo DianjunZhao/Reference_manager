@@ -62,9 +62,9 @@
       "scope": "previous seven disjoint hep-lat/hep-th partitions retained; not rerun for this UI-only source change"
     },
     "installed_fixture_no_network_smoke": {
-      "status": "PASS",
-      "scope": "/Applications/LatticeLens.app 1.0.1 (101), fixture/no-network, project-local disposable store",
-      "command": "direct executable launch; 5s alive; clean TERM"
+      "status": "PENDING_INSTALL",
+      "scope": "new Evidence responsiveness build; existing /Applications/LatticeLens.app process was left untouched",
+      "reason": "Install after quitting the pre-existing app process"
     },
     "author_index_progress_state_fix": {
       "status": "PASS",
