@@ -16,6 +16,10 @@ from the older `1.0.0 (100)` application.
 5. On a fresh library with network access, the first screen should show the
    pinned Zhao author and one initial page of papers. If it does not, use the
    visible retry/sync action and retain the on-screen error text.
+6. In Paper Lens → Evidence, records with an arXiv ID show the direct ar5iv
+   HTML URL. Opening that link does not download a PDF; confirming the local
+   read extracts bounded anchors and important formulas. INSPIRE PDF remains a
+   separately labelled fallback.
 
 ## Rollback and data safety
 

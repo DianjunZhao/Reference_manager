@@ -1,6 +1,6 @@
 {
   "schema_version": "latticelens-local-candidate-v1.0.1",
-  "generated_at_utc": "2026-09-01T03:05:19Z",
+  "generated_at_utc": "2026-09-01T05:47:47Z",
   "artifact_class": "same_mac_local_ad_hoc_candidate",
   "product_version": "1.0.1",
   "build_number": 101,
@@ -10,84 +10,67 @@
   "developer_id": false,
   "notarized": false,
   "source": {
-    "git_head_before_dirty_changes": "6ed0238a48b44ee48a8f8a2b09e2a2ea2c86ab00",
+    "git_head_before_dirty_changes": "bc4dda5ff016fb17fbc637b58d6e936904ca2dee",
     "working_tree_was_dirty": false,
-    "build_input_tree_sha256": "ac94866d11dfa0713b0f166ff233ca4cecde23819c37c49373c61b2e1df5d48f"
+    "build_input_tree_sha256": "096667c4ba61e0d8c984861b01171b3b49cd5a2d2a2ffa41c1446bda38142f95"
   },
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "fb5608ec131fe5bf335c39498d02e109f11f2bde4f21bbff31e07c49bc875cd2"
+    "executable_sha256": "f875ab92e7c8810b7c43fb0d256d9236375e16daf291920e001db990ae0e0a10"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.1-local.dmg",
-      "sha256": "7d06499c383ff0feecec8e47a9740ade86ea9a1778c33cb591115356d4ec784f"
+      "sha256": "eb7301b286d64eb7ccf2ec999eb96af31ac3d3732a54c3d10766e566f5547497"
     }
   },
   "verification": {
     "swift_author_pagination_regression": {
       "status": "PASS",
       "tests": 11,
-      "command": "swift test --filter CoreContractTests.testAuthorPagination"
+      "command": "swift test --package-path github --filter CoreContractTests.testAuthorPagination"
     },
-    "math_markup_regression": {
+    "arxiv_html_link_normalization": {
       "status": "PASS",
       "tests": 1,
-      "command": "swift test --filter CoreContractTests.testLocalMarkdownTeXPreservesRawSourceAndUsesOnlyNativePreview"
-    },
-    "evidence_workbench_contracts": {
-      "status": "PASS",
-      "tests": 16,
-      "command": "swift test --filter V3WorkbenchTests; swift test --filter EvidenceWorkflowTests.testEvidenceWorkflowValidatesSavesAndHitsIsolatedCache"
-    },
-    "public_inspire_read_only_shape_smoke": {
-      "status": "PASS",
-      "endpoints": 9,
-      "command": "zsh Scripts/live_smoke_v4.sh"
-    },
-    "empty_isolated_store_startup": {
-      "status": "PASS",
-      "scope": "mounted DMG, real public INSPIRE GET, project-local disposable SwiftData root",
-      "authors": 1,
-      "papers": 10,
-      "paper_author_links": 10
-    },
-    "mounted_dmg_ui_observation": {
-      "status": "PASS",
-      "scope": "author sidebar and first literature page visible after fresh isolated launch"
-    },
-    "installed_application_isolated_startup": {
-      "status": "PASS",
-      "scope": "/Applications/LatticeLens.app 1.0.1 (101), real public INSPIRE GET, new disposable SwiftData root",
-      "authors": 1,
-      "papers": 10,
-      "paper_author_links": 10
-    },
-    "full_author_candidate_pagination": {
-      "status": "PASS",
-      "verified_at_utc": "2026-08-31T21:27:49Z",
-      "scope": "all seven disjoint hep-lat/hep-th author control-number partitions, public read-only INSPIRE API",
-      "pages": 72,
-      "records": 17478,
-      "unique_records": 17478,
-      "http_400_failures": 0,
-      "h_index_completion": "not asserted; h(all)>20 qualification remains a separate recoverable per-author queue"
+      "command": "swift test --package-path github --filter CoreContractTests.testArxivHTMLLinkNormalizesINSPIREVariantsAndRejectsUntrustedInput"
     },
     "ar5iv_html_formula_smoke": {
       "status": "PASS",
-      "url": "https://ar5iv.labs.arxiv.org/html/2509.09367",
-      "http_status": 200,
-      "content_type": "text/html",
-      "application_x_tex_annotations": 375,
-      "command": "curl -I/GET read-only smoke"
+      "tests": 1,
+      "command": "swift test --package-path github --filter V4LocalTests.testArxivHTMLFallbackExtractsBoundedTextAndFormulaSource"
+    },
+    "evidence_workbench_contracts": {
+      "status": "PASS",
+      "tests": 55,
+      "command": "swift test --package-path github --filter V4LocalTests"
+    },
+    "core_author_contracts": {
+      "status": "PASS",
+      "tests": 57,
+      "skipped": 2,
+      "command": "swift test --package-path github --filter CoreContractTests"
+    },
+    "public_inspire_read_only_shape_smoke": {
+      "status": "PASS",
+      "scope": "previous read-only smoke retained; not rerun for this UI-only source change"
+    },
+    "full_author_candidate_pagination": {
+      "status": "PASS",
+      "scope": "previous seven disjoint hep-lat/hep-th partitions retained; not rerun for this UI-only source change"
+    },
+    "installed_fixture_no_network_smoke": {
+      "status": "PASS",
+      "scope": "/Applications/LatticeLens.app 1.0.1 (101), fixture/no-network, project-local disposable store",
+      "command": "direct executable launch; 5s alive; clean TERM"
     }
   },
   "release_status": {
-    "current_binary_distinguishable_from_1_0_0_100": true,
+    "ar5iv_preferred": true,
+    "pdf_download_is_fallback": true,
     "manual_receipt_rebinding": "required_before_final_seal",
     "developer_id_and_notarization": "out_of_scope",
-    "install_boundary": "This package was copied to /Applications only after the older app was closed, then verified against a new disposable SwiftData root. No real Application Support library was opened.",
-    "current_binary_distinguishable_from_1_0_0": true
+    "install_boundary": "Current DMG installed to /Applications only after confirming no LatticeLens process was running; fixture/no-network smoke used a new project-local disposable store. No real Application Support library, Keychain, or research material was opened."
   }
 }
