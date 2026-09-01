@@ -1,6 +1,6 @@
 {
   "schema_version": "latticelens-local-candidate-v1.0.1",
-  "generated_at_utc": "2026-09-01T05:47:47Z",
+  "generated_at_utc": "2026-09-01T06:23:30Z",
   "artifact_class": "same_mac_local_ad_hoc_candidate",
   "product_version": "1.0.1",
   "build_number": 101,
@@ -10,19 +10,19 @@
   "developer_id": false,
   "notarized": false,
   "source": {
-    "git_head_before_dirty_changes": "bc4dda5ff016fb17fbc637b58d6e936904ca2dee",
+    "git_head_before_dirty_changes": "6ca43bf825946b735b4d327ea8d25a1c854360af",
     "working_tree_was_dirty": false,
-    "build_input_tree_sha256": "096667c4ba61e0d8c984861b01171b3b49cd5a2d2a2ffa41c1446bda38142f95"
+    "build_input_tree_sha256": "e2836971879564ec9549da21328e5425048fedb09b253113af7a5008613edd07"
   },
   "app": {
     "bundle": "LatticeLens.app",
     "architectures": "x86_64 arm64",
-    "executable_sha256": "f875ab92e7c8810b7c43fb0d256d9236375e16daf291920e001db990ae0e0a10"
+    "executable_sha256": "ecd92feceff87f592349dee406b5a3ce282aeaddc94f319b55805e108451c152"
   },
   "artifacts": {
     "dmg": {
       "file": "LatticeLens-1.0.1-local.dmg",
-      "sha256": "eb7301b286d64eb7ccf2ec999eb96af31ac3d3732a54c3d10766e566f5547497"
+      "sha256": "ed3862cff5af286d4057b688765acf33c859d3653e7a30f42ff996bb87a877ec"
     }
   },
   "verification": {
@@ -64,6 +64,11 @@
       "status": "PASS",
       "scope": "/Applications/LatticeLens.app 1.0.1 (101), fixture/no-network, project-local disposable store",
       "command": "direct executable launch; 5s alive; clean TERM"
+    },
+    "author_index_progress_state_fix": {
+      "status": "PASS",
+      "tests": 1,
+      "command": "swift test --package-path github --filter CoreContractTests.testFirstPaintUsesBoundedStoreProjectionsInsteadOfWholeSnapshot"
     }
   },
   "release_status": {
