@@ -343,7 +343,7 @@ struct V4AnalysisTimeouts: Sendable, Equatable {
     /// Evidence is initiated from a foreground paper tab. Keep its budget
     /// short enough that a stalled provider cannot look like an indefinitely
     /// hung button, while retaining enough time for a normal stream to start.
-    static let evidence = V4AnalysisTimeouts(connect: 15, firstContent: 45, idle: 30, hard: 600)
+    static let evidence = V4AnalysisTimeouts(connect: 120, firstContent: 180, idle: 120, hard: 600)
 }
 
 /// A deadline identifies the transport phase that failed.  It deliberately

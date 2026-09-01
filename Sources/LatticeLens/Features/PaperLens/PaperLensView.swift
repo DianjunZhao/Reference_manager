@@ -759,11 +759,11 @@ private struct EvidenceInsightStatusBar: View {
         case .idle:
             return "尚未生成公式推导 · 单次请求最长 600 秒（deep 模式最多 2 次请求）"
         case .connecting:
-            return "正在连接模型 · 单次请求最长 600 秒"
+            return "正在连接模型 · 连接最长 120 秒（总计最长 600 秒）"
         case .waitingFirstContent:
-            return "已连接 · 等待首段内容（最长 45 秒）"
+            return "已连接 · 等待首段内容（最长 180 秒）"
         case .receiving(let characters, let bytes):
-            return "正在接收 · \(characters) 字符 / \(bytes) bytes · 空闲最长 30 秒"
+            return "正在接收 · \(characters) 字符 / \(bytes) bytes · 空闲最长 120 秒"
         case .validating:
             return "正在验证公式、数值与 evidence anchor"
         case .completed(let cacheHit, let requestCount):
