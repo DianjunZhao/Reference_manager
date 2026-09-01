@@ -347,8 +347,13 @@ struct FullTextService: Sendable {
     private static func plainTextFromArxivHTML(_ html: String) -> String {
         var value = html
         value = replacing(value, pattern: #"(?is)<(script|style|noscript|svg)\b[^>]*>.*?</\1>"#, with: " ")
-        value = replacing(value, pattern: #"(?is)<math\b[^>]*>.*?<annotation[^>]*encoding=[\"']application/x-tex[\"'][^>]*>(.*?)</annotation>.*?</math>"#, withTemplate: " [formula: $1] ")
-        value = replacing(value, pattern: #"(?is)<math\b[^>]*alttext=[\"']([^\"']+)[\"'][^>]*>.*?</math>"#, withTemplate: " [formula: $1] ")
+        // Keep the TeX annotation as real delimiters in the extracted quote.
+        // The local renderer can then show native math glyphs while the
+        // selectable source remains available through its raw disclosure;
+        // a literal `[formula: …]` marker would leak transport syntax into
+        // evidence and would not render as mathematics.
+        value = replacingFormula(value, pattern: #"(?is)<math\b[^>]*>.*?<annotation[^>]*encoding=[\"']application/x-tex[\"'][^>]*>(.*?)</annotation>.*?</math>"#, display: false)
+        value = replacingFormula(value, pattern: #"(?is)<math\b[^>]*alttext=[\"']([^\"']+)[\"'][^>]*>.*?</math>"#, display: false)
         value = replacing(value, pattern: #"(?is)<br\s*/?>"#, with: "\n")
         value = replacing(value, pattern: #"(?is)</(p|div|section|article|h[1-6]|li|tr|figcaption|table)>"#, with: "\n")
         value = replacing(value, pattern: #"(?is)<[^>]+>"#, with: " ")
@@ -367,6 +372,25 @@ struct FullTextService: Sendable {
         let range = NSRange(value.startIndex..<value.endIndex, in: value)
         if let template { return regex.stringByReplacingMatches(in: value, range: range, withTemplate: template) }
         return regex.stringByReplacingMatches(in: value, range: range, withTemplate: replacement ?? "")
+    }
+
+    private static func replacingFormula(_ value: String, pattern: String, display: Bool) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return value }
+        let fullRange = NSRange(value.startIndex..<value.endIndex, in: value)
+        let matches = regex.matches(in: value, range: fullRange)
+        guard !matches.isEmpty else { return value }
+        var output = ""
+        var cursor = value.startIndex
+        for match in matches {
+            guard let whole = Range(match.range, in: value),
+                  let capture = Range(match.range(at: 1), in: value) else { continue }
+            output += value[cursor..<whole.lowerBound]
+            let payload = String(value[capture]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !payload.isEmpty { output += display ? "$$\(payload)$$" : "$\(payload)$" }
+            cursor = whole.upperBound
+        }
+        output += value[cursor..<value.endIndex]
+        return output
     }
 
     static func chunk(_ text: String) -> [String] {

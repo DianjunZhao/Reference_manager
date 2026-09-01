@@ -109,7 +109,7 @@ final class V4LocalTests: XCTestCase {
         let snapshot = await store.snapshot()
         let anchors = snapshot.evidenceAnchors.values.filter { $0.paperID == 2_509_093_67 }
         XCTAssertFalse(anchors.isEmpty)
-        XCTAssertTrue(anchors.contains { $0.quote.contains("formula:") && $0.quote.contains("C(t)=A e^{-mt}") })
+        XCTAssertTrue(anchors.contains { $0.quote.contains("$C(t)=A e^{-mt}$") })
     }
 
     func testFixtureSharedPDFDrivesComparePDFAnchorAndSurvivesFirstDelete() async throws {

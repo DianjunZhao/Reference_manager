@@ -180,7 +180,12 @@ struct InspireClient: Sendable {
         } else {
             url = try authorCandidateURL(partition: 0, page: 1)
         }
-        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        // Keep the URL actually accepted by the service.  A 400 recovery can
+        // downgrade `size=250` to `size=100`; pagination must continue with
+        // that effective size rather than silently reverting to the rejected
+        // request on the next page.
+        var effectiveURL = url
+        var components = URLComponents(url: effectiveURL, resolvingAgainstBaseURL: false)
         let pageNumber = Int(components?.queryItems?.first(where: { $0.name == "page" })?.value ?? "1") ?? 1
         let queryValue = components?.queryItems?.first(where: { $0.name == "q" })?.value
         // URLComponents intentionally preserves `+` in query values and a
@@ -234,10 +239,12 @@ struct InspireClient: Sendable {
                 try authorCandidateURL(partition: partition, page: pageNumber, size: 100, grouped: false)
             ]
             var recovered: Data?
+            var recoveredURL: URL?
             var lastError: Error = error
             for candidate in variants where candidate != url {
                 do {
                     recovered = try await getAuthorCandidateData(candidate)
+                    recoveredURL = candidate
                     break
                 } catch {
                     lastError = error
@@ -245,6 +252,10 @@ struct InspireClient: Sendable {
             }
             guard let recovered else { throw lastError }
             responseData = recovered
+            if let recoveredURL {
+                effectiveURL = recoveredURL
+                components = URLComponents(url: effectiveURL, resolvingAgainstBaseURL: false)
+            }
         }
         let responsePage = try decoder.decode(InspireSearchPage<InspireAuthorHit>.self, from: responseData)
         let authors = try responsePage.hits.hits.map(InspireMapper.author)

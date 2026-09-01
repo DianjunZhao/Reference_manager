@@ -9,7 +9,14 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
   no INSPIRE full-text document. The source is fetched only after user
   confirmation, stored with a content hash, and converted into bounded
   full-text anchors while preserving MathML TeX annotations for formula
-  derivations. Existing INSPIRE/arXiv PDF downloads remain supported.
+  derivations. Extracted MathML annotations are emitted as real `$…$` math
+  delimiters, so the native renderer does not expose transport markers.
+  Existing INSPIRE/arXiv PDF downloads remain supported.
+
+- Fixed author-index pagination after a bounded HTTP 400 recovery: when the
+  service accepts a smaller page size, the durable next URL now keeps that
+  effective size instead of reverting to the rejected request on the next
+  page. Added a regression covering the resumed page boundary.
 
 - Prepared the local `1.0.1 (101)` candidate so its Finder-visible version
   distinguishes it from the stale `1.0.0 (100)` `/Applications` binary.

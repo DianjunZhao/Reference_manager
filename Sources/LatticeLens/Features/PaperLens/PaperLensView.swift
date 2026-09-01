@@ -617,7 +617,7 @@ private struct EvidenceTab: View {
                         Button {
                             viewModel.requestFullTextPreflight(document)
                         } label: {
-                            Label("预检并下载 \(document.source ?? "INSPIRE") PDF", systemImage: "arrow.down.doc")
+                            Label("预检并下载 \(document.source ?? "INSPIRE") 全文", systemImage: "arrow.down.doc")
                         }
                             .accessibilityIdentifier("downloadFullText-\(document.key)")
                     }
@@ -850,7 +850,7 @@ private struct FormulaDerivationSection: View {
                             }
                         }
                         if claim.evidenceIDs.isEmpty {
-                            Text("无 PDF 锚点；此项不能作为 direct 公式结论。")
+                            Text("无全文锚点；此项不能作为 direct 公式结论。")
                                 .font(.caption2).foregroundStyle(.orange)
                         } else {
                             VStack(alignment: .leading, spacing: 3) {

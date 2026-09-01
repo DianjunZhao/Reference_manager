@@ -765,6 +765,36 @@ final class CoreContractTests: XCTestCase {
         XCTAssertFalse(query.first(where: { $0.name == "q" })?.value == AuthorIndexService.candidateQuery)
     }
 
+    func testAuthorPaginationKeepsEffectiveRecoveredPageSize() async throws {
+        // The first canonical retry is intentionally accepted only at
+        // size=100.  The following page must preserve that effective size;
+        // reverting to the original size=250 would re-trigger the proxy 400
+        // and can strand the remainder of a partition.
+        let firstPage = Data("""
+        {"hits":{"total":101,"hits":[{"id":77,"metadata":{"name":{"value":"Recovered, First"},"arxiv_categories":["hep-th"]}}]},
+         "links":{"next":"https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th)%20AND%20control_number%3A%5B0%20TO%20999999%5D&size=100&page=2"}}
+        """.utf8)
+        let secondPage = Data("""
+        {"hits":{"total":101,"hits":[{"id":78,"metadata":{"name":{"value":"Recovered, Second"},"arxiv_categories":["hep-lat"]}}]},"links":{}}
+        """.utf8)
+        let transport = ScriptedHTTPTransport([
+            .init(data: Data(), statusCode: 400, headers: nil),
+            .init(data: Data(), statusCode: 400, headers: nil),
+            .init(data: firstPage, statusCode: 200, headers: nil),
+            .init(data: secondPage, statusCode: 200, headers: nil)
+        ])
+        let client = InspireClient(transport: transport, retrySleeper: { _ in })
+        let first = try await client.authorCandidatesPage()
+        XCTAssertEqual(first.authors.map(\.recid), [77])
+        let next = try XCTUnwrap(first.nextURL)
+        let nextItems = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(nextItems.first(where: { $0.name == "size" })?.value, "100")
+        let second = try await client.authorCandidatesPage(nextURL: next)
+        XCTAssertEqual(second.authors.map(\.recid), [78])
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 4)
+    }
+
     func testLiteratureDetailUsesSingleRecordShapeAndMapsMetadata() async throws {
         let payload = Data("""
         {"id":123,"updated":"2026-08-23T00:00:00Z","metadata":{"titles":[{"title":"Detail lattice paper","source":"fixture"}],"abstracts":[{"value":"A local detail fixture.","source":"fixture"}],"arxiv_eprints":[{"value":"2608.00123","categories":["hep-lat"]}],"citation_count":7,"authors":[{"recid":8,"full_name":"Author, First"}],"documents":[{"key":"paper.pdf","url":"https://inspirehep.net/files/paper.pdf","fulltext":true}]}}
