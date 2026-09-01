@@ -62,9 +62,10 @@
       "scope": "previous seven disjoint hep-lat/hep-th partitions retained; not rerun for this UI-only source change"
     },
     "installed_fixture_no_network_smoke": {
-      "status": "PENDING_INSTALL",
-      "scope": "new 120-second-connect Evidence build; installation pending user exit",
-      "reason": "Do not overwrite an active app process"
+      "status": "PASS",
+      "scope": "/Applications/LatticeLens.app 1.0.1 (101), connect=120 s, firstContent=180 s, idle=120 s, hard=600 s",
+      "command": "direct executable version/signature/hash verification after replacement",
+      "executable_sha256": "795eb62ece22b203593e4de8a6eda9c59521e0a0acde88e7e574fb2155319289"
     },
     "author_index_progress_state_fix": {
       "status": "PASS",
@@ -93,6 +94,6 @@
     "pdf_download_is_fallback": true,
     "manual_receipt_rebinding": "required_before_final_seal",
     "developer_id_and_notarization": "out_of_scope",
-    "install_boundary": "New 120-second-connect Evidence DMG generated; installation into /Applications is pending user confirmation that no LatticeLens process is running."
+    "install_boundary": "Current 120-second-connect Evidence DMG was installed to /Applications after confirming no LatticeLens process was running; no real Application Support library, Keychain, or research material was opened."
   }
 }
