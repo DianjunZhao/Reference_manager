@@ -69,6 +69,11 @@
       "status": "PASS",
       "tests": 1,
       "command": "swift test --package-path github --filter CoreContractTests.testFirstPaintUsesBoundedStoreProjectionsInsteadOfWholeSnapshot"
+    },
+    "latest_dmg_fixture_no_network_smoke": {
+      "status": "PASS",
+      "scope": "Release-1.0.0-local/LatticeLens-1.0.1-local.dmg mounted read-only; disposable fixture store",
+      "command": "mounted DMG executable; 5s alive; TERM clean exit; hdiutil verify"
     }
   },
   "release_status": {
