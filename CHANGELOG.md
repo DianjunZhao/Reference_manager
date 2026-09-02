@@ -5,6 +5,16 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Promoted the current local candidate to **1.0.2 (102)** so the Finder-visible
+  installed version cannot be confused with the prior 1.0.1 package.
+
+- Evidence now accepts a complete `paper-insight-v2` object carrying harmless
+  OpenAI-compatible root metadata, or one conventional `data`/`result`/`output`
+  envelope. Such transport fields are stripped and never persisted. Required
+  schema fields, duplicate-key rejection, source scopes, anchor allowlists and
+  numeric provenance checks remain fail-closed; the prompt now declares the
+  complete required response shape explicitly.
+
 - Evidence formula derivations now have no application-imposed connection,
   first-content, idle, or total timeout.  The foreground status bar continues
   to show elapsed time and average received characters per second, and Cancel

@@ -13,7 +13,7 @@ real application libraries remain outside this directory.
   not a user research library.
 - `evidence/`: final local validation, seal, cleanup, manual-acceptance, and
   sanitized migration receipts.
-- `release-assets/Release-1.0.1-local/`: the current local DMG, checksums,
+- `release-assets/Release-1.0.2-local/`: the current local DMG, checksums,
   manifest, and installation/rollback instructions. Prefer attaching this
   directory's DMG to a GitHub Release rather than committing future binary
   builds into normal source history.
@@ -25,7 +25,7 @@ Developer-ID signed nor notarized, and the UI evidence is the selected
 two-case scrolling delta gate, not a full 26-case UI regression suite.
 
 The current package manifest is
-`release-assets/Release-1.0.1-local/manifest-v1.0.1.json`; its DMG SHA-256 is
+`release-assets/Release-1.0.2-local/manifest-v1.0.2.json`; its DMG SHA-256 is
 recorded in that manifest and in `SHA256SUMS.txt`.  Historical validation and
 release directories remain outside this current handoff and must not be used
 as provenance for the rebuilt package.

@@ -1,0 +1,56 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.2",
+  "generated_at_utc": "2026-09-02T08:00:00Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.2",
+  "build_number": 102,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_head_before_build": "63129d99ab7997ecd0ad47a0969811d9a79db3fd",
+    "working_tree_was_dirty": true,
+    "working_tree_patch_sha256": "7fb9abd07a2e55cfed25a39c2ec0febc4b6704079a8bc2985654e92acd39cef0",
+    "changed_build_input_sha256": {
+      "LatticeLens.xcodeproj/project.pbxproj": "e5cf5e8dd9dad1e2848dc0e70294d57ab62c89e5c0ef65d88ad26d60627f726e",
+      "Sources/LatticeLens/LLM/Schema/PaperInsightV2.swift": "b9e7f01f7786ea031964a93eb0246ff05eecb31aea37ab9c09d4dd0f1a7e41c2",
+      "Sources/LatticeLens/LLM/Prompt/EvidenceInsightPrompt.swift": "5c5f6f63788483c8fdfdc1bada71b8118f32706cda6aea32c6408c125464777b"
+    }
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "3a4abc9725257db422de5f95591d5a773e521dae3845ed4416dba190d0e82980"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.2-local.dmg",
+      "sha256": "b8a45a35ac4096782212767cd50603932ace7476812905aef9ab8cc5cf1c967b"
+    }
+  },
+  "verification": {
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination generic/platform=macOS -jobs 1 ARCHS=arm64+x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf-with-dsym SWIFT_TREAT_WARNINGS_AS_ERRORS=YES build",
+      "scope": "current dirty worktree, universal arm64+x86_64, warnings-as-errors"
+    },
+    "evidence_contract_tests": {
+      "status": "PASS",
+      "command": "swift test --package-path github --filter EvidenceWorkflowTests.testEvidenceValidator",
+      "tests": 3,
+      "scope": "gateway root metadata and one conventional envelope are accepted only after extraction; unknown/cross-document/missing anchors remain rejected"
+    },
+    "dmg_fixture_no_network_smoke": {
+      "status": "PASS",
+      "scope": "mounted read-only DMG; signature and both architectures checked; project-local fixture/no-network copy launch alive for 3 s, then TERM clean exit; no Application Support library, research PDF, Keychain, INSPIRE, or LLM access"
+    }
+  },
+  "release_status": {
+    "evidence_compatibility": "Extraneous root transport metadata is stripped; one conventional data/result/output/paper_insight envelope may contain the complete strict schema. Missing required schema fields, duplicate JSON keys, invalid scopes, non-allowlisted anchors, and unanchored numeric claims still fail.",
+    "manual_receipt_rebinding": "required before final seal for this exact DMG and installed executable",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "The DMG was fixture-smoked before /Applications replacement. The replacement does not access a user library."
+  }
+}

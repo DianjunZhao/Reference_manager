@@ -116,6 +116,26 @@ final class EvidenceWorkflowTests: XCTestCase {
         XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(missingWithAnchor.utf8), source: source, maximumFigures: 0))
     }
 
+    func testEvidenceValidatorIgnoresGatewayMetadataAndUnwrapsOneKnownEnvelope() throws {
+        let source = makeEvidencePayload()
+        let valid = validInsightJSON(anchorID: source.anchors[0].id)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let withRootMetadata = String(valid.dropLast()) + #","provider_trace":{"request_id":"opaque"}}"#
+        XCTAssertNoThrow(try PaperInsightV2Validator.decode(
+            Data(withRootMetadata.utf8), source: source, maximumFigures: 0
+        ), "未持久化的 provider 元数据不应掩盖已完成的 anchor-bound response")
+
+        let wrapped = #"{"request_id":"opaque","result":\#(valid)}"#
+        XCTAssertNoThrow(try PaperInsightV2Validator.decode(
+            Data(wrapped.utf8), source: source, maximumFigures: 0
+        ), "应能从唯一的 OpenAI-compatible result envelope 取出完整 schema")
+
+        let missingScope = valid.replacingOccurrences(of: #""source_scope":"fulltext_with_anchors","#, with: "")
+        XCTAssertThrowsError(try PaperInsightV2Validator.decode(
+            Data(missingScope.utf8), source: source, maximumFigures: 0
+        ), "兼容解析仍不得接受缺少 source scope 的资料")
+    }
+
     func testEvidenceValidatorRejectsCrossPaperAndCrossDocumentPayloadAnchors() throws {
         let source = makeEvidencePayload()
         let original = try XCTUnwrap(source.anchors.first)

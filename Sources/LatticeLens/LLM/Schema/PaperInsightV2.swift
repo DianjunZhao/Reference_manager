@@ -112,9 +112,18 @@ enum PaperInsightV2Validator {
         guard !data.isEmpty, data.count <= PaperInsightValidator.maximumResponseBytes else { throw LatticeLensError.schemaViolation("v2 insight 响应超限") }
         try JSONDuplicateKeyDetector.validate(data)
         guard let raw = try? JSONDecoder().decode(JSONValue.self, from: data) else { throw LatticeLensError.schemaViolation("v2 insight JSON 无法解码") }
-        try validateShape(raw)
+        // A number of OpenAI-compatible gateways add harmless transport
+        // metadata, or place the model's JSON object under `data`/`result`.
+        // That metadata is not evidence and must never be saved.  Recover one
+        // unambiguous contract object, then validate only the fields the app
+        // actually persists.  Missing required fields, duplicate keys, bad
+        // types, non-allowlisted anchors and unanchored numeric claims remain
+        // hard failures below.
+        let contractRoot = try extractContractRoot(from: raw)
+        try validateShape(contractRoot)
         try validateEvidenceInput(source)
-        guard let insight = try? JSONDecoder.latticeLens.decode(PaperInsightV2.self, from: data),
+        guard let canonicalData = try? JSONEncoder.latticeLens.encode(contractRoot),
+              let insight = try? JSONDecoder.latticeLens.decode(PaperInsightV2.self, from: canonicalData),
               insight.schemaVersion == schemaVersion, insight.sourceScope == sourceScope else {
             throw LatticeLensError.schemaViolation("v2 schema 或 source scope 不匹配")
         }
@@ -183,6 +192,48 @@ enum PaperInsightV2Validator {
             try nonempty(try value(object, "zh", "terminology"), path: "terminology.zh")
             guard let note = object["note"]?.stringValue, note.unicodeScalars.count <= 16_000 else { throw LatticeLensError.schemaViolation("terminology note 超限") }
         }
+    }
+
+    /// Returns exactly the paper-insight object that is allowed to cross the
+    /// model boundary.  Root-level diagnostic fields are deliberately dropped
+    /// rather than made part of a durable research claim.  A gateway wrapper
+    /// is accepted only when it contains one, and only one, complete schema
+    /// candidate; this avoids guessing which of several model outputs to use.
+    private static func extractContractRoot(from raw: JSONValue) throws -> JSONValue {
+        let requiredKeys: Set<String> = [
+            "schema_version", "source_scope", "title_zh", "abstract_zh",
+            "physics", "important_figures", "terminology"
+        ]
+        guard let outer = raw.objectValue else {
+            throw LatticeLensError.schemaViolation("root 不是 JSON 对象")
+        }
+
+        func projectedContract(_ object: [String: JSONValue]) -> JSONValue? {
+            guard requiredKeys.isSubset(of: Set(object.keys)) else { return nil }
+            return .object(Dictionary(uniqueKeysWithValues: requiredKeys.compactMap { key in
+                object[key].map { (key, $0) }
+            }))
+        }
+
+        if let direct = projectedContract(outer) {
+            return direct
+        }
+
+        // These are conventional OpenAI-compatible envelope names, not a
+        // general recursive JSON search.  The latter could accidentally turn
+        // an unrelated quoted object into a successful research artifact.
+        let envelopeKeys = ["data", "result", "output", "paper_insight", "paper_insight_v2"]
+        let candidates = envelopeKeys.compactMap { key -> JSONValue? in
+            guard let nested = outer[key]?.objectValue else { return nil }
+            return projectedContract(nested)
+        }
+        guard candidates.count == 1, let candidate = candidates.first else {
+            let missing = requiredKeys.subtracting(Set(outer.keys)).sorted().joined(separator: ", ")
+            throw LatticeLensError.schemaViolation(
+                "root 缺少必需 key（\(missing)）；也未找到唯一的 data/result/output schema 对象"
+            )
+        }
+        return candidate
     }
 
     private static func validateEvidenceInput(_ source: EvidenceInputPayload) throws {
