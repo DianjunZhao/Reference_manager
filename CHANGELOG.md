@@ -5,6 +5,13 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Evidence formula derivations now have no application-imposed connection,
+  first-content, idle, or total timeout.  The foreground status bar continues
+  to show elapsed time and average received characters per second, and Cancel
+  remains the explicit escape hatch.  The deadline monitor now sleeps until a
+  real finite deadline (or cancellation) instead of waking every millisecond
+  for this intentionally unbounded path.
+
 - Made the deterministic ar5iv HTML link the preferred Evidence source for
   records with an arXiv identifier, independent of INSPIRE PDF coverage. The
   URL is shown directly and can be opened without a local download; reading it

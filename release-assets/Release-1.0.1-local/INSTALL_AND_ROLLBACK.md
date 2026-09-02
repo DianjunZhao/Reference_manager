@@ -3,10 +3,11 @@
 This refreshed DMG contains the completed hep-lat/hep-th author-index recovery,
 formula-focused Evidence reader, native TeX/MathML/Greek-symbol display, Chinese
 Evidence labels, and long-stream Evidence progress. Evidence has no
-application-imposed total deadline: it keeps a 120-second connection budget,
-180-second first-content budget, and 120-second idle budget. During a healthy
-stream it shows cumulative characters, UTF-8 bytes, elapsed seconds, and average
-characters per second; **Cancel** remains available.
+application-imposed connection, first-content, idle, or total deadline: it
+continues until a provider/network result, the local response-byte limit, or
+**Cancel**. During waiting and streaming it shows cumulative characters, UTF-8
+bytes, elapsed seconds, and average characters per second. The selected provider
+and model determine real token throughput; the client does not claim to raise it.
 
 It is ad-hoc signed for same-Mac local inspection. It is not Developer ID signed
 or notarized. Before replacing `/Applications/LatticeLens.app`, quit every running

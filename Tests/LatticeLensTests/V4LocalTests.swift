@@ -1343,24 +1343,25 @@ final class V4LocalTests: XCTestCase {
         XCTAssertEqual(result, "{}")
     }
 
-    func testEvidenceProfileHasNoTotalDeadlineWhileHealthyTransportContinues() async throws {
-        XCTAssertEqual(V4AnalysisTimeouts.evidence.connect, 120)
-        XCTAssertEqual(V4AnalysisTimeouts.evidence.firstContent, 180)
-        XCTAssertEqual(V4AnalysisTimeouts.evidence.idle, 120)
+    func testEvidenceProfileHasNoAutomaticDeadlineAndContinuesUntilCancelled() async throws {
+        XCTAssertFalse(V4AnalysisTimeouts.evidence.connect.isFinite)
+        XCTAssertFalse(V4AnalysisTimeouts.evidence.firstContent.isFinite)
+        XCTAssertFalse(V4AnalysisTimeouts.evidence.idle.isFinite)
         XCTAssertFalse(V4AnalysisTimeouts.evidence.hard.isFinite)
 
-        let timeouts = V4AnalysisTimeouts(connect: 0.02, firstContent: 0.02, idle: 0.02, hard: .infinity)
+        let timeouts = V4AnalysisTimeouts(connect: .infinity, firstContent: .infinity,
+                                           idle: .infinity, hard: .infinity)
         let result = try await V4AnalysisDeadlineEnforcer.perform(
             timeouts: timeouts, maximumResponseBytes: 100,
             onTransportState: { _ in }, onDelta: { _ in }
         ) { transport, delta in
+            // No header or content has arrived for longer than the short
+            // finite deadlines used by adjacent tests.  Evidence must remain
+            // cancellable but never fail merely because this wait is long.
+            try await Task.sleep(nanoseconds: 50_000_000)
             await transport(.connected)
             await transport(.waitingFirstContent)
             await delta("{")
-            for _ in 0..<4 {
-                try await Task.sleep(nanoseconds: 12_000_000)
-                await transport(.receivedFirstContent)
-            }
             await delta("}")
             return "{}"
         }

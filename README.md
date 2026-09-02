@@ -4,8 +4,8 @@
 > notarized/final release。它在 `release-assets/Release-1.0.1-local/` 中带有独立的
 > `manifest-v1.0.1.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
 > 版本号和 executable SHA-256，而不能以同样显示为 `1.0.1 (101)` 的旧
-> `/Applications` 二进制代替它。当前发布包的 executable SHA-256 是
-> `c39214603c5a59ae56545530707e4dbf3638fde4fb71750f2c5795f1a137017f`。
+> `/Applications` 二进制代替它。当前发布包的 executable SHA-256 以同目录的
+> `manifest-v1.0.1.json` 为准。
 > 当前 verifier 会执行 SwiftPM、actual SwiftData disk benchmark、Xcode build/analyze/unit、normal/
 > large fixture UI、synthetic disposable V7 migration、typed-store/physics/Radar/Compare/Notebook/
 > Bundle 与 same-Mac DMG smoke；其成功仍不替代下列人工 P0 gate。
@@ -104,7 +104,7 @@ Sources/LatticeLens/
 - Fast 模式发送一次请求。Deep 模式严格发送两次：先从原始标题/摘要取得严格 JSON 翻译，再携带冻结翻译和原始资料生成解释。SSE 失败不会静默回退成 non-streaming 或重发。
 - `paper-insight-v1` 会校验 JSON 大小、控制字符、重复 key、schema/source scope、figure key allowlist、caption-only 模式和数值陈述的摘要/caption token 锚点；不合格响应不会覆盖原始资料或既有成功 artifact。
 - Paper Lens 的“公式与证据”标签在全文提取后会生成**原文重要公式、逐步 LLM 推导、结论与可回查锚点**；它不会把没有 anchor 的内容标记为原文直接支持。该标签中的 TeX、MathML、HTML-escaped MathML 与常见 Greek entities 使用本地原生数学预览，不向页面显示 `<math ...>` transport markup。
-- 长公式推导没有应用层总时限：连接最长 120 秒、首段内容最长 180 秒、连续空闲最长 120 秒；健康流会持续到完成或用户取消。状态栏显示累计字符/UTF-8 字节、已等待时间和平均字符/秒，流解析和 UI 更新分别按 16 KiB 或 100 ms、约 250 ms 合并，避免客户端逐 token 更新反压。
+- 长公式推导不设应用层自动超时：即使 provider 在长文预填充期间迟迟没有发回 response headers，Evidence 也会持续等待至完成、明确网络/服务端错误、触及本地响应字节上限或用户取消。状态栏显示累计字符/UTF-8 字节、已等待时间和平均字符/秒；流解析和 UI 更新分别按 16 KiB 或 100 ms、约 250 ms 合并，避免客户端逐 token 更新反压。模型实际 token/s 由所选 provider/model 决定，不能由客户端强行提高。
 
 ### LLM 实际使用检查
 
@@ -119,11 +119,10 @@ Sources/LatticeLens/
    有效 JSON 事件也会继续交给严格 schema validator。截断、空响应、错误对象或
    未锚定的数值声明仍会失败，不会静默重试或改发第二种请求。
 
-若出现 `LLM stream idle deadline exceeded`，这表示 provider 在最后一个实际字节后
-超过 idle 预算没有任何字节（不是 UI 卡死）。应先确认本地 model 进程和 model ID，
-再在设置中关闭 Streaming 做一次明确的非流式请求；若非流式也失败，应查看 provider
-自身日志或连接状态。fixture/UI 测试只证明离线替身和 schema/workflow 路径，不冒充
-真实 provider 成功。
+若 Evidence 长时间没有新字符，状态栏仍会显示已等待时间；可用 **取消** 结束本次单一
+请求。网络或服务端明确关闭/报错会照常显示失败，但客户端不会再把时间本身判成失败。
+应先确认本地 model 进程和 model ID；fixture/UI 测试只证明离线替身和 schema/workflow
+路径，不冒充真实 provider 成功。
 
 ## 本地验证
 
