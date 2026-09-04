@@ -1,0 +1,2 @@
+e0d5a58427a8cbdc9eeda80149b845a0a0aab151bfa15dfce61b3e405db8adb3  LatticeLens-1.0.3-local.dmg
+25b6a5a5b07b5c86e6186de0ecc48d6c7b0b644ab0574faf9cb9eef4a86ebf42  manifest-v1.0.3.json

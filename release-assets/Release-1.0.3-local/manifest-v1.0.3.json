@@ -1,0 +1,63 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.3",
+  "generated_at_utc": "2026-09-04T08:06:50Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.3",
+  "build_number": 103,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_head_before_build": "4ee12e5845f89ccdda0131f693bef567970f07d6",
+    "git_tree_before_build": "952e712197f2d79c09f6f64f2e15686e65bac73d",
+    "working_tree_was_dirty": false,
+    "changed_build_input_sha256": {
+      "LatticeLens.xcodeproj/project.pbxproj": "d578715af65fea88f7607590bcbf8d68b716187ea865453dbd73cc87be0171e1",
+      "Sources/LatticeLens/LLM/Provider/OpenAICompatibleClient.swift": "abdf2e9de1d5c75c7195e28ca9939dac94623ef7d22442be1d1f337eee3ff2d4",
+      "Tests/LatticeLensTests/V5FinalTests.swift": "a2070aab474072c189d61a915b979dec0ab5bea25136aef20f872c95892df315",
+      "README.md": "65a7585003dcac86d33ee81c8a799ea0b23cef6b7ecf60c7a0cb1b71fd3cfd32",
+      "CHANGELOG.md": "6e637afdfdc778c6a0536e93244e0eab0f3d5928a4625c77ebaed903f0bc4df4",
+      "MANUAL_1_0_3_ACCEPTANCE.md": "c1bcaef21ce4ebdd0d87da77ab8d430aa6df89f6698a3dcac56b70ba0b41071b"
+    }
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "5ea11c161516fb1bb9b129b4896ddbc42fc618858250a102615e7e42d178bc78"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.3-local.dmg",
+      "sha256": "e0d5a58427a8cbdc9eeda80149b845a0a0aab151bfa15dfce61b3e405db8adb3"
+    }
+  },
+  "verification": {
+    "targeted_tls_diagnostic_test": {
+      "status": "PASS",
+      "command": "swift test --filter V5FinalTests.testTLSFailureDiagnosticIsSafeAndActionable",
+      "tests": 1,
+      "scope": "offline fixture-only classification; it verifies host-and-port-only text and no automatic full-text retry statement"
+    },
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination generic/platform=macOS -jobs 1 ARCHS=arm64+x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf-with-dsym SWIFT_TREAT_WARNINGS_AS_ERRORS=YES build",
+      "scope": "universal arm64+x86_64, warnings-as-errors"
+    },
+    "mounted_dmg_inspection": {
+      "status": "PASS",
+      "scope": "read-only mounted DMG; ad-hoc signature, version/build, and both executable architectures verified; no app launch or network request"
+    },
+    "live_provider_tls": {
+      "status": "NOT_RUN",
+      "scope": "no real endpoint, Keychain credential, Application Support library, paper text, or LLM request was accessed"
+    }
+  },
+  "release_status": {
+    "tls_handling": "TLS trust and negotiation failures are classified without path, credential, prompt, or response disclosure. The app does not retry or downgrade transport; normal macOS certificate validation and HTTPS-only policy remain enforced.",
+    "manual_receipt_rebinding": "required before final seal for this exact DMG and installed executable",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "This manifest does not authorize overwriting /Applications. Replacement requires the user to quit the running app and confirm the staged bundle."
+  }
+}
