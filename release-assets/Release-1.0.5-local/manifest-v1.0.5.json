@@ -1,0 +1,61 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.5",
+  "generated_at_utc": "2026-09-04T13:12:00Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.5",
+  "build_number": 105,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_head_before_build": "a9ce924c536bc73631aaf122fb54f0f888628214",
+    "git_tree_before_build": "c7bb9034cdeaa543746a53ee9665a3f7428951c7",
+    "working_tree_was_dirty": false,
+    "changed_build_input_sha256": {
+      "LatticeLens.xcodeproj/project.pbxproj": "9fb246f15e09e8818d73c5a126fee36066bf1755d65a77c272f3cf4e0831d7cf",
+      "Sources/LatticeLens/LLM/Schema/PaperInsightV2.swift": "6ab1a3b830be4bd9401fa96681cd782f1bfbb12d13226137ef1aa306f99a8b46",
+      "Sources/LatticeLens/LLM/Prompt/EvidenceInsightPrompt.swift": "7e00f52512aaa0ef1adc44e940e60f961c9a95ec8dfa71504b61df215d7c332a",
+      "Tests/LatticeLensTests/EvidenceWorkflowTests.swift": "a33abd238b82338989a7a94a6d3bf46e663d8b3dcbfe2da61c6f8a55c9350096"
+    }
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "a7217082de917e3a08b4399055837bc2afb6b07ad89a53a37aa544b07cf6ee61"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.5-local.dmg",
+      "sha256": "ef0d754c585f20f6bda0aa93147d22cf321ed66794b3bac1768634caf772ea4f"
+    }
+  },
+  "verification": {
+    "targeted_tex_escape_regression": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testEvidenceValidatorPermitsOnlyExplicitEmptyAbstractSentinelAndRepairsBareTeXCommandEscapes --scratch-path ../.codex-task-tmp-20260904-texescape.JvXRFT/swift-test",
+      "tests": 1,
+      "scope": "offline fixture-only validation: explicit empty abstract sentinel passes; whitespace-only abstract fails; bare TeX command marker is normalized; malformed unicode escape still fails"
+    },
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination generic/platform=macOS -derivedDataPath ../.codex-task-tmp-20260904-texescape.JvXRFT/release-build -jobs 1 ARCHS=arm64+x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf-with-dsym SWIFT_TREAT_WARNINGS_AS_ERRORS=YES build",
+      "scope": "universal arm64+x86_64, warnings-as-errors"
+    },
+    "mounted_dmg_inspection": {
+      "status": "PASS",
+      "scope": "read-only mounted DMG; ad-hoc signature, bundle identifier, version/build, executable hash, and both executable architectures verified; no app launch or network request"
+    },
+    "live_provider_and_installed_app": {
+      "status": "NOT_RUN",
+      "scope": "no real endpoint, Keychain credential, Application Support library, paper text, or LLM request was accessed; the installed app remained 1.0.4 pending user exit"
+    }
+  },
+  "release_status": {
+    "bare_tex_escape_handling": "Before the strict evidence parser, only a non-JSON string escape that is not a unicode escape is doubled to preserve a literal TeX command marker. Valid JSON escapes are unchanged, malformed unicode escapes remain failures, and every evidence-boundary check remains fail-closed.",
+    "manual_receipt_rebinding": "required before any final seal for this exact DMG and installed executable",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "This manifest does not authorize overwriting /Applications. Replacement requires the user to quit the running app and confirm the staged bundle."
+  }
+}
