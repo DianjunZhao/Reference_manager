@@ -1,0 +1,65 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.4",
+  "generated_at_utc": "2026-09-04T10:52:00Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.4",
+  "build_number": 104,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_head_before_build": "3ee33ee84a900e44e3e75793a73419f2ea30f5ff",
+    "git_tree_before_build": "7f6b822613957e7dd2a98f38033de1b143d95ae0",
+    "working_tree_was_dirty": false,
+    "changed_build_input_sha256": {
+      "LatticeLens.xcodeproj/project.pbxproj": "410e8332ecf4ab8d985ff0e9bcdcf9de2f75a9957224b2608b506b4279bd23b1",
+      "Sources/LatticeLens/App/AppViewModel.swift": "bc30fbeff70172f3ff1b5df2a752c2040b44754439b7c7bad62977ef5175116e",
+      "Sources/LatticeLens/Features/PaperLens/MainWorkspaceView.swift": "ad4135933577abc26ba530ca1d5539a8f8bd5321b1d258b44ac835883bac99df",
+      "Sources/LatticeLens/Features/PaperLens/PaperLensView.swift": "ff9d6c62547944de8d1922cce7593261599bba7b3afa37d39b3444dbd3bca8f4",
+      "Sources/LatticeLens/Features/Workbench/V3WorkbenchView.swift": "9dad6727ee356752a9a0331b2d448e54c0e0db2cae0fffd68003b0d3900a2192",
+      "Sources/LatticeLens/LLM/Prompt/EvidenceInsightPrompt.swift": "f6abac4441f50e3d3cb747a7af82493f8fee3dc2af5c2a8d0862e2f4f9a41309",
+      "Sources/LatticeLens/LLM/Schema/PaperInsightV2.swift": "ac76408acaa4a8784172b70db21de02e7c0b4dae065984a3efc9b2a656a7e9e6",
+      "Tests/LatticeLensTests/EvidenceWorkflowTests.swift": "65b5a891a95f45dd91c06ef1733c0a44cd049a704eaabf105aeca8473ec8e3f9"
+    }
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "28fecf65a51a49320e95852600f33b5a729875bda58397a92a36230affb93b34"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.4-local.dmg",
+      "sha256": "059bfa868b62b2f5d0adbbf0e73a3651b38837e1b60be47dfadce88858a27545"
+    }
+  },
+  "verification": {
+    "targeted_missing_abstract_regression": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testEvidenceValidatorPermitsOnlyExplicitEmptyAbstractSentinel --scratch-path ../.codex-task-tmp-20260904-abstract-v2.4IRiXm/swift-test",
+      "tests": 1,
+      "scope": "offline fixture-only validation: exact empty abstract sentinel passes; whitespace-only abstract fails"
+    },
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination generic/platform=macOS -derivedDataPath ../.codex-task-tmp-20260904-abstract-v2.4IRiXm/release-build -jobs 1 ARCHS=arm64+x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf-with-dsym SWIFT_TREAT_WARNINGS_AS_ERRORS=YES build",
+      "scope": "universal arm64+x86_64, warnings-as-errors"
+    },
+    "mounted_dmg_inspection": {
+      "status": "PASS",
+      "scope": "read-only mounted DMG; ad-hoc signature, bundle identifier, version/build, executable hash, and both executable architectures verified; no app launch or network request"
+    },
+    "live_provider_and_installed_app": {
+      "status": "NOT_RUN",
+      "scope": "no real endpoint, Keychain credential, Application Support library, paper text, or LLM request was accessed; the currently running /Applications app remained version 1.0.3 (103)"
+    }
+  },
+  "release_status": {
+    "missing_abstract_handling": "Only an explicit empty JSON string represents a source with no supplied abstract. All other invalid abstract forms and all unrelated evidence boundaries remain fail-closed.",
+    "manual_receipt_rebinding": "required before any final seal for this exact DMG and installed executable",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "This manifest does not authorize overwriting /Applications. Replacement requires the user to quit the running app and confirm the staged bundle."
+  }
+}
