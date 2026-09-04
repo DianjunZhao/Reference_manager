@@ -21,7 +21,7 @@ private enum PaperLensTab: String, CaseIterable, Identifiable {
     case overview, physics, figures, evidence, source
     var id: String { rawValue }
     var title: String {
-        switch self { case .overview: "概览"; case .physics: "物理解释"; case .figures: "重要图像"; case .evidence: "公式与证据"; case .source: "原始资料" }
+        switch self { case .overview: "概览"; case .physics: "物理解释"; case .figures: "重要图像"; case .evidence: "公式推导"; case .source: "原始资料" }
     }
 }
 
@@ -411,12 +411,8 @@ private struct SourceTab: View {
                             Text("INSPIRE 搜索记录未提供作者顺序。").foregroundStyle(.secondary)
                         } else {
                             ForEach(paper.contributors.sorted { $0.position < $1.position }) { contributor in
-                                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                                    Text("\(contributor.position + 1). \(contributor.fullName)\(contributor.recid.map { " · recid \($0)" } ?? "")")
-                                        .multilineTextAlignment(.leading)
-                                        .textSelection(.enabled)
-                                    Spacer(minLength: 0)
-                                }
+                                LocalMarkdownTeXInlineText(source: "\(contributor.position + 1). \(contributor.fullName)\(contributor.recid.map { " · recid \($0)" } ?? "")")
+                                    .multilineTextAlignment(.leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
@@ -429,7 +425,7 @@ private struct SourceTab: View {
                     } else {
                         ForEach(paper.documents) { document in
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(document.filename ?? document.key).textSelection(.enabled)
+                                LocalMarkdownTeXInlineText(source: document.filename ?? document.key)
                                 Text("来源：\(document.source ?? "未知") · 全文：\(document.isFullText ? "是" : "否")")
                                     .font(.caption).foregroundStyle(.secondary)
                                 if let url = document.url { Text(url.absoluteString).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled) }
@@ -500,7 +496,12 @@ private struct BibTeXSourceControls: View {
 private struct SourceRow: View {
     let name: String
     let value: String
-    var body: some View { GridRow { Text(name).foregroundStyle(.secondary); Text(value).textSelection(.enabled) } }
+    var body: some View {
+        GridRow {
+            Text(name).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            LocalMarkdownTeXInlineText(source: value).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 }
 
 private struct TextSection: View {
@@ -549,6 +550,7 @@ private struct EvidenceTab: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var filter: EvidenceSourceKind?
     @State private var previewAnchor: EvidenceAnchor?
+    @State private var anchorsExpanded = false
 
     private var anchors: [EvidenceAnchor] {
         viewModel.selectedEvidenceAnchors.filter { filter == nil || $0.sourceKind == filter }
@@ -693,33 +695,38 @@ private struct EvidenceTab: View {
                     .accessibilityLabel("本地标注保存状态")
                     .accessibilityValue(annotationStatus)
             }
-            List(anchors) { anchor in
-                // Keep the anchor preview and its mutation action in separate
-                // vertical regions.  The preview label can legitimately span
-                // the whole detail column; placing a link beside it lets its
-                // unbounded quote content lay the action outside the column
-                // on a narrow window, where it is no longer clickable.
-                VStack(alignment: .leading, spacing: 8) {
-                    Button {
-                        if anchor.sourceKind == .pdf, viewModel.selectedFullTextDocument?.sourceKind != .arxivHTML { previewAnchor = anchor }
-                    } label: { EvidenceAnchorRow(anchor: anchor) }
-                    .buttonStyle(.plain)
-                    .disabled(anchor.sourceKind != .pdf || viewModel.selectedFullTextDocument?.sourceKind == .arxivHTML)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // Keep the source kind at the stable prefix boundary so
-                    // UI automation can select PDF anchors without coupling
-                    // to the v3 document/hash-derived identifier payload.
-                    .accessibilityIdentifier("evidenceAnchor-\(anchor.sourceKind.rawValue):\(anchor.id)")
-                    HStack {
-                        Button("添加标注") { viewModel.createUserAnnotation(from: anchor) }
-                            .buttonStyle(.link)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .accessibilityIdentifier("annotateEvidence-\(anchor.id)")
-                        Spacer(minLength: 0)
+            DisclosureGroup("可回查全文锚点（\(anchors.count)）", isExpanded: $anchorsExpanded) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(anchors) { anchor in
+                            // Formula derivations are the primary reading
+                            // surface. Keep the potentially long source list
+                            // available but collapsed until the reader asks to
+                            // inspect the concrete evidence anchors.
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button {
+                                    if anchor.sourceKind == .pdf, viewModel.selectedFullTextDocument?.sourceKind != .arxivHTML { previewAnchor = anchor }
+                                } label: { EvidenceAnchorRow(anchor: anchor) }
+                                .buttonStyle(.plain)
+                                .disabled(anchor.sourceKind != .pdf || viewModel.selectedFullTextDocument?.sourceKind == .arxivHTML)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityIdentifier("evidenceAnchor-\(anchor.sourceKind.rawValue):\(anchor.id)")
+                                HStack {
+                                    Button("添加标注") { viewModel.createUserAnnotation(from: anchor) }
+                                        .buttonStyle(.link)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                        .accessibilityIdentifier("annotateEvidence-\(anchor.id)")
+                                    Spacer(minLength: 0)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
+                    .padding(.vertical, 6)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxHeight: 300)
             }
+            .padding(.horizontal)
         }
         .sheet(item: $previewAnchor) { anchor in
             PDFAnchorPreview(document: viewModel.selectedFullTextDocument, anchor: anchor) { selection in

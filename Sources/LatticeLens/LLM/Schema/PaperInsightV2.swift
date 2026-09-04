@@ -156,7 +156,15 @@ enum PaperInsightV2Validator {
 
     private static func validateShape(_ raw: JSONValue) throws {
         let root = try object(raw, keys: ["schema_version", "source_scope", "title_zh", "abstract_zh", "physics", "important_figures", "terminology"], path: "root")
-        for key in ["schema_version", "source_scope", "title_zh", "abstract_zh"] { try nonempty(try value(root, key, "root"), path: key) }
+        for key in ["schema_version", "source_scope", "title_zh"] {
+            try nonempty(try value(root, key, "root"), path: key)
+        }
+        // The original INSPIRE/arXiv metadata occasionally has no abstract.
+        // Keep the key and its String type mandatory, but reserve exactly
+        // `""` as the explicit, non-invented "source abstract unavailable"
+        // sentinel.  Whitespace is still not a valid abstract and every
+        // provenance-bearing field below remains fail-closed.
+        try abstractText(try value(root, "abstract_zh", "root"), path: "abstract_zh")
         let physics = try objectAllowingOptional(
             try value(root, "physics", "root"),
             requiredKeys: ["research_question", "method_and_data_flow", "main_results", "reasonable_inferences", "missing_information", "caveats"],
@@ -356,6 +364,14 @@ enum PaperInsightV2Validator {
     private static func nonempty(_ raw: JSONValue, path: String) throws {
         guard let string = raw.stringValue, !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, string.unicodeScalars.count <= 16_000 else {
             throw LatticeLensError.schemaViolation("\(path) 不是受限非空字符串")
+        }
+    }
+
+    private static func abstractText(_ raw: JSONValue, path: String) throws {
+        guard let string = raw.stringValue,
+              string.unicodeScalars.count <= 16_000,
+              (string.isEmpty || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) else {
+            throw LatticeLensError.schemaViolation("\(path) 不是受限字符串；仅可用空字符串表示来源未提供摘要")
         }
     }
 }

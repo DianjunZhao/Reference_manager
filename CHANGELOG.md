@@ -5,6 +5,15 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Promoted the current local candidate to **1.0.4 (104)**.  Evidence analysis
+  now accepts `abstract_zh: ""` only as an explicit sentinel when the supplied
+  source has no abstract; missing, `null`, whitespace-only, overlong, or
+  otherwise non-string abstracts remain rejected.  The versioned Evidence
+  prompt directs the model to preserve a frozen translation when present and
+  never to invent an abstract from full-text chunks.  This resolves the
+  previous `abstract_zh` nonempty-schema false rejection without weakening
+  source scope, anchor, numeric-provenance, or duplicate-key validation.
+
 - Promoted the current local candidate to **1.0.3 (103)**.  Evidence, model
   discovery, and the Settings connection probe now turn macOS TLS trust and
   negotiation failures into a Chinese, host-and-port-only diagnosis.  It

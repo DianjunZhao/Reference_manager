@@ -430,7 +430,7 @@ private struct PhysicsMatrix: View {
                                 if let cell { inspect(cell) }
                             } label: {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(displayValue.isEmpty ? "未知" : displayValue)
+                                    LocalMarkdownTeXInlineText(source: displayValue.isEmpty ? "未知" : displayValue)
                                         .accessibilityIdentifier("physicsCellValue-\(rowKey)-\(paperID)")
                                     Text(state).font(.caption2)
                                         .accessibilityIdentifier("physicsCellState-\(rowKey)-\(paperID)")
@@ -485,7 +485,7 @@ private struct PhysicsCellInspector: View {
                 Button("关闭") { close() }
             }
             Text(PhysicsContract.displayNameZH(for: cell.rowKey)).font(.headline)
-            Text("论文 \(cell.paperID) · \(cell.status.displayNameZH) · \(cell.value ?? "未知") \(cell.unit ?? "")")
+            LocalMarkdownTeXInlineText(source: "论文 \(cell.paperID) · \(cell.status.displayNameZH) · \(cell.value ?? "未知") \(cell.unit ?? "")")
             Text("提取版本：\(cell.extractionVersion)").font(.caption).foregroundStyle(.secondary)
             if cell.evidenceAnchorIDs.isEmpty {
                 Label("无锚点：该值保持缺失/未知，不能回查。", systemImage: "exclamationmark.triangle")
@@ -625,7 +625,7 @@ private struct NotebookWorkbenchTab: View {
             GroupBox("最近标注") {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(mostRecentAnnotation.label)
+                            LocalMarkdownTeXInlineText(source: mostRecentAnnotation.label)
                                 // The primary viewport is the actionable
                                 // Notebook summary. Keep its label readable
                                 // to assistive clients after an in-place edit

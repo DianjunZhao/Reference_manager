@@ -163,7 +163,11 @@ private struct SyncToolbarStatusCapsule: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
-        .frame(minWidth: 170, idealWidth: 240, maxWidth: 310, minHeight: 28, alignment: .leading)
+        // Let the capsule hug its live status instead of reserving a large
+        // trailing blank region in the principal toolbar. The fixed-height
+        // centre line keeps the SF Symbol and text visually aligned.
+        .frame(minHeight: 32, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: false)
         .padding(.horizontal, 10)
         .background(.quaternary, in: Capsule())
         .contentShape(Capsule())

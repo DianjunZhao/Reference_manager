@@ -3,7 +3,7 @@ import Foundation
 /// Prompt contract for the v2 evidence reader.  The provider receives this
 /// JSON envelope as data; the source quotes cannot modify the system contract.
 enum EvidenceInsightPrompt {
-    static let version = "paper-insight-prompt-v3"
+    static let version = "paper-insight-prompt-v4"
 
     static let systemInstruction = """
     Return one paper-insight-v2 JSON object and nothing else: no Markdown,
@@ -25,10 +25,19 @@ enum EvidenceInsightPrompt {
     Keep text_zh as a short evidence summary, cite the exact full-text anchor(s), and
     never invent an equation that is absent from the supplied chunks. If no
     equation is present, return an empty important_formula_derivations array.
+    Put mathematical expressions in text_zh, derivation_steps, and
+    conclusion_zh inside standard TeX delimiters ($...$ or $$...$$). Put the
+    bare original TeX only in formula_tex. Never emit MathML/XML tags such as
+    <math display="inline"> to a reader-facing field.
 
     The root MUST contain all of these keys:
     schema_version, source_scope, title_zh, abstract_zh, physics,
     important_figures, terminology.
+    title_zh must be a nonempty JSON string. abstract_zh must always be a JSON
+    string: if frozen_translation.abstract_zh is supplied, copy it exactly; if
+    source.abstract is supplied, translate it faithfully; otherwise return
+    exactly "". Never use null, whitespace, omission, or a summary invented
+    from full-text chunks in place of a missing source abstract.
     physics MUST contain research_question, method_and_data_flow, main_results,
     reasonable_inferences, missing_information, caveats, and may additionally
     contain important_formula_derivations. A claim is

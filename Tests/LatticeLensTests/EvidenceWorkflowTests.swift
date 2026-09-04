@@ -116,6 +116,17 @@ final class EvidenceWorkflowTests: XCTestCase {
         XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(missingWithAnchor.utf8), source: source, maximumFigures: 0))
     }
 
+    func testEvidenceValidatorPermitsOnlyExplicitEmptyAbstractSentinel() throws {
+        let source = makeEvidencePayload()
+        let valid = validInsightJSON(anchorID: source.anchors[0].id)
+        let noSourceAbstract = valid.replacingOccurrences(of: #""abstract_zh":"受限摘要""#, with: #""abstract_zh":"""#)
+        let insight = try PaperInsightV2Validator.decode(Data(noSourceAbstract.utf8), source: source, maximumFigures: 0)
+        XCTAssertEqual(insight.abstractZH, "")
+
+        let whitespaceAbstract = valid.replacingOccurrences(of: #""abstract_zh":"受限摘要""#, with: #""abstract_zh":"   ""#)
+        XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(whitespaceAbstract.utf8), source: source, maximumFigures: 0))
+    }
+
     func testEvidenceValidatorIgnoresGatewayMetadataAndUnwrapsOneKnownEnvelope() throws {
         let source = makeEvidencePayload()
         let valid = validInsightJSON(anchorID: source.anchors[0].id)

@@ -100,6 +100,10 @@ final class AppViewModel: ObservableObject {
     private var visionSessionID = UUID()
     private var modelDiscoverySessionID = UUID()
     private var modelDiscoveryTask: Task<[String], Error>?
+    /// One cancellable, debounced query prevents global search from rebuilding
+    /// an entire local library projection for every typed character.
+    private var globalSearchTask: Task<Void, Never>?
+    private var globalSearchSessionID = UUID()
     private var fullTextTask: Task<Void, Never>?
     private var fullTextSessionID = UUID()
     private var analysisDebounceTask: Task<Void, Never>?
@@ -199,6 +203,7 @@ final class AppViewModel: ObservableObject {
         paperDetailTask?.cancel()
         for task in paperSyncTasks.values { task.cancel() }
         modelDiscoveryTask?.cancel()
+        globalSearchTask?.cancel()
         jobOwners.cancelAll()
         if usesFixtureDependencies { FullTextService.removeFixtureCacheIfPresent() }
     }
@@ -507,7 +512,7 @@ final class AppViewModel: ObservableObject {
     /// from the empty-state action.  This never retries a long literature or
     /// h-index job and therefore keeps startup bounded.
     @discardableResult
-    private func refreshPinnedSelfWithRetry() async -> Bool {
+    private func refreshPinnedSelfWithRetry(reportFailure: Bool = true) async -> Bool {
         var lastError: Error?
         for attempt in 0..<2 {
             guard !Task.isCancelled else { return false }
@@ -522,6 +527,7 @@ final class AppViewModel: ObservableObject {
                 }
             }
         }
+        guard reportFailure else { return false }
         let reason = lastError?.localizedDescription ?? "未知错误"
         syncStatus = SyncStatus(phase: .failed, message: "无法加载我的作者记录；可点击重试",
                                 completedPages: 0, successfulRecords: 0, failedRecords: 1,
@@ -1277,18 +1283,31 @@ final class AppViewModel: ObservableObject {
     }
 
     func refreshGlobalPaperSearch() {
-        let query = globalPaperSearch
-        Task { [weak self] in
-            guard let self else { return }
-            let snapshot = await self.store.snapshot()
-            let index = V4LocalSearchIndex.rebuild(snapshot: snapshot)
-            let hits = index.search(query, snapshot: snapshot)
-            let resultIDs = Set(hits.map(\.paperID))
-            let results = snapshot.papers.values.filter { resultIDs.contains($0.literatureID) }
-                .sorted { $0.literatureID < $1.literatureID }
-            guard self.globalPaperSearch == query else { return }
+        globalSearchTask?.cancel()
+        let query = globalPaperSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let session = UUID()
+        globalSearchSessionID = session
+        guard !query.isEmpty else {
+            globalPaperResults = []
+            globalSearchHits = []
+            return
+        }
+        // The active V9 store answers through its durable search projection;
+        // this deliberately avoids decoding every paper, AI artifact and
+        // search token each time a user edits the field.
+        globalSearchTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            let results = await self.store.searchPapers(query, limit: 120)
+            guard !Task.isCancelled,
+                  self.globalSearchSessionID == session,
+                  self.globalPaperSearch.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
             self.globalPaperResults = results
-            self.globalSearchHits = hits
+            self.globalSearchHits = results.map { paper in
+                V4SearchHit(id: "local-index:\(paper.literatureID)", paperID: paper.literatureID,
+                            title: paper.displayTitle, source: "本地索引", field: "indexed",
+                            snippet: "", page: nil, quote: nil, score: 0)
+            }
         }
     }
 
@@ -1635,13 +1654,17 @@ final class AppViewModel: ObservableObject {
 
     private func runAuthorIndex(force: Bool, session: UUID) async {
         do {
-            await refreshPinnedSelf()
+            // The fixed self-author enrichment is useful, but it is not part
+            // of the hep-lat/hep-th candidate definition. A 400 here must not
+            // abort an otherwise independent partitioned author-index run.
+            let pinnedSelfLoaded = await refreshPinnedSelfWithRetry(reportFailure: false)
+            let pinnedSelfSuffix = pinnedSelfLoaded ? "" : "；我的作者记录本次未更新，已保留本地记录"
             let candidateProgress = try await authorIndex.rebuildCandidateIndex(force: force) { [weak self] progress in
                 guard let self, !Task.isCancelled, self.authorIndexSessionID == session else { return }
                 self.authorIndexProgress = progress
                 self.authorIndexStatus = SyncStatus(
                     phase: .syncingMetadata,
-                    message: "已发现 \(progress.candidates) 名候选；正在验证 h-index（第 \(progress.completedPages) 页）",
+                    message: "已发现 \(progress.candidates) 名候选；正在验证 h-index（第 \(progress.completedPages) 页）\(pinnedSelfSuffix)",
                     completedPages: progress.completedPages,
                     successfulRecords: progress.verified,
                     failedRecords: progress.failed,
@@ -1666,7 +1689,7 @@ final class AppViewModel: ObservableObject {
                 authorIndexProgress = candidateProgress
                 authorIndexStatus = SyncStatus(
                     phase: .partial,
-                    message: "作者候选索引已部分完成；网络请求失败，已保留成功页面，可继续重试",
+                    message: "作者候选索引已部分完成；网络请求失败，已保留成功页面，可继续重试\(pinnedSelfSuffix)",
                     completedPages: candidateProgress.completedPages,
                     successfulRecords: candidateProgress.verified,
                     failedRecords: candidateProgress.failed,
@@ -1681,7 +1704,7 @@ final class AppViewModel: ObservableObject {
                 self.authorIndexProgress = progress
                 self.authorIndexStatus = SyncStatus(
                     phase: .syncingMetadata,
-                    message: "正在验证 h-index：已核验 \(progress.verified) / 候选 \(progress.candidates)，合格 \(progress.qualified)",
+                    message: "正在验证 h-index：已核验 \(progress.verified) / 候选 \(progress.candidates)，合格 \(progress.qualified)\(pinnedSelfSuffix)",
                     completedPages: progress.completedPages,
                     successfulRecords: progress.verified,
                     failedRecords: progress.failed,
@@ -1695,8 +1718,8 @@ final class AppViewModel: ObservableObject {
             let isPartial = progress.state == .paused
             authorIndexStatus = SyncStatus(phase: isPartial ? .partial : .ready,
                                            message: isPartial
-                                               ? "作者索引已部分完成；合格作者已保留，可继续重试失败项"
-                                               : "作者索引已更新", completedPages: progress.completedPages,
+                                               ? "作者索引已部分完成；合格作者已保留，可继续重试失败项\(pinnedSelfSuffix)"
+                                               : "作者索引已更新\(pinnedSelfSuffix)", completedPages: progress.completedPages,
                                            successfulRecords: progress.verified, failedRecords: progress.failed, lastUpdatedAt: Date(),
                                            remainingRecords: progress.remaining)
             await reloadAuthors()
