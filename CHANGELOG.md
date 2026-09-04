@@ -5,6 +5,14 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Promoted the current local candidate to **1.0.3 (103)**.  Evidence, model
+  discovery, and the Settings connection probe now turn macOS TLS trust and
+  negotiation failures into a Chinese, host-and-port-only diagnosis.  It
+  confirms that the app did not automatically resubmit the full-text evidence
+  and directs the user to the non-disclosing Settings connection check.  This
+  retains HTTPS-only endpoint policy and normal macOS certificate validation;
+  it neither trusts arbitrary certificates nor falls back to HTTP.
+
 - Promoted the current local candidate to **1.0.2 (102)** so the Finder-visible
   installed version cannot be confused with the prior 1.0.1 package.
 

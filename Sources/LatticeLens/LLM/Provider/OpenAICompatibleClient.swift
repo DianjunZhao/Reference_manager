@@ -16,6 +16,56 @@ enum LLMClientError: LocalizedError, Equatable, Sendable {
     }
 }
 
+/// A transport diagnosis deliberately exposes only the configured origin's
+/// host and effective port.  In particular, it never incorporates a request
+/// URL, Authorization value, prompt, or provider response into UI text.
+enum LLMTransportError: LocalizedError, Equatable, Sendable {
+    case tlsHandshakeRejected(endpoint: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .tlsHandshakeRejected(let endpoint):
+            "无法与模型服务 \(endpoint) 建立受信任的 TLS 连接；macOS 已拒绝证书或 TLS 协商。未自动重发任何全文证据。请在设置中使用“测试连接”，检查 API Base URL、系统时间及 VPN/代理的 HTTPS 证书；不要改为 HTTP 或关闭证书校验。"
+        }
+    }
+
+    /// Leave all non-TLS errors unchanged.  A TLS failure happens before a
+    /// valid response is available, so this is a diagnosis only—not a reason
+    /// to relax trust evaluation or transparently submit the disclosure again.
+    static func classify(_ error: Error, endpoint: URL) -> Error {
+        guard let urlError = urlError(from: error), isTLSFailure(urlError.code) else { return error }
+        return LLMTransportError.tlsHandshakeRejected(endpoint: endpointLabel(for: endpoint))
+    }
+
+    private static func urlError(from error: Error) -> URLError? {
+        if let urlError = error as? URLError { return urlError }
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return nil }
+        return URLError(URLError.Code(rawValue: nsError.code))
+    }
+
+    private static func isTLSFailure(_ code: URLError.Code) -> Bool {
+        switch code {
+        case .secureConnectionFailed,
+             .serverCertificateHasBadDate,
+             .serverCertificateUntrusted,
+             .serverCertificateHasUnknownRoot,
+             .serverCertificateNotYetValid,
+             .clientCertificateRejected,
+             .clientCertificateRequired:
+            true
+        default:
+            false
+        }
+    }
+
+    private static func endpointLabel(for endpoint: URL) -> String {
+        guard let host = endpoint.host?.lowercased(), !host.isEmpty else { return "已配置 endpoint" }
+        let port = endpoint.port ?? (endpoint.scheme?.lowercased() == "https" ? 443 : 0)
+        return port > 0 ? "\(host):\(port)" : host
+    }
+}
+
 enum LLMTransportState: String, Equatable, Sendable {
     /// HTTPS response headers have arrived from the configured origin.
     case connected
@@ -272,7 +322,12 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: provider)
         request.httpMethod = "GET"
         request.timeoutInterval = 30
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw LLMTransportError.classify(error, endpoint: url)
+        }
         try validateResponse(response)
         guard data.count <= 2_000_000 else { throw LLMClientError.invalidResponse }
         struct Models: Decodable { struct Model: Decodable { let id: String }; let data: [Model] }
@@ -288,7 +343,12 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: provider)
         request.httpMethod = "GET"
         request.timeoutInterval = 30
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw LLMTransportError.classify(error, endpoint: url)
+        }
         try validateResponse(response)
         guard data.count <= 2_000_000 else { throw LLMClientError.invalidResponse }
         return ProviderConnectionProbe(normalizedEndpoint: normalizedBaseURL.absoluteString)
@@ -352,6 +412,7 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         request.timeoutInterval = requestTimeout ?? Self.unboundedRequestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
+        do {
         if profile.usesStreaming {
             let (bytes, response) = try await session.bytes(for: request)
             try validateResponse(response)
@@ -439,6 +500,9 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
             await onDelta(content)
             return content
         }
+        } catch {
+            throw LLMTransportError.classify(error, endpoint: url)
+        }
     }
 
     /// One explicit multimodal request. It is intentionally non-streaming:
@@ -479,7 +543,12 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
         await onTransportState(.waitingFirstContent)
-        let (data, response) = try await session.data(for: request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw LLMTransportError.classify(error, endpoint: url)
+        }
         try validateResponse(response)
         guard data.count <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("vision 响应超过本地字节上限") }
         struct Completion: Decodable {

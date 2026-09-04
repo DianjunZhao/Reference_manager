@@ -43,6 +43,15 @@ final class V5FinalTests: XCTestCase {
         XCTAssertEqual(withKey.value(forHTTPHeaderField: "Authorization"), "Bearer local-token")
     }
 
+    func testTLSFailureDiagnosticIsSafeAndActionable() throws {
+        let endpoint = try XCTUnwrap(URL(string: "https://gateway.example.test/v1/chat/completions"))
+        let classified = LLMTransportError.classify(URLError(.secureConnectionFailed), endpoint: endpoint)
+        XCTAssertEqual(classified as? LLMTransportError, .tlsHandshakeRejected(endpoint: "gateway.example.test:443"))
+        XCTAssertTrue(classified.localizedDescription.contains("测试连接"))
+        XCTAssertTrue(classified.localizedDescription.contains("未自动重发"))
+        XCTAssertFalse(classified.localizedDescription.contains("/v1"))
+    }
+
     @MainActor
     func testLocalNoKeyModelDiscoveryCanReachInjectedDiscoverer() async throws {
         let discoverer = V5Discoverer()
