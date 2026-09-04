@@ -116,7 +116,7 @@ final class EvidenceWorkflowTests: XCTestCase {
         XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(missingWithAnchor.utf8), source: source, maximumFigures: 0))
     }
 
-    func testEvidenceValidatorPermitsOnlyExplicitEmptyAbstractSentinel() throws {
+    func testEvidenceValidatorPermitsOnlyExplicitEmptyAbstractSentinelAndRepairsBareTeXCommandEscapes() throws {
         let source = makeEvidencePayload()
         let valid = validInsightJSON(anchorID: source.anchors[0].id)
         let noSourceAbstract = valid.replacingOccurrences(of: #""abstract_zh":"受限摘要""#, with: #""abstract_zh":"""#)
@@ -125,6 +125,18 @@ final class EvidenceWorkflowTests: XCTestCase {
 
         let whitespaceAbstract = valid.replacingOccurrences(of: #""abstract_zh":"受限摘要""#, with: #""abstract_zh":"   ""#)
         XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(whitespaceAbstract.utf8), source: source, maximumFigures: 0))
+
+        // This is intentionally invalid JSON as emitted by a model that
+        // writes TeX's command marker directly.  The Evidence-only
+        // normalizer must preserve it as a literal backslash after decoding.
+        let bareTeXCommand = valid.replacingOccurrences(of: "受限摘要", with: #"\alpha 受限摘要"#)
+        let repaired = try PaperInsightV2Validator.decode(Data(bareTeXCommand.utf8), source: source, maximumFigures: 0)
+        XCTAssertEqual(repaired.abstractZH, #"\alpha 受限摘要"#)
+
+        // `\\u` remains strict JSON syntax: a malformed unicode escape must
+        // not be reclassified as a TeX command and accepted.
+        let malformedUnicodeEscape = valid.replacingOccurrences(of: "受限摘要", with: #"\u12"#)
+        XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(malformedUnicodeEscape.utf8), source: source, maximumFigures: 0))
     }
 
     func testEvidenceValidatorIgnoresGatewayMetadataAndUnwrapsOneKnownEnvelope() throws {

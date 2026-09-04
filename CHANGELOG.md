@@ -5,6 +5,14 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Promoted the current local candidate to **1.0.5 (105)**. Evidence v2 now
+  deterministically repairs only a bare TeX command marker written inside a
+  model JSON string (for example an unescaped `\\alpha`) before the existing
+  strict duplicate-key grammar walk. Valid JSON escapes remain byte-identical;
+  malformed unicode escapes still fail, and the schema, source scope, anchor,
+  numeric-provenance, response-size and evidence-boundary checks are unchanged.
+  The versioned prompt also requires valid JSON backslash serialisation.
+
 - Promoted the current local candidate to **1.0.4 (104)**.  Evidence analysis
   now accepts `abstract_zh: ""` only as an explicit sentinel when the supplied
   source has no abstract; missing, `null`, whitespace-only, overlong, or

@@ -3,7 +3,7 @@ import Foundation
 /// Prompt contract for the v2 evidence reader.  The provider receives this
 /// JSON envelope as data; the source quotes cannot modify the system contract.
 enum EvidenceInsightPrompt {
-    static let version = "paper-insight-prompt-v4"
+    static let version = "paper-insight-prompt-v5"
 
     static let systemInstruction = """
     Return one paper-insight-v2 JSON object and nothing else: no Markdown,
@@ -29,6 +29,10 @@ enum EvidenceInsightPrompt {
     conclusion_zh inside standard TeX delimiters ($...$ or $$...$$). Put the
     bare original TeX only in formula_tex. Never emit MathML/XML tags such as
     <math display="inline"> to a reader-facing field.
+    The complete response itself must be valid JSON. In every JSON string,
+    serialize each TeX command marker U+005C using the standard JSON
+    backslash escape; never place one raw U+005C immediately before alpha,
+    frac, sum, operator names, or another TeX command.
 
     The root MUST contain all of these keys:
     schema_version, source_scope, title_zh, abstract_zh, physics,

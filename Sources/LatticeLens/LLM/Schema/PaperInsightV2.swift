@@ -110,8 +110,18 @@ enum PaperInsightV2Validator {
 
     static func decode(_ data: Data, source: EvidenceInputPayload, maximumFigures: Int) throws -> PaperInsightV2 {
         guard !data.isEmpty, data.count <= PaperInsightValidator.maximumResponseBytes else { throw LatticeLensError.schemaViolation("v2 insight 响应超限") }
-        try JSONDuplicateKeyDetector.validate(data)
-        guard let raw = try? JSONDecoder().decode(JSONValue.self, from: data) else { throw LatticeLensError.schemaViolation("v2 insight JSON 无法解码") }
+        // LLMs sometimes put a TeX command such as `\\alpha` directly inside a
+        // JSON string, rather than serialising the command marker as a JSON
+        // backslash escape.  Repair only that wire-format defect before the
+        // duplicate-key grammar walk; the repair never changes a valid JSON
+        // escape, never repairs malformed `\\u` escapes, and all semantic,
+        // provenance, anchor, numeric and size checks still follow below.
+        let normalizedData = BareTeXJSONEscapeNormalizer.normalize(data)
+        guard normalizedData.count <= PaperInsightValidator.maximumResponseBytes else {
+            throw LatticeLensError.schemaViolation("v2 insight 响应超限")
+        }
+        try JSONDuplicateKeyDetector.validate(normalizedData)
+        guard let raw = try? JSONDecoder().decode(JSONValue.self, from: normalizedData) else { throw LatticeLensError.schemaViolation("v2 insight JSON 无法解码") }
         // A number of OpenAI-compatible gateways add harmless transport
         // metadata, or place the model's JSON object under `data`/`result`.
         // That metadata is not evidence and must never be saved.  Recover one
@@ -373,5 +383,85 @@ enum PaperInsightV2Validator {
               (string.isEmpty || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) else {
             throw LatticeLensError.schemaViolation("\(path) 不是受限字符串；仅可用空字符串表示来源未提供摘要")
         }
+    }
+}
+
+/// Repairs the single invalid JSON pattern emitted by some LLMs for TeX:
+/// a literal U+005C command marker inside a quoted JSON string (for example,
+/// `\\alpha`) instead of the JSON encoding that represents that marker.  It is
+/// deliberately a byte-level, syntax-preserving normalizer rather than a
+/// permissive JSON parser: valid escapes stay byte-identical, a malformed
+/// unicode escape stays malformed, and the strict duplicate-key parser still
+/// rejects every other invalid JSON construct.
+private enum BareTeXJSONEscapeNormalizer {
+    private static let backslash: UInt8 = 0x5C
+    private static let quote: UInt8 = 0x22
+    private static let unicodeEscape: UInt8 = 0x75
+
+    static func normalize(_ data: Data) -> Data {
+        let input = Array(data)
+        var output = [UInt8]()
+        output.reserveCapacity(input.count)
+        var index = 0
+        var insideString = false
+
+        while index < input.count {
+            let byte = input[index]
+            if !insideString {
+                output.append(byte)
+                if byte == quote { insideString = true }
+                index += 1
+                continue
+            }
+
+            if byte == quote {
+                output.append(byte)
+                insideString = false
+                index += 1
+                continue
+            }
+
+            guard byte == backslash else {
+                output.append(byte)
+                index += 1
+                continue
+            }
+
+            guard index + 1 < input.count else {
+                output.append(byte)
+                index += 1
+                continue
+            }
+
+            let following = input[index + 1]
+            if isStandardSimpleEscape(following) {
+                output.append(byte)
+                output.append(following)
+                index += 2
+                continue
+            }
+            if following == unicodeEscape {
+                // Keep both valid and malformed unicode escapes unchanged so
+                // the strict JSON grammar reports malformed sequences instead
+                // of treating them as TeX.
+                output.append(byte)
+                output.append(following)
+                index += 2
+                continue
+            }
+
+            // A non-JSON escape in a model-written reader-facing string is
+            // treated as a literal TeX-style command marker.  Doubling it
+            // makes the surrounding JSON valid while preserving the exact
+            // character the reader should see after decoding.
+            output.append(backslash)
+            output.append(backslash)
+            index += 1
+        }
+        return Data(output)
+    }
+
+    private static func isStandardSimpleEscape(_ byte: UInt8) -> Bool {
+        [quote, backslash, 0x2F, 0x62, 0x66, 0x6E, 0x72, 0x74].contains(byte)
     }
 }
