@@ -50,7 +50,7 @@
       "status": "PASS",
       "command": "xcodebuild -quiet -project LatticeLens.xcodeproj -scheme LatticeLens-UIFixture -destination 'platform=macOS,arch=arm64' -only-testing:LatticeLensUITests/LatticeLensUITests/testFixtureEvidenceInsightCompletesWhenProviderUsesScalarResearchQuestion test",
       "tests": 1,
-      "xcresult": ".codex-task-tmp-ui-research-question.3UN2mt/ResearchQuestion-fixed.xcresult",
+      "xcresult_summary": "1 total, 1 passed, 0 failed, 0 skipped; result was read before transient Xcode artifacts were removed",
       "scope": "real XCUIApplication fixture UI: paper selection, formula tab, local full-text confirmation, disclosure acceptance, scalar research_question response, completed status, and visible anchored formula card"
     },
     "release_xcode_build": {
