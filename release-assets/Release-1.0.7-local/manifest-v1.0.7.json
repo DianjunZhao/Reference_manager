@@ -1,0 +1,71 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.7",
+  "generated_at_utc": "2026-09-05T17:01:54Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.7",
+  "build_number": 107,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_commit_before_build": "4d17450511f4b70e44ebe2f016a6befb464d4754",
+    "git_tree_before_build": "d1ba2af4a72881f2e6788b1171d8c876709bcd9c",
+    "working_tree_was_clean": true
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "cb4b6c9c2364d762d115adfadd36ee7a260fdfe400e7bc2a6df2ac5c453c92e3",
+    "dsym_uuids": "C3160C7A-40D9-3C0F-8C5D-A750F954971D (x86_64);FD35724A-D525-3ABC-8765-31C7FB313EB4 (arm64)"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.7-local.dmg",
+      "sha256": "4af4c8199677c88a62ca456420b442445910a2961d8f73e8e15447640c691577"
+    }
+  },
+  "verification": {
+    "targeted_arxiv_html_formula_workflow": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testArxivHTMLFormulaDerivationWorkflowAcceptsCurrentDocumentAnchors",
+      "tests": 1,
+      "scope": "offline host workflow: ar5iv HTML extraction, current bounded payload, strict anchor validation, fixture LLM response, and anchored formula artifact"
+    },
+    "targeted_scalar_research_question_regression": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testEvidenceValidatorDropsLegacyUnanchoredResearchQuestionStringInsteadOfPromotingIt",
+      "tests": 1,
+      "scope": "offline unit regression: legacy scalar research_question is discarded to an explicit unavailable sentinel"
+    },
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -quiet -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination generic/platform=macOS ARCHS=arm64,x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES build",
+      "scope": "universal warnings-as-errors Release build; dSYM UUIDs match executable"
+    },
+    "mounted_dmg_inspection": {
+      "status": "PASS",
+      "scope": "read-only mounted DMG: ad-hoc signature, bundle identifier, version/build, both architectures, and executable SHA-256 match the staged build"
+    },
+    "isolated_fixture_launch": {
+      "status": "PASS",
+      "scope": "DMG inspection copy launched for three seconds only with LATTICELENS_USE_FIXTURES=1 and a project-local temporary store; process then terminated cleanly"
+    },
+    "fixture_ui_arxiv_html_route": {
+      "status": "BLOCKED",
+      "scope": "one graphical Xcode attempt and one command-line attempt could not initialize XCTest UI automation; command-line underlying error: Timed out while enabling automation mode. No product assertion executed."
+    },
+    "live_provider_and_installed_app": {
+      "status": "NOT_RUN",
+      "scope": "no real provider endpoint, Keychain credential, Application Support library, research document, INSPIRE, or LLM POST was accessed; this manifest does not authorize replacement of /Applications."
+    }
+  },
+  "release_status": {
+    "anchor_contract": "ar5iv HTML anchors require page=nil plus exact current paper, document hash, anchor ID, quote, quote hash, and section; PDF anchors still require exact page equality.",
+    "prompt_cache_invalidation": "paper-insight-prompt-v7 prevents reuse of a v6 Evidence artifact under this coordinate contract.",
+    "manual_receipt_rebinding": "required before any final seal for this exact DMG and installed executable",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "DMG smoke used only a project-local inspection copy. Replacing /Applications requires the user to quit every running LatticeLens process and explicitly authorize the staged bundle."
+  }
+}
