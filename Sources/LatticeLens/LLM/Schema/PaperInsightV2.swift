@@ -130,9 +130,15 @@ enum PaperInsightV2Validator {
         // types, non-allowlisted anchors and unanchored numeric claims remain
         // hard failures below.
         let contractRoot = try extractContractRoot(from: raw)
-        try validateShape(contractRoot)
+        // Some otherwise complete OpenAI-compatible replies regress only this
+        // field to a bare string.  Never reinterpret that string as a direct
+        // research claim: the normalizer replaces it with a visible `missing`
+        // sentinel, so formula claims still face the normal anchor/provenance
+        // checks below while an unrelated schema typo does not discard them.
+        let normalizedContractRoot = UnanchoredResearchQuestionNormalizer.normalize(contractRoot)
+        try validateShape(normalizedContractRoot)
         try validateEvidenceInput(source)
-        guard let canonicalData = try? JSONEncoder.latticeLens.encode(contractRoot),
+        guard let canonicalData = try? JSONEncoder.latticeLens.encode(normalizedContractRoot),
               let insight = try? JSONDecoder.latticeLens.decode(PaperInsightV2.self, from: canonicalData),
               insight.schemaVersion == schemaVersion, insight.sourceScope == sourceScope else {
             throw LatticeLensError.schemaViolation("v2 schema 或 source scope 不匹配")
@@ -180,7 +186,7 @@ enum PaperInsightV2Validator {
             requiredKeys: ["research_question", "method_and_data_flow", "main_results", "reasonable_inferences", "missing_information", "caveats"],
             optionalKeys: ["important_formula_derivations"],
             path: "physics")
-        try claim(try value(physics, "research_question", "physics"), path: "physics.research_question", requiredStatus: .direct)
+        try researchQuestionClaim(try value(physics, "research_question", "physics"))
         for key in ["method_and_data_flow", "main_results", "reasonable_inferences", "missing_information", "caveats"] {
             let items = try array(try value(physics, key, "physics"), maximum: 32, path: "physics.\(key)")
             let required: EpistemicStatus? = switch key {
@@ -317,6 +323,20 @@ enum PaperInsightV2Validator {
         }
         if requireFormulaStructure, object["formula_tex"] == nil {
             throw LatticeLensError.schemaViolation("\(path) 缺少 formula_tex")
+        }
+    }
+
+    /// A research question is normally a direct, anchored claim.  `missing`
+    /// is also accepted for the explicit non-claim sentinel emitted by
+    /// `UnanchoredResearchQuestionNormalizer` (or when the supplied source
+    /// genuinely does not state a research question).  Inference remains
+    /// forbidden here: it would turn the paper's stated question into a
+    /// model-authored interpretation.
+    private static func researchQuestionClaim(_ raw: JSONValue) throws {
+        try claim(raw, path: "physics.research_question")
+        guard let status = raw.objectValue?["epistemic_status"]?.stringValue,
+              status == EpistemicStatus.direct.rawValue || status == EpistemicStatus.missing.rawValue else {
+            throw LatticeLensError.schemaViolation("physics.research_question 必须是 direct 或 missing")
         }
     }
 
@@ -463,5 +483,32 @@ private enum BareTeXJSONEscapeNormalizer {
 
     private static func isStandardSimpleEscape(_ byte: UInt8) -> Bool {
         [quote, backslash, 0x2F, 0x62, 0x66, 0x6E, 0x72, 0x74].contains(byte)
+    }
+}
+
+/// Preserves the evidence boundary when a provider returns the one observed
+/// legacy shape `physics.research_question: "..."`.  A scalar has neither an
+/// epistemic label nor an anchor, so accepting its wording as a direct claim
+/// would fabricate provenance.  Instead, replace only that exact scalar with
+/// an explicit `missing` claim and deliberately drop the unanchored text.  No
+/// arrays, objects, other fields, anchors, numerical claims, or unknown types
+/// are repaired by this compatibility path.
+private enum UnanchoredResearchQuestionNormalizer {
+    static func normalize(_ raw: JSONValue) -> JSONValue {
+        guard case .object(var root) = raw,
+              case .object(var physics)? = root["physics"],
+              let question = physics["research_question"]?.stringValue,
+              !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              question.unicodeScalars.count <= 16_000 else {
+            return raw
+        }
+
+        physics["research_question"] = .object([
+            "text_zh": .string("模型未将研究问题返回为可回查对象；未采纳未锚定的原始文本。"),
+            "epistemic_status": .string(EpistemicStatus.missing.rawValue),
+            "evidence_ids": .array([])
+        ])
+        root["physics"] = .object(physics)
+        return .object(root)
     }
 }

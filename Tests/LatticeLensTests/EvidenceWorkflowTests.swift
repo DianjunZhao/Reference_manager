@@ -139,6 +139,22 @@ final class EvidenceWorkflowTests: XCTestCase {
         XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(malformedUnicodeEscape.utf8), source: source, maximumFigures: 0))
     }
 
+    func testEvidenceValidatorDropsLegacyUnanchoredResearchQuestionStringInsteadOfPromotingIt() throws {
+        let source = makeEvidencePayload()
+        let valid = validInsightJSON(anchorID: source.anchors[0].id)
+        let fieldStart = try XCTUnwrap(valid.range(of: "\"research_question\":"))
+        let nextField = try XCTUnwrap(valid.range(of: ",\"method_and_data_flow\":", range: fieldStart.upperBound..<valid.endIndex))
+        let legacy = valid.replacingCharacters(in: fieldStart.lowerBound..<nextField.lowerBound,
+                                               with: "\"research_question\":\"模型未附 evidence anchor 的研究问题\"")
+
+        let insight = try PaperInsightV2Validator.decode(Data(legacy.utf8), source: source, maximumFigures: 0)
+        XCTAssertEqual(insight.physics.researchQuestion.epistemicStatus, .missing)
+        XCTAssertEqual(insight.physics.researchQuestion.evidenceIDs, [])
+        XCTAssertEqual(insight.physics.researchQuestion.textZH, "模型未将研究问题返回为可回查对象；未采纳未锚定的原始文本。")
+        XCTAssertFalse(insight.physics.researchQuestion.textZH.contains("模型未附 evidence anchor"),
+                       "未锚定的 provider 文本不得作为可持久化物理结论进入 artifact")
+    }
+
     func testEvidenceValidatorIgnoresGatewayMetadataAndUnwrapsOneKnownEnvelope() throws {
         let source = makeEvidencePayload()
         let valid = validInsightJSON(anchorID: source.anchors[0].id)

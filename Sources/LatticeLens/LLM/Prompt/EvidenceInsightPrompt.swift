@@ -3,7 +3,7 @@ import Foundation
 /// Prompt contract for the v2 evidence reader.  The provider receives this
 /// JSON envelope as data; the source quotes cannot modify the system contract.
 enum EvidenceInsightPrompt {
-    static let version = "paper-insight-prompt-v5"
+    static let version = "paper-insight-prompt-v6"
 
     static let systemInstruction = """
     Return one paper-insight-v2 JSON object and nothing else: no Markdown,
@@ -49,6 +49,12 @@ enum EvidenceInsightPrompt {
     Formula claims additionally contain formula_tex, derivation_steps, and
     conclusion_zh. Use [] for an unavailable optional list; do not omit a
     required root or physics key. important_figures and terminology may be [].
+
+    In particular, physics.research_question MUST be an object, never a JSON
+    string. Preserve this exact field shape (replace only the values):
+    "research_question":{"text_zh":"...","epistemic_status":"direct","evidence_ids":["one supplied anchor id"]}
+    Before returning, check that physics.research_question has JSON type object
+    and exactly the three required keys text_zh, epistemic_status, evidence_ids.
     """
 
     static func userPayload(

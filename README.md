@@ -1,8 +1,8 @@
 # LatticeLens
 
-> 当前开发候选为 **LatticeLens 1.0.5 (105)**，仍是 same-Mac local candidate，尚非
-> notarized/final release。它在 `release-assets/Release-1.0.5-local/` 中带有独立的
-> `manifest-v1.0.5.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
+> 当前开发候选为 **LatticeLens 1.0.6 (106)**，仍是 same-Mac local candidate，尚非
+> notarized/final release。它在 `release-assets/Release-1.0.6-local/` 中带有独立的
+> `manifest-v1.0.6.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
 > 版本号和 executable SHA-256，而不能以旧 `/Applications` 二进制代替它。当前发布包的
 > executable SHA-256 以同目录的 `manifest-v1.0.5.json` 为准。
 > 当前 verifier 会执行 SwiftPM、actual SwiftData disk benchmark、Xcode build/analyze/unit、normal/
@@ -16,11 +16,11 @@
 > case（虚拟化作者选择、长 Settings 滚动），每个 case 均单独启动 fixture app 并生成一份可读 result。三种窗口
 > 尺寸观察保留为人工 P0 receipt。完整 26-case fixture suite 仍用于开发回归，不再是该同机 release 的非重复
 > 封存 gate；manifest 会记录该范围和确切计数。
-> 对当前 **1.0.5 (105)** 安装包，最终封存会校验两份 release DMG 的字节一致性、DMG image、当前
+> 对当前 **1.0.6 (106)** 安装包，最终封存会校验两份 release DMG 的字节一致性、DMG image、当前
 > `/Applications/LatticeLens.app` 的版本/签名/executable hash，并要求 receipt 精确绑定
-> `manifest-v1.0.5.json`；它不把旧 1.0.4 的自动化记录冒充为 1.0.5 的新测试。
+> `manifest-v1.0.6.json`；它不把旧 1.0.5 的自动化记录冒充为 1.0.6 的新测试。
 > 需要人工观察的最小清单与可直接回复的确认语句见
-> [MANUAL_1_0_5_ACCEPTANCE.md](MANUAL_1_0_5_ACCEPTANCE.md)。
+> [MANUAL_1_0_6_ACCEPTANCE.md](MANUAL_1_0_6_ACCEPTANCE.md)。
 >
 > 目前仍 fail-closed 的 1.0 边界是：真实 VoiceOver/Accessibility Inspector 与三种窗口尺寸观察、
 > 三篇 sanitized LQCD fixture rubric、用户选择下的 `/Applications` install/uninstall/app+data

@@ -107,6 +107,13 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
             throw LatticeLensError.schemaViolation("fixture evidence payload 缺少 PDF anchor")
         }
         let direct: [String: Any] = ["text_zh": "fixture 全文含有可回查的局部证据。", "epistemic_status": "direct", "evidence_ids": [anchorID]]
+        // This deliberate malformed provider reply is available only to the
+        // process-local UI fixture.  It exercises the production parser's
+        // fail-closed fallback without reading a user library, Keychain, or
+        // contacting any provider.
+        let researchQuestion: Any = ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_LEGACY_RESEARCH_QUESTION"] == "1"
+            ? "fixture provider returned this research question without an anchor object"
+            : direct
         let formula: [String: Any] = [
             "text_zh": "原文直接给出格距定义 a=0.09 fm，并可按下列步骤核对。",
             "formula_tex": "$a=0.09\\,\\mathrm{fm}$",
@@ -127,7 +134,7 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
             "title_zh": "fixture 全文证据",
             "abstract_zh": "fixture 本地 PDF 提取的受限证据摘要。",
             "physics": [
-                "research_question": direct,
+                "research_question": researchQuestion,
                 "method_and_data_flow": [direct],
                 "main_results": [direct],
                 "important_formula_derivations": [formula],

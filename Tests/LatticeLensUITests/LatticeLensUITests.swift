@@ -49,7 +49,8 @@ final class LatticeLensUITests: XCTestCase {
                                   initialAuthorSearch: String? = nil,
                                   initialTagManagerSearch: String? = nil,
                                   initialCollectionManagerSearch: String? = nil,
-                                  initialNotebookEntryTitle: String? = nil) -> XCUIApplication {
+                                  initialNotebookEntryTitle: String? = nil,
+                                  legacyResearchQuestionString: Bool = false) -> XCUIApplication {
         // The Xcode `UIFixture` scheme builds the app with a deliberately
         // distinct bundle ID.  Resolving it explicitly avoids macOS XCTest
         // attaching to a menu-bar-only default application proxy when another
@@ -104,6 +105,9 @@ final class LatticeLensUITests: XCTestCase {
         if let initialNotebookEntryTitle {
             app.launchEnvironment["LATTICELENS_FIXTURE_INITIAL_NOTEBOOK_TITLE"] = initialNotebookEntryTitle
             arguments += ["-LatticeLensFixtureInitialNotebookTitle", initialNotebookEntryTitle]
+        }
+        if legacyResearchQuestionString {
+            app.launchEnvironment["LATTICELENS_FIXTURE_LEGACY_RESEARCH_QUESTION"] = "1"
         }
         if let fixtureWindowSize {
             precondition(["820x640", "1120x700", "1440x900"].contains(fixtureWindowSize),
@@ -1194,6 +1198,49 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(app.buttons["acceptEvidenceDisclosure"].waitForExistence(timeout: 5),
                       "evidence provider request 前必须显示仅限 anchors/chunks 的 disclosure")
         app.buttons["declineEvidenceDisclosure"].click()
+        #endif
+    }
+
+    func testFixtureEvidenceInsightCompletesWhenProviderUsesScalarResearchQuestion() throws {
+        #if SWIFT_PACKAGE
+        throw XCTSkip("XCUIApplication 测试仅通过 LatticeLens.xcodeproj 的 UI-test target 运行。")
+        #else
+        let app = launchFixtureApp(legacyResearchQuestionString: true)
+        defer { app.terminate() }
+        XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8),
+                      "本用例只能在隔离的 fixture dependency graph 中运行")
+        // This focused Evidence regression owns no author-index behavior: the
+        // fixture bootstraps this bounded paper locally, so selecting it
+        // directly keeps the test on the exact formula-generation path.
+        let paper = app.staticTexts["paperRow-1234567"].firstMatch
+        XCTAssertTrue(paper.waitForExistence(timeout: 8))
+        paper.click()
+        let formulaTab = app.radioButtons["公式推导"]
+        if formulaTab.waitForExistence(timeout: 5) {
+            formulaTab.click()
+        } else {
+            // AppKit has exposed this same segmented Picker as either a radio
+            // button group or ordinary buttons across Xcode/macOS releases.
+            let formulaButton = app.buttons["公式推导"]
+            XCTAssertTrue(formulaButton.waitForExistence(timeout: 5))
+            formulaButton.click()
+        }
+        app.buttons["downloadFullText-fixture-fulltext"].click()
+        XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
+        app.buttons["confirmFullTextDownload"].click()
+        let generate = app.buttons["generateEvidenceInsight"]
+        XCTAssertTrue(generate.waitForExistence(timeout: 8))
+        generate.click()
+        XCTAssertTrue(app.buttons["acceptEvidenceDisclosure"].waitForExistence(timeout: 5))
+        app.buttons["acceptEvidenceDisclosure"].click()
+
+        let status = app.staticTexts["evidenceInsightStatus"]
+        XCTAssertEqual(waitForValue(of: status, expected: "已完成 · 1 次请求", timeout: 12), .completed,
+                       "scalar research_question 只能降级为未锚定信息，不能使已锚定公式推导整轮失败")
+        XCTAssertTrue(app.staticTexts["已验证公式推导（paper-insight-v2）"].waitForExistence(timeout: 5),
+                      "完成后必须显示已验证的 v2 artifact，而不是仅停留在状态栏")
+        XCTAssertTrue(app.staticTexts["原文公式（直接支持）"].waitForExistence(timeout: 5),
+                      "已锚定的公式卡片必须仍然在真实 Evidence UI 中可见")
         #endif
     }
 
