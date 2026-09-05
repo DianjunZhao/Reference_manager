@@ -5,6 +5,15 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Promoted the current local candidate to **1.0.7 (107)**.  Evidence v2 now
+  binds a full-text anchor's coordinate rule to the actual document
+  representation: ar5iv HTML excerpts have `page: null` and must exactly match
+  the current payload's paper, document hash, anchor ID, quote and quote hash,
+  plus its extracted section; INSPIRE/arXiv PDF excerpts still require the
+  original page equality.  The prompt/cache key is `paper-insight-prompt-v7`,
+  so a v6 artifact cannot be reused under this contract.  No cross-document or
+  unanchored evidence is accepted.
+
 - Promoted the current local candidate to **1.0.5 (105)**. Evidence v2 now
   deterministically repairs only a bare TeX command marker written inside a
   model JSON string (for example an unescaped `\\alpha`) before the existing

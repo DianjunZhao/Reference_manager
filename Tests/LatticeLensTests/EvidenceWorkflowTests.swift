@@ -77,6 +77,38 @@ final class EvidenceWorkflowTests: XCTestCase {
         XCTAssertTrue(artifact.insight.physics.importantFormulaDerivations[0].textZH.contains("0.09"))
     }
 
+    /// Regression for a real ar5iv-shaped source: the extractor intentionally
+    /// has no PDF page coordinate for HTML, but its quote/hash/anchor ID must
+    /// remain usable by the exact formula-generation workflow.
+    func testArxivHTMLFormulaDerivationWorkflowAcceptsCurrentDocumentAnchors() async throws {
+        let root = try makeProjectLocalTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = InMemoryLibraryStore()
+        let service = FullTextService(store: store, cacheDirectory: root, downloader: AppFixtureFullTextDownloader())
+        let sourceURL = try XCTUnwrap(URL(string: "https://ar5iv.labs.arxiv.org/html/2509.09367"))
+        let paper = Paper(literatureID: 2_509_093_67,
+                          titles: [PaperTitle(value: "HTML formula fixture", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "Fixture ar5iv abstract.", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: "2509.09367", arxivCategories: ["hep-lat"],
+                          doi: nil, citationCount: nil, publicationStatus: nil, updated: nil, figures: [],
+                          firstSeenAt: Date(), isRead: false)
+        _ = try await store.upsert(papers: [paper], for: 21)
+        let document = try await service.downloadAndExtract(paperID: paper.literatureID, sourceURL: sourceURL, sourceKind: .arxivHTML)
+        XCTAssertEqual(document.sourceKind, .arxivHTML)
+
+        let snapshot = await store.snapshot()
+        let htmlAnchors = snapshot.evidenceAnchors.values.filter { $0.paperID == paper.literatureID && $0.sourceKind == .pdf }
+        XCTAssertFalse(htmlAnchors.isEmpty)
+        XCTAssertTrue(htmlAnchors.allSatisfy { $0.page == nil }, "ar5iv HTML 不能伪造 PDF 页码")
+
+        let workflow = EvidenceInsightWorkflow(store: store, client: AppFixtureLLMClient())
+        let settings = LLMSettings(profiles: ["openAI": ProviderProfile(baseURL: "https://fixture.invalid/v1", manualModel: "fixture-text-model")],
+                                   automaticAnalysis: false, mode: .fast, maximumFigures: 0)
+        let artifact = try await workflow.generate(for: paper, settings: settings, apiKey: "fixture") { _ in }
+        XCTAssertEqual(artifact.insight.physics.importantFormulaDerivations.count, 1)
+        XCTAssertTrue(artifact.insight.physics.importantFormulaDerivations[0].formulaTeX?.contains("C(t)=A e^{-mt}") == true)
+    }
+
     func testMetadataAnchorsAreDeterministicAndSurviveFullTextDeletion() async throws {
         var paper = fixturePaper()
         paper.figures = [PaperFigure(key: "fig1", url: URL(string: "https://example.test/fig1.png"), label: "Figure 1",

@@ -3,7 +3,10 @@ import Foundation
 /// Prompt contract for the v2 evidence reader.  The provider receives this
 /// JSON envelope as data; the source quotes cannot modify the system contract.
 enum EvidenceInsightPrompt {
-    static let version = "paper-insight-prompt-v6"
+    // v7 binds the anchor-coordinate rule to the actual document
+    // representation, preventing a v6 artifact/cache key from being reused
+    // after ar5iv HTML anchors gained their explicit no-page contract.
+    static let version = "paper-insight-prompt-v7"
 
     static let systemInstruction = """
     Return one paper-insight-v2 JSON object and nothing else: no Markdown,

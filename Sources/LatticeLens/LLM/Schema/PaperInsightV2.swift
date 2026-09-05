@@ -7,6 +7,12 @@ struct EvidenceInputPayload: Codable, Sendable {
     static let maximumPayloadScalars = 120_000
     let paperID: Int
     let documentHash: String
+    /// Coordinates carried by a full-text anchor depend on the document
+    /// representation. PDF anchors are page-addressable, whereas ar5iv HTML
+    /// anchors are bounded source excerpts without an invented PDF page.
+    /// Keep the representation in the request so the validator can check the
+    /// appropriate coordinate contract without weakening identity/hash checks.
+    let documentSourceKind: FullTextSourceKind
     let title: String
     let abstract: String?
     let chunks: [EvidenceChunk]
@@ -21,6 +27,7 @@ struct EvidenceInputPayload: Codable, Sendable {
     init(paper: Paper, document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor]) {
         paperID = paper.literatureID
         documentHash = document.sha256
+        documentSourceKind = document.sourceKind
         title = paper.displayTitle
         abstract = paper.preferredAbstract
         var selectedChunks = [EvidenceChunk]()
@@ -275,9 +282,22 @@ enum PaperInsightV2Validator {
                 throw LatticeLensError.schemaViolation("v2 evidence anchor 不属于当前 paper，或 quote hash 不匹配")
             }
             if anchor.sourceKind == .pdf {
-                guard let chunk = chunksByID[anchor.id], chunk.page == anchor.page,
+                guard let chunk = chunksByID[anchor.id],
                       chunk.textHash == anchor.quoteHash, chunk.text == anchor.quote else {
                     throw LatticeLensError.schemaViolation("v2 全文 anchor 不属于本次受限 document payload")
+                }
+                switch source.documentSourceKind {
+                case .arxivHTML:
+                    // ar5iv is HTML, not a PDF. Its extractor deliberately
+                    // records no fabricated page number; section/chunk/hash
+                    // identity remains fully bound to this exact payload.
+                    guard anchor.page == nil, anchor.section == chunk.section else {
+                        throw LatticeLensError.schemaViolation("v2 ar5iv HTML anchor 坐标不属于本次受限 document payload")
+                    }
+                case .inspireDocument, .arxivPDF:
+                    guard chunk.page == anchor.page else {
+                        throw LatticeLensError.schemaViolation("v2 全文 anchor 不属于本次受限 document payload")
+                    }
                 }
             }
         }

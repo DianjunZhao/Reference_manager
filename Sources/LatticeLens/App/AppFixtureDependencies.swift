@@ -114,18 +114,37 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
         let researchQuestion: Any = ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_LEGACY_RESEARCH_QUESTION"] == "1"
             ? "fixture provider returned this research question without an anchor object"
             : direct
-        let formula: [String: Any] = [
-            "text_zh": "原文直接给出格距定义 a=0.09 fm，并可按下列步骤核对。",
-            "formula_tex": "$a=0.09\\,\\mathrm{fm}$",
-            "derivation_steps": [
-                "从 PDF anchor 读取格距记号 $a$。",
-                "代入原文给出的数值 $0.09\\,\\mathrm{fm}$。",
-                "单位保持为 fm，因此不需要额外换算。"
-            ],
-            "conclusion_zh": "该 fixture 的格距为 $a=0.09\\,\\mathrm{fm}$。",
-            "epistemic_status": "direct",
-            "evidence_ids": [anchorID]
-        ]
+        let anchorQuote = anchor["quote"] as? String ?? ""
+        let formula: [String: Any]
+        if anchorQuote.contains("C(t)=A e^{-mt}") {
+            // ar5iv fixture: use the exact HTML-extracted TeX expression,
+            // not a PDF-only number. This makes the UI regression exercise
+            // the same no-page full-text anchor contract as production.
+            formula = [
+                "text_zh": "原文直接给出相关函数的指数衰减形式。",
+                "formula_tex": "C(t)=A e^{-mt}",
+                "derivation_steps": [
+                    "从 HTML anchor 读取相关函数 $C(t)$。",
+                    "原文把振幅 $A$ 与指数衰减 $e^{-mt}$ 相乘。"
+                ],
+                "conclusion_zh": "该受限 HTML 片段定义了 $C(t)=A e^{-mt}$。",
+                "epistemic_status": "direct",
+                "evidence_ids": [anchorID]
+            ]
+        } else {
+            formula = [
+                "text_zh": "原文直接给出格距定义 a=0.09 fm，并可按下列步骤核对。",
+                "formula_tex": "$a=0.09\\,\\mathrm{fm}$",
+                "derivation_steps": [
+                    "从 PDF anchor 读取格距记号 $a$。",
+                    "代入原文给出的数值 $0.09\\,\\mathrm{fm}$。",
+                    "单位保持为 fm，因此不需要额外换算。"
+                ],
+                "conclusion_zh": "该 fixture 的格距为 $a=0.09\\,\\mathrm{fm}$。",
+                "epistemic_status": "direct",
+                "evidence_ids": [anchorID]
+            ]
+        }
         let inference: [String: Any] = ["text_zh": "fixture 仅用于验证证据流，不构成物理推断。", "epistemic_status": "inference", "evidence_ids": [anchorID]]
         let missing: [String: Any] = ["text_zh": "真实格点参数未在 fixture 中提供。", "epistemic_status": "missing", "evidence_ids": []]
         let envelope: [String: Any] = [
@@ -184,6 +203,7 @@ struct AppFixtureFullTextDownloader: FullTextDownloading {
         "https://fixture.invalid/fulltext/1234567.pdf",
         "https://fixture.invalid/fulltext/1234568.pdf",
         "https://fixture.invalid/fulltext/large.pdf",
+        "https://ar5iv.labs.arxiv.org/html/2608.12345",
         "https://ar5iv.labs.arxiv.org/html/2509.09367"
     ]
 

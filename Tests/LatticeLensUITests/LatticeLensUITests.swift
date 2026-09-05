@@ -1244,6 +1244,48 @@ final class LatticeLensUITests: XCTestCase {
         #endif
     }
 
+    /// Exercises the delivered UI route preferred by the product: ar5iv HTML
+    /// is read after its own confirmation, then the formula action validates
+    /// HTML's no-page anchors against the current bounded document payload.
+    func testFixtureArxivHTMLFormulaDerivationCompletesWithCurrentPayloadAnchors() throws {
+        #if SWIFT_PACKAGE
+        throw XCTSkip("XCUIApplication 测试仅通过 LatticeLens.xcodeproj 的 UI-test target 运行。")
+        #else
+        let app = launchFixtureApp()
+        defer { app.terminate() }
+        XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
+        let paper = app.staticTexts["paperRow-1234567"].firstMatch
+        XCTAssertTrue(paper.waitForExistence(timeout: 8))
+        paper.click()
+        let formulaTab = app.radioButtons["公式推导"]
+        if formulaTab.waitForExistence(timeout: 5) {
+            formulaTab.click()
+        } else {
+            let formulaButton = app.buttons["公式推导"]
+            XCTAssertTrue(formulaButton.waitForExistence(timeout: 5))
+            formulaButton.click()
+        }
+
+        let readHTML = app.buttons["downloadArxivHTML-1234567"]
+        XCTAssertTrue(readHTML.waitForExistence(timeout: 5), "含 arXiv ID 的论文必须提供优先的 ar5iv HTML 动作")
+        readHTML.click()
+        XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
+        app.buttons["confirmFullTextDownload"].click()
+        let fullTextStatus = app.staticTexts["fullTextStatus"]
+        XCTAssertEqual(waitForValue(of: fullTextStatus, expected: "ar5iv HTML 已提取为 bounded evidence anchors。", timeout: 8), .completed)
+
+        let generate = app.buttons["generateEvidenceInsight"]
+        XCTAssertTrue(generate.waitForExistence(timeout: 5))
+        generate.click()
+        XCTAssertTrue(app.buttons["acceptEvidenceDisclosure"].waitForExistence(timeout: 5))
+        app.buttons["acceptEvidenceDisclosure"].click()
+        XCTAssertEqual(waitForValue(of: app.staticTexts["evidenceInsightStatus"], expected: "已完成 · 1 次请求", timeout: 12), .completed,
+                       "同一 ar5iv HTML payload 的公式 anchor 不得被误报为不属于本次 document")
+        XCTAssertTrue(app.staticTexts["已验证公式推导（paper-insight-v2）"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["原文公式（直接支持）"].waitForExistence(timeout: 5))
+        #endif
+    }
+
     func testFixtureCompareCreatesExtractsAndJumpsToExactSharedPDFAnchor() throws {
         #if SWIFT_PACKAGE
         throw XCTSkip("XCUIApplication 测试仅通过 LatticeLens.xcodeproj 的 UI-test target 运行。")
