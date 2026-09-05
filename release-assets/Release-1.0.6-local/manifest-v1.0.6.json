@@ -1,0 +1,77 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.6",
+  "generated_at_utc": "2026-09-05T03:19:47Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.6",
+  "build_number": 106,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_head_before_build": "fa6d27d762e3a2518d7f0c336650048c12de8f9c",
+    "git_tree_before_build": "adab392dc8596313385a38d8daff89a027676aad",
+    "working_tree_was_dirty": false,
+    "changed_build_input_sha256": {
+      "LatticeLens.xcodeproj/project.pbxproj": "bf58619fca9e41d578e7b27557dcadbfdafd5219ed71f04a9f00a56179dec67b",
+      "Sources/LatticeLens/App/AppFixtureDependencies.swift": "eb428da7a5aa38d2cc197a2306551d5aac263c528f425851bcb404f95d58d051",
+      "Sources/LatticeLens/LLM/Prompt/EvidenceInsightPrompt.swift": "865813c039b1b1fbf54b81b9e7961b83c0d67cc48d646df272cd19f34b5306aa",
+      "Sources/LatticeLens/LLM/Schema/PaperInsightV2.swift": "8548f1246ec94ac4c7a52c4094fcfca5e9c9f087451a0f602ef18db12ec8ee8a",
+      "Tests/LatticeLensTests/EvidenceWorkflowTests.swift": "e87fd5cc49c51e8c2e606f73cd67e550ef0ecdd31ff255e2c2c55da0edbab573",
+      "Tests/LatticeLensUITests/LatticeLensUITests.swift": "0a060950cf387b706d72676f1528f0f883bf0e8844860daa9e28f80da21a6510"
+    }
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "53211ce607a5756c42b71631814b012b395a8f35deebf59d313e4e20e1eb0cab"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.6-local.dmg",
+      "sha256": "4d6cc029f3a70db8cf7a241fe5d1a3d33116542fa2ad6bdd0a0e5a54cf2261b6"
+    }
+  },
+  "verification": {
+    "targeted_scalar_research_question_regression": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testEvidenceValidatorDropsLegacyUnanchoredResearchQuestionStringInsteadOfPromotingIt",
+      "tests": 1,
+      "scope": "offline unit regression: a scalar research_question is converted to an explicit missing sentinel; its unanchored text is never persisted as a physics claim"
+    },
+    "fixture_evidence_workflow_regression": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testAppFixtureDownloaderProducesExtractablePDFAndEvidenceResponse",
+      "tests": 1,
+      "scope": "offline fixture workflow: local full-text extraction and one anchored formula derivation remain valid"
+    },
+    "fixture_ui_scalar_research_question_regression": {
+      "status": "PASS",
+      "command": "xcodebuild -quiet -project LatticeLens.xcodeproj -scheme LatticeLens-UIFixture -destination 'platform=macOS,arch=arm64' -only-testing:LatticeLensUITests/LatticeLensUITests/testFixtureEvidenceInsightCompletesWhenProviderUsesScalarResearchQuestion test",
+      "tests": 1,
+      "xcresult": ".codex-task-tmp-ui-research-question.3UN2mt/ResearchQuestion-fixed.xcresult",
+      "scope": "real XCUIApplication fixture UI: paper selection, formula tab, local full-text confirmation, disclosure acceptance, scalar research_question response, completed status, and visible anchored formula card"
+    },
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -quiet -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination 'platform=macOS,arch=arm64' -jobs 1 CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf-with-dsym SWIFT_TREAT_WARNINGS_AS_ERRORS=YES build",
+      "scope": "warnings-as-errors Release build; resulting executable was independently inspected as universal x86_64 arm64"
+    },
+    "mounted_dmg_inspection": {
+      "status": "PASS",
+      "scope": "read-only mounted DMG: ad-hoc signature, bundle identifier, version/build, executable hash, and both executable architectures verified; no candidate app launch or network request"
+    },
+    "live_provider_and_installed_app": {
+      "status": "NOT_RUN",
+      "scope": "no real provider endpoint, Keychain credential, Application Support library, research document, or LLM POST was accessed; /Applications/LatticeLens.app was left running and unchanged"
+    }
+  },
+  "release_status": {
+    "scalar_research_question_handling": "A scalar physics.research_question has no epistemic label or evidence anchor. It is replaced only by a visible missing sentinel and its unanchored wording is discarded; all formula, source scope, anchor, numeric-provenance, size, duplicate-key, malformed-unicode, and TeX validation remains fail-closed.",
+    "prompt_cache_invalidation": "paper-insight-prompt-v6 requires research_question to be an object with text_zh, epistemic_status, and evidence_ids, preventing reuse of a v5 evidence artifact.",
+    "manual_receipt_rebinding": "required before any final seal for this exact DMG and installed executable",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "This manifest does not authorize overwriting /Applications. Replacement requires the user to quit every running LatticeLens process and confirm the staged bundle."
+  }
+}
