@@ -6,10 +6,13 @@ struct MainWorkspaceView: View {
     var body: some View {
         NavigationSplitView {
             AuthorSidebar(viewModel: viewModel)
+                .navigationSplitViewColumnWidth(min: 140, ideal: 180, max: 260)
         } content: {
             PaperTimeline(viewModel: viewModel)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 560)
         } detail: {
             PaperLensView(viewModel: viewModel)
+                .navigationSplitViewColumnWidth(min: 360, ideal: 640)
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar {
@@ -596,6 +599,13 @@ private struct AuthorRow: View {
 private struct PaperTimeline: View {
     @ObservedObject var viewModel: AppViewModel
 
+    private var paperFilterPicker: some View {
+        Picker("过滤", selection: $viewModel.paperFilter) {
+            ForEach(PaperFilter.allCases) { Text($0.displayName).tag($0) }
+        }
+        .accessibilityIdentifier("paperFilter")
+    }
+
     private var yearSections: [(Int, [Paper])] {
         let grouped = Dictionary(grouping: viewModel.filteredPapers, by: \Paper.timelineYear)
         return grouped.keys.sorted(by: >).map { ($0, grouped[$0]!.sorted { ($0.timelineDate ?? .distantPast) > ($1.timelineDate ?? .distantPast) }) }
@@ -696,11 +706,11 @@ private struct PaperTimeline: View {
                 .accessibilityLabel("文献同步进度")
                 .accessibilityValue(viewModel.syncStatus.message)
             }
-            Picker("过滤", selection: $viewModel.paperFilter) {
-                ForEach(PaperFilter.allCases) { Text($0.displayName).tag($0) }
+            ViewThatFits(in: .horizontal) {
+                paperFilterPicker.pickerStyle(.segmented).fixedSize(horizontal: true, vertical: false)
+                paperFilterPicker.pickerStyle(.menu)
             }
-            .pickerStyle(.segmented).padding(.horizontal).padding(.vertical, 8)
-            .accessibilityIdentifier("paperFilter")
+            .padding(.horizontal).padding(.vertical, 8)
             List(selection: Binding(get: { viewModel.selectedPaperID }, set: { paperID in
                 schedulePaperSelection(paperID)
             })) {

@@ -410,6 +410,29 @@ struct AppFixtureTransport: HTTPTransport {
     }
 }
 
+/// Layout-only synthetic content. The view requires both fixture mode and
+/// an explicit process flag; no library, provider or cached artifact is used.
+enum FormulaReaderLayoutFixture {
+    static let claims: [EvidenceClaim] = (1...3).map { index in
+        EvidenceClaim(
+            id: UUID(uuidString: "00000000-0000-0000-0000-00000000000\(index)")!,
+            textZH: #"排版测试（合成资料）：局域双线性算符 $\mathcal{O}_{\Gamma}(x)$，其中 \(\Gamma\) 表示 Dirac 结构；无分隔符写法 \bar{\psi}(x)\Gamma\psi(x) 应保持在句中。"#,
+            epistemicStatus: .inference, evidenceIDs: [],
+            formulaTeX: index == 2
+                ? #"\begin{aligned} C(t)&=A e^{-mt}\\ m_{\mathrm{eff}}(t)&=\log\frac{C(t)}{C(t+a)}\end{aligned}"#
+                : #"\mathcal{C}_{\Gamma}^{(3)}(\mathbf{p}',\mathbf{p};t,\tau)=\sum_{\mathbf{x},\mathbf{y}}e^{-i\mathbf{p}'\cdot\mathbf{x}}e^{i(\mathbf{p}'-\mathbf{p})\cdot\mathbf{y}}\langle 0|\chi(\mathbf{x},t)\bar{\psi}(\mathbf{y},\tau)\Gamma\psi(\mathbf{y},\tau)\bar{\chi}(0)|0\rangle"#,
+            derivationSteps: [
+                #"定义算符 $\mathcal O_\Gamma=\bar\psi\Gamma\psi$，并保留句末标点。此处只检查排版，不声称验证物理推导。"#,
+                #"插入完备关系：$$\mathbb{1}=\sum_n |n\rangle\langle n|$$然后继续同一推导步骤的文字说明。"#,
+                #"无分隔符的比值 \frac{C(t)}{C(t+a)} 与带分隔符的 $\frac{C(t)}{C(t+a)}$ 应使用相同字形。"#,
+                #"矩阵和多行公式：\[\begin{pmatrix}a&b\\c&d\end{pmatrix}\begin{pmatrix}x\\y\end{pmatrix}=\begin{pmatrix}ax+by\\cx+dy\end{pmatrix}\]"#
+            ] + (5...12).map { step in
+                #"长列表步骤 "# + String(step) + #"：在 $t\gg a$ 下展示 $\sum_{n=0}^{N}A_n e^{-E_n t}$，核对上下标、段落间距及滚动可达性。测试资料不代表任何论文结论。"#
+            },
+            conclusionZH: #"最终检查点：$\mathcal{O}_{\Gamma}$、\frac{a}{b} 和 $C(t)$ 均可阅读。"#)
+    }
+}
+
 enum AppLaunchConfiguration {
     /// A production-dependency test run may need a fresh, disposable store
     /// while still talking to the real read-only metadata endpoint.  `HOME`

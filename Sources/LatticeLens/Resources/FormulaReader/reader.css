@@ -1,0 +1,45 @@
+:root { color-scheme: light dark; font: 14px/1.8 -apple-system, BlinkMacSystemFont, sans-serif; }
+* { box-sizing: border-box; }
+html { overflow-y: scroll; }
+html::-webkit-scrollbar { width: 0; }
+body { margin: 0; color: #24262b; background: #fff; overflow-wrap: anywhere; }
+body:focus { outline: none; }
+main { padding: 16px 20px 24px; max-width: 960px; margin: auto; }
+article { padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid #d8dce3; }
+header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+h2 { font-size: 17px; margin: 0; }
+h3 { font-size: 13px; margin: 0 0 8px; font-weight: 600; }
+small, .status, footer, details, .end-marker { font-size: 12px; color: #5c626e; }
+small { font-weight: normal; margin-left: 6px; }
+.status { border: 1px solid #bfc7d4; border-radius: 12px; padding: 1px 8px; }
+section { margin: 18px 0; }
+.description { margin-bottom: 16px; }
+ol { margin: 0; padding-left: 26px; }
+li { padding-left: 4px; margin: 0 0 14px; }
+li::marker { font-weight: 600; color: #5c626e; }
+.conclusion { background: #f3f5f8; border-left: 3px solid #8a9cb8; padding: 12px 14px; }
+.math-inline { display: inline; }
+.katex { font-size: 1.12em; }
+.math-display { overflow-x: auto; overflow-y: hidden; padding: 8px 10px; margin: 12px 0; background: #f7f8fa; border-radius: 6px; }
+.math-display .katex-display { margin: .4em 0; text-align: left; }
+.math-display .katex-display > .katex { text-align: left; }
+.math-display::-webkit-scrollbar { height: 9px; }
+.math-display::-webkit-scrollbar-thumb { background: #9ba2ae; border-radius: 5px; }
+.math-display::-webkit-scrollbar-track { background: #e8ebf0; }
+.math-fallback { font: 12px/1.7 ui-monospace, monospace; white-space: pre-wrap; border-bottom: 1px dashed #a17b3b; }
+footer ul { margin: 0; padding-left: 18px; }
+footer li { margin: 3px 0; }
+details { margin-top: 12px; }
+summary { cursor: pointer; }
+summary:focus-visible { outline: 2px solid #377ad0; outline-offset: 3px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #f3f5f8; user-select: text; }
+code, pre { font: 12px/1.7 ui-monospace, SFMono-Regular, monospace; }
+.end-marker { text-align: center; }
+@media (prefers-color-scheme: dark) {
+  body { color: #e8e9ed; background: #202126; }
+  article { border-color: #474b54; }
+  small, .status, footer, details, .end-marker, li::marker { color: #b8becb; }
+  .conclusion, pre { background: #2b2e36; }
+  .math-display { background: #292c33; }
+  .math-display::-webkit-scrollbar-track { background: #373c46; }
+}

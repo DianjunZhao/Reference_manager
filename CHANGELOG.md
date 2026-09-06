@@ -5,6 +5,18 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- 1.0.10 (110): replace the formula-derivation segment VStack with one offline
+  KaTeX/WebKit reader. Inline mathematics stays inside sentences; structured
+  formula fields and display delimiters use consistent display math. Recognize
+  conservative bare TeX runs without changing the cached source. Use numbered
+  steps, consistent spacing and one collapsed raw-source disclosure per card.
+  A permanent native vertical scrollbar, per-equation horizontal scrollbars
+  and an expanded reading sheet keep long derivations accessible. Full-text
+  controls remain in a separate scrolling source sheet after generation.
+  Narrow-window filter/tab menus keep the reader inside the window. Preserve the
+  claim's actual epistemic status instead of labelling all formulas direct.
+  No schema, prompt, provider, persistence or evidence-boundary change.
+
 - Promoted the current local candidate to **1.0.9 (109)**. Evidence v2 now
   repairs exactly one JSON syntax defect that is unambiguous at the grammar
   boundary: an omitted separator between two completed strings, or two

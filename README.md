@@ -1,10 +1,10 @@
 # LatticeLens
 
-> 当前开发候选为 **LatticeLens 1.0.9 (109)**，仍是 same-Mac local candidate，尚非
-> notarized/final release。它在 `release-assets/Release-1.0.9-local/` 中带有独立的
-> `manifest-v1.0.9.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
+> 当前开发候选为 **LatticeLens 1.0.10 (110)**，仍是 same-Mac local candidate，尚非
+> notarized/final release。它在 `release-assets/Release-1.0.10-local/` 中带有独立的
+> `manifest-v1.0.10.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
 > 版本号和 executable SHA-256，而不能以旧 `/Applications` 二进制代替它。当前发布包的
-> executable SHA-256 以同目录的 `manifest-v1.0.9.json` 为准。
+> executable SHA-256 以同目录的 `manifest-v1.0.10.json` 为准。
 > 当前 verifier 会执行 SwiftPM、actual SwiftData disk benchmark、Xcode build/analyze/unit、normal/
 > large fixture UI、synthetic disposable V7 migration、typed-store/physics/Radar/Compare/Notebook/
 > Bundle 与 same-Mac DMG smoke；其成功仍不替代下列人工 P0 gate。
@@ -16,11 +16,11 @@
 > case（虚拟化作者选择、长 Settings 滚动），每个 case 均单独启动 fixture app 并生成一份可读 result。三种窗口
 > 尺寸观察保留为人工 P0 receipt。完整 26-case fixture suite 仍用于开发回归，不再是该同机 release 的非重复
 > 封存 gate；manifest 会记录该范围和确切计数。
-> 对当前 **1.0.9 (109)** 安装包，最终封存会校验两份 release DMG 的字节一致性、DMG image、当前
+> 对当前 **1.0.10 (110)** 安装包，最终封存会校验两份 release DMG 的字节一致性、DMG image、当前
 > `/Applications/LatticeLens.app` 的版本/签名/executable hash，并要求 receipt 精确绑定
-> `manifest-v1.0.9.json`；它不把旧 1.0.8 的自动化记录冒充为 1.0.9 的新测试。
+> `manifest-v1.0.10.json`；它不把旧版本的自动化记录冒充为 1.0.10 的新测试。
 > 需要人工观察的最小清单与可直接回复的确认语句见
-> [MANUAL_1_0_9_ACCEPTANCE.md](MANUAL_1_0_9_ACCEPTANCE.md)。
+> [MANUAL_1_0_10_ACCEPTANCE.md](MANUAL_1_0_10_ACCEPTANCE.md)。
 >
 > 目前仍 fail-closed 的 1.0 边界是：真实 VoiceOver/Accessibility Inspector 与三种窗口尺寸观察、
 > 三篇 sanitized LQCD fixture rubric、用户选择下的 `/Applications` install/uninstall/app+data
@@ -100,7 +100,7 @@ Sources/LatticeLens/
 - Release endpoint 必须是 HTTPS。Debug 仅允许 `localhost`、`127.0.0.1` 或 `::1` 使用 HTTP；拒绝 URL 中的 user/password、query 和 fragment。
 - Fast 模式发送一次请求。Deep 模式严格发送两次：先从原始标题/摘要取得严格 JSON 翻译，再携带冻结翻译和原始资料生成解释。SSE 失败不会静默回退成 non-streaming 或重发。
 - `paper-insight-v1` 会校验 JSON 大小、控制字符、重复 key、schema/source scope、figure key allowlist、caption-only 模式和数值陈述的摘要/caption token 锚点；不合格响应不会覆盖原始资料或既有成功 artifact。
-- Paper Lens 的“公式与证据”标签在全文提取后会生成**原文重要公式、逐步 LLM 推导、结论与可回查锚点**；它不会把没有 anchor 的内容标记为原文直接支持。该标签中的 TeX、MathML、HTML-escaped MathML 与常见 Greek entities 使用本地原生数学预览，不向页面显示 `<math ...>` transport markup。
+- Paper Lens 的“公式与证据”标签在全文提取后会生成**原文重要公式、逐步 LLM 推导、结论与可回查锚点**；它不会把没有 anchor 的内容标记为原文直接支持。公式推导阅读区使用随 app 打包的离线 KaTeX，统一行内/独立公式、TeX/MathML 与明确的无分隔符 TeX，不请求 CDN。右侧垂直滚动条常驻，超宽公式可横向滚动；“展开阅读”打开大阅读区。已有 artifact 直接重新排版，不重复 LLM 请求或修改原始文本/证据。
 - 长公式推导不设应用层自动超时：即使 provider 在长文预填充期间迟迟没有发回 response headers，Evidence 也会持续等待至完成、明确网络/服务端错误、触及本地响应字节上限或用户取消。状态栏显示累计字符/UTF-8 字节、已等待时间和平均字符/秒；流解析和 UI 更新分别按 16 KiB 或 100 ms、约 250 ms 合并，避免客户端逐 token 更新反压。模型实际 token/s 由所选 provider/model 决定，不能由客户端强行提高。OpenAI-compatible gateway 的未持久化根 metadata（或唯一 `data`/`result`/`output` envelope）会被剥离；缺少必需 schema 字段、非法 anchor 或未锚定数值仍会失败。
 
 ### LLM 实际使用检查

@@ -68,17 +68,24 @@ struct PaperLensView: View {
     @State private var tab: PaperLensTab = AppLaunchConfiguration.fixtureInitialPaperLensTab
         .flatMap(PaperLensTab.init(rawValue:)) ?? .overview
 
+    private var tabPicker: some View {
+        Picker("Paper Lens 标签", selection: $tab) {
+            ForEach(PaperLensTab.allCases) { Text($0.title).tag($0) }
+        }
+        .labelsHidden()
+        .accessibilityIdentifier("paperLensTabs")
+    }
+
     var body: some View {
         Group {
             if let paper = viewModel.selectedPaper {
                 VStack(alignment: .leading, spacing: 0) {
                     PaperHeader(paper: paper, viewModel: viewModel)
                     Divider()
-                    Picker("Paper Lens 标签", selection: $tab) {
-                        ForEach(PaperLensTab.allCases) { Text($0.title).tag($0) }
+                    ViewThatFits(in: .horizontal) {
+                        tabPicker.pickerStyle(.segmented).fixedSize(horizontal: true, vertical: false)
+                        tabPicker.pickerStyle(.menu)
                     }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("paperLensTabs")
                     .padding()
                     Divider()
                     Group {
@@ -171,6 +178,7 @@ private struct PhysicsTab: View {
                             claims: insight.physics.importantFormulaDerivations,
                             anchors: Dictionary(uniqueKeysWithValues: viewModel.selectedEvidenceAnchors.map { ($0.id, $0) })
                         )
+                        .frame(height: 520)
                     }
                     EvidenceClaimSection(title: "研究问题", claims: [insight.physics.researchQuestion])
                     EvidenceClaimSection(title: "方法与数据流", claims: insight.physics.methodAndDataFlow)
@@ -551,6 +559,16 @@ private struct EvidenceTab: View {
     @State private var filter: EvidenceSourceKind?
     @State private var previewAnchor: EvidenceAnchor?
     @State private var anchorsExpanded = false
+    @State private var sourcesExpanded = false
+    @State private var readerExpanded = false
+
+    private var displayedClaims: [EvidenceClaim]? {
+        if AppLaunchConfiguration.usesFixtureDependencies,
+           ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_FORMULA_LAYOUT"] == "1" {
+            return FormulaReaderLayoutFixture.claims
+        }
+        return viewModel.evidenceInsightArtifact?.insight.physics.importantFormulaDerivations
+    }
 
     private var anchors: [EvidenceAnchor] {
         viewModel.selectedEvidenceAnchors.filter { filter == nil || $0.sourceKind == filter }
@@ -592,13 +610,13 @@ private struct EvidenceTab: View {
                 Text(message).font(.caption).foregroundStyle(.secondary).padding(.horizontal)
                     .accessibilityIdentifier("fullTextStatus")
             }
-            GroupBox("重要公式推导（LLM）") {
-                if let artifact = viewModel.evidenceInsightArtifact {
+            GroupBox {
+                if let claims = displayedClaims {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("以下推导仅来自已提取的全文片段，并逐条绑定可回查的锚点；不会把摘要级猜测当作公式。")
+                        Text("原文公式与 LLM 推断分开显示；请核对来源与推导。右侧滚动条可浏览全部内容，超宽公式可横向滚动。")
                             .font(.caption).foregroundStyle(.secondary)
                         FormulaDerivationSection(
-                            claims: artifact.insight.physics.importantFormulaDerivations,
+                            claims: claims,
                             anchors: Dictionary(uniqueKeysWithValues: viewModel.selectedEvidenceAnchors.map { ($0.id, $0) })
                         )
                     }
@@ -612,8 +630,95 @@ private struct EvidenceTab: View {
                         }
                     }
                 }
+            } label: {
+                HStack {
+                    Text("重要公式推导（LLM）")
+                    Spacer()
+                    if displayedClaims != nil {
+                        Button("展开阅读") { readerExpanded = true }
+                            .buttonStyle(.link)
+                            .accessibilityIdentifier("expandFormulaReader")
+                    }
+                }
             }
             .padding(.horizontal)
+            if displayedClaims != nil {
+                Button("全文来源与回查锚点…") { sourcesExpanded = true }
+                    .buttonStyle(.link)
+                    .padding(.horizontal).padding(.bottom, 8)
+            } else {
+                ScrollView { sourceControls }
+                    .scrollIndicators(.visible)
+                    .frame(maxHeight: .infinity)
+                    .padding(.bottom, 8)
+            }
+        }
+        .sheet(isPresented: $sourcesExpanded) {
+            VStack(spacing: 12) {
+                HStack {
+                    Text("全文来源与回查锚点").font(.headline)
+                    Spacer()
+                    if previewAnchor != nil {
+                        Button("返回来源") { previewAnchor = nil }
+                    }
+                    Button("关闭") {
+                        previewAnchor = nil
+                        sourcesExpanded = false
+                    }.keyboardShortcut(.cancelAction)
+                }
+                if let anchor = previewAnchor {
+                    PDFAnchorPreview(document: viewModel.selectedFullTextDocument, anchor: anchor) { selection in
+                        viewModel.createUserAnnotation(fromPDFSelection: selection, document: viewModel.selectedFullTextDocument)
+                    }
+                } else {
+                    ScrollView { sourceControls }.scrollIndicators(.visible)
+                }
+            }
+            .padding()
+            .frame(minWidth: 560, idealWidth: 700, minHeight: 460, idealHeight: 600)
+        }
+        .sheet(isPresented: $readerExpanded) {
+            VStack(spacing: 12) {
+                HStack {
+                    Text("重要公式推导").font(.headline)
+                    Spacer()
+                    Button("关闭") { readerExpanded = false }.keyboardShortcut(.cancelAction)
+                }
+                FormulaReader(claims: displayedClaims ?? [],
+                              anchors: Dictionary(uniqueKeysWithValues: viewModel.selectedEvidenceAnchors.map { ($0.id, $0) }))
+            }
+            .padding()
+            .frame(minWidth: 640, idealWidth: 940, minHeight: 480, idealHeight: 700)
+        }
+        .sheet(item: Binding(
+            get: { sourcesExpanded ? nil : previewAnchor },
+            set: { previewAnchor = $0 }
+        )) { anchor in
+            PDFAnchorPreview(document: viewModel.selectedFullTextDocument, anchor: anchor) { selection in
+                viewModel.createUserAnnotation(fromPDFSelection: selection, document: viewModel.selectedFullTextDocument)
+            }
+        }
+        .task(id: "\(paper.literatureID):\(viewModel.evidenceJumpAnchor?.id ?? "")") {
+            await Task.yield()
+            presentEvidenceJumpIfAvailable()
+        }
+        .onChange(of: viewModel.evidenceJumpAnchor?.id) { _, anchorID in
+            guard anchorID != nil else { return }
+            Task { @MainActor in
+                await Task.yield()
+                presentEvidenceJumpIfAvailable()
+            }
+        }
+        .onAppear {
+            Task { @MainActor in
+                await Task.yield()
+                presentEvidenceJumpIfAvailable()
+            }
+        }
+    }
+
+    private var sourceControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
             if let arxivURL = paper.arxivHTMLURL {
                 GroupBox("ar5iv HTML（优先全文来源）") {
                     VStack(alignment: .leading, spacing: 7) {
@@ -727,33 +832,6 @@ private struct EvidenceTab: View {
                 .frame(maxHeight: 300)
             }
             .padding(.horizontal)
-        }
-        .sheet(item: $previewAnchor) { anchor in
-            PDFAnchorPreview(document: viewModel.selectedFullTextDocument, anchor: anchor) { selection in
-                viewModel.createUserAnnotation(fromPDFSelection: selection, document: viewModel.selectedFullTextDocument)
-            }
-        }
-        .task(id: "\(paper.literatureID):\(viewModel.evidenceJumpAnchor?.id ?? "")") {
-            // Give the selected-paper snapshot one turn to reload its local
-            // document reference before opening a PDF page.  No network work
-            // is performed by this navigation path.
-            await Task.yield()
-            presentEvidenceJumpIfAvailable()
-        }
-        .onChange(of: viewModel.evidenceJumpAnchor?.id) { _, anchorID in
-            guard anchorID != nil else { return }
-            Task { @MainActor in
-                // Let the Workbench onDismiss transaction settle before this
-                // Evidence-owned PDF sheet is requested.
-                await Task.yield()
-                presentEvidenceJumpIfAvailable()
-            }
-        }
-        .onAppear {
-            Task { @MainActor in
-                await Task.yield()
-                presentEvidenceJumpIfAvailable()
-            }
         }
     }
 }
@@ -900,78 +978,10 @@ private struct EvidenceClaimSection: View {
 private struct FormulaDerivationSection: View {
     let claims: [EvidenceClaim]
     let anchors: [String: EvidenceAnchor]
-
     var body: some View {
-        if claims.isEmpty {
-            Text("未找到可回查的论文重要公式；当前全文 chunks 没有足够的公式文本。")
-                .font(.caption).foregroundStyle(.secondary)
-        } else {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(claims.enumerated()), id: \.element.id) { index, claim in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("公式 " + String(index + 1)).font(.subheadline.weight(.semibold))
-                            Text(claim.epistemicStatus.displayNameZH)
-                                .font(.caption)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(claim.epistemicStatus == .direct ? .green.opacity(0.15) : .orange.opacity(0.15), in: Capsule())
-                        }
-                        LocalMarkdownTeXText(source: claim.textZH)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                        if let formula = claim.formulaTeX {
-                            GroupBox("原文公式（直接支持）") {
-                                LocalTeXFormulaText(source: formula)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                        if !claim.derivationSteps.isEmpty {
-                            GroupBox("LLM 推导（基于原文公式）") {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ForEach(Array(claim.derivationSteps.enumerated()), id: \.offset) { stepIndex, step in
-                                        HStack(alignment: .top, spacing: 8) {
-                                            Text("\(stepIndex + 1).")
-                                                .font(.caption.weight(.semibold))
-                                                .foregroundStyle(.secondary)
-                                            LocalMarkdownTeXText(source: step)
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if let conclusion = claim.conclusionZH {
-                            GroupBox("结论") {
-                                LocalMarkdownTeXText(source: conclusion)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                        if claim.evidenceIDs.isEmpty {
-                            Text("无全文锚点；此项不能作为原文直接支持的公式结论。")
-                                .font(.caption2).foregroundStyle(.orange)
-                        } else {
-                            VStack(alignment: .leading, spacing: 3) {
-                                ForEach(claim.evidenceIDs, id: \.self) { evidenceID in
-                                    if let anchor = anchors[evidenceID] {
-                                        let location = anchor.page.map { "第 " + String($0) + " 页" } ?? "元数据"
-                                        let section = anchor.section.map { " · " + $0 } ?? ""
-                                        Text("回查：" + anchor.sourceKind.displayNameZH + " " + location + section)
-                                            .font(.caption2).foregroundStyle(.secondary)
-                                            .textSelection(.enabled)
-                                    } else {
-                                        Text("回查锚点缺失：" + evidenceID)
-                                            .font(.caption2).foregroundStyle(.orange)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-                }
-            }
-        }
+        FormulaReader(claims: claims, anchors: anchors)
+            .frame(minHeight: 180, idealHeight: 520, maxHeight: .infinity)
+            .accessibilityIdentifier("formulaDerivationReader")
     }
 }
 

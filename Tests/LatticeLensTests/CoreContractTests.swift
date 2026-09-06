@@ -1,7 +1,88 @@
 import XCTest
+import AppKit
+import WebKit
 @testable import LatticeLens
 
 final class CoreContractTests: XCTestCase {
+    func testFormulaReaderNormalizesMathWithoutExecutingImportedMarkup() {
+        let mixed = FormulaReaderDocument.prose(#"句中 $\mathcal O$，和 \(\Gamma\)；裸公式 \frac{a}{b}。独立：\[\sum_n a_n\]"#)
+        XCTAssertEqual(mixed.components(separatedBy: "class=\"math-inline\"").count - 1, 3)
+        XCTAssertEqual(mixed.components(separatedBy: "class=\"math-display\"").count - 1, 1)
+        XCTAssertTrue(mixed.contains("</span>，和 "))
+        XCTAssertFalse(FormulaReaderDocument.prose("ordinary English / note: x is a value").contains("data-tex"))
+        XCTAssertFalse(FormulaReaderDocument.prose(#"price \$100"#).contains("data-tex"))
+        let attack = #"</pre><script>window.pwned=true</script><img src="https://evil.invalid/leak">"#
+        let claim = EvidenceClaim(textZH: attack, epistemicStatus: .inference, evidenceIDs: [],
+                                  formulaTeX: #"\frac{a}{b}"#, derivationSteps: [attack])
+        let html = FormulaReaderDocument.html(claims: [claim], anchors: [:])
+        XCTAssertFalse(html.contains("<script>window.pwned"))
+        XCTAssertFalse(html.contains("<img "))
+        XCTAssertTrue(html.contains("&lt;script&gt;"))
+        XCTAssertTrue(html.contains("公式 · 基于原文的推断"), "presentation must not promote inference to direct")
+        XCTAssertEqual(html.components(separatedBy: "<details>").count - 1, 1)
+    }
+
+    @MainActor
+    func testFormulaReaderOfflineTypesettingAndScrolling() async throws {
+        for asset in ["reader.js", "reader.css", "katex.min.js", "katex.min.css", "fonts/KaTeX_Main-Regular.woff2"] {
+            let url = try XCTUnwrap(URL(string: FormulaReaderDocument.origin + "/" + asset))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(FormulaReaderAssets.assetURL(for: url)).path))
+        }
+        for value in ["https://example.org/reader.js", "latticelens-math://evil/reader.js",
+                      "latticelens-math://bundle/../Info.plist", "latticelens-math://bundle/fonts/../../reader.js",
+                      "latticelens-math://bundle/reader.js?leak=1"] {
+            XCTAssertNil(FormulaReaderAssets.assetURL(for: try XCTUnwrap(URL(string: value))))
+        }
+        _ = NSApplication.shared
+        let host = FormulaReaderHost(frame: NSRect(x: 0, y: 0, width: 440, height: 320))
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        defer { host.tearDown(); window.contentView = nil }
+        host.load(FormulaReaderDocument.html(claims: FormulaReaderLayoutFixture.claims, anchors: [:]))
+
+        func check(_ expression: String, equals expected: String) async throws {
+            let value = try await readerValue(expression, in: host.webView)
+            XCTAssertEqual(value, expected, expression)
+        }
+        var ready = false
+        for _ in 0..<100 {
+            if (try? await readerValue("document.body.dataset.ready", in: host.webView)) == "\"true\"" {
+                ready = true; break
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(ready, "bundled KaTeX scripts and fonts must actually finish in WebKit")
+        guard ready else { return }
+        try await check("document.querySelectorAll('.math-fallback').length", equals: "0")
+        try await check("document.querySelectorAll('.katex').length === document.querySelectorAll('[data-tex]').length", equals: "true")
+        try await check("getComputedStyle(document.querySelector('.math-inline')).display", equals: "\"inline\"")
+        try await check("document.documentElement.scrollWidth <= innerWidth", equals: "true")
+        try await check("Array.from(document.querySelectorAll('.math-display')).some(x=>x.scrollWidth>x.clientWidth)", equals: "true")
+        XCTAssertEqual(host.scroller.scrollerStyle, .legacy)
+        XCTAssertFalse(host.scroller.isHidden)
+        XCTAssertLessThan(host.scroller.knobProportion, 0.5)
+        _ = try await readerValue("window.scrollTo(0,document.documentElement.scrollHeight)", in: host.webView)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertGreaterThan(host.scroller.doubleValue, 0.98, "native scrollbar must follow wheel/keyboard/DOM scroll")
+        try await check("document.querySelector('.end-marker').getBoundingClientRect().bottom <= innerHeight", equals: "true")
+        // Resizing and opening the raw-source disclosure must update geometry.
+        host.setFrameSize(NSSize(width: 700, height: 460))
+        _ = try await readerValue("document.querySelector('details').open=true", in: host.webView)
+        try await Task.sleep(for: .milliseconds(200))
+        try await check("document.querySelectorAll('details[open]').length", equals: "1")
+        try await check("Array.from(document.querySelectorAll('script,link')).every(x=>(x.src||x.href).startsWith('latticelens-math://bundle/'))", equals: "true")
+    }
+
+    @MainActor
+    private func readerValue(_ expression: String, in webView: WKWebView) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            webView.evaluateJavaScript("JSON.stringify(" + expression + ")") { value, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: value as? String ?? "null") }
+            }
+        }
+    }
+
     func testArxivHTMLLinkNormalizesINSPIREVariantsAndRejectsUntrustedInput() throws {
         let bare = try XCTUnwrap(ArxivHTMLLink.url(for: "2608.12345"))
         XCTAssertEqual(bare.absoluteString, "https://ar5iv.labs.arxiv.org/html/2608.12345")

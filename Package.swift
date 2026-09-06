@@ -10,7 +10,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "LatticeLens",
-            resources: [.process("Resources")]
+            resources: [.copy("Resources/FormulaReader")]
         ),
         .testTarget(
             name: "LatticeLensTests",
