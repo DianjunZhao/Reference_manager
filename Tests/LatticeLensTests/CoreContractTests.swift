@@ -9,6 +9,8 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(mixed.components(separatedBy: "class=\"math-inline\"").count - 1, 3)
         XCTAssertEqual(mixed.components(separatedBy: "class=\"math-display\"").count - 1, 1)
         XCTAssertTrue(mixed.contains("</span>，和 "))
+        XCTAssertEqual(FormulaReaderDocument.prose("**中文强调**与`code`"),
+                       "<strong>中文强调</strong>与<code>code</code>")
         XCTAssertFalse(FormulaReaderDocument.prose("ordinary English / note: x is a value").contains("data-tex"))
         XCTAssertFalse(FormulaReaderDocument.prose(#"price \$100"#).contains("data-tex"))
         let attack = #"</pre><script>window.pwned=true</script><img src="https://evil.invalid/leak">"#

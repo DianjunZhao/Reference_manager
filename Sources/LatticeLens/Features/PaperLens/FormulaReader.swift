@@ -25,9 +25,29 @@ enum FormulaReaderDocument {
             switch segment {
             case .inlineTeX(let tex): return math(tex, display: false)
             case .displayTeX(let tex): return math(tex, display: true)
-            case .markdown(let value): return bareMathAndText(value)
+            case .markdown(let value): return styledText(value)
             }
         }.joined()
+    }
+
+    private static func styledText(_ text: String) -> String {
+        // Parse emphasis before splitting bare TeX runs: splitting at Chinese
+        // characters first would strand the two halves of **中文强调**.
+        guard let regex = try? NSRegularExpression(pattern: #"\*\*([^*\n]+)\*\*|`([^`\n]+)`"#) else {
+            return bareMathAndText(text)
+        }
+        var result = "", cursor = text.startIndex
+        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let range = Range(match.range, in: text) else { continue }
+            result += bareMathAndText(String(text[cursor..<range.lowerBound]))
+            if let bold = Range(match.range(at: 1), in: text) {
+                result += "<strong>" + bareMathAndText(String(text[bold])) + "</strong>"
+            } else if let code = Range(match.range(at: 2), in: text) {
+                result += "<code>" + escape(String(text[code])) + "</code>"
+            }
+            cursor = range.upperBound
+        }
+        return result + bareMathAndText(String(text[cursor...]))
     }
 
     /// Conservative delimiter recovery for plain TeX runs in Chinese prose.
@@ -63,10 +83,8 @@ enum FormulaReaderDocument {
     }
 
     private static func plainText(_ text: String) -> String {
-        // Only safe inline emphasis/code, never raw HTML or remote Markdown images.
+        // Never interpret imported HTML or remote Markdown images.
         escape(text)
-            .replacingOccurrences(of: #"\*\*([^*\n]+)\*\*"#, with: "<strong>$1</strong>", options: .regularExpression)
-            .replacingOccurrences(of: #"`([^`\n]+)`"#, with: "<code>$1</code>", options: .regularExpression)
             .replacingOccurrences(of: "\n", with: "<br>")
     }
 

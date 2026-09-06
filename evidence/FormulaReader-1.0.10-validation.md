@@ -6,6 +6,10 @@ LLM request was accessed. Existing provider/schema/workflow code is unchanged.
 
 ## Focused automated checks
 
+Final focused run after adding Chinese-emphasis handling:
+`swift test --filter CoreContractTests.testFormulaReader` — **2 passed, 0 failed**,
+1.852 s test time (2026-09-06). The earlier development checks are detailed below.
+
 - `CoreContractTests.testLocalMarkdownTeXPreservesRawSourceAndUsesOnlyNativePreview`:
   PASS (1 test). Legacy rendering outside the new formula reader is unchanged.
 - `CoreContractTests.testFormulaReaderNormalizesMathWithoutExecutingImportedMarkup`:
