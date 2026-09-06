@@ -1,0 +1,79 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.10",
+  "generated_at_utc": "2026-09-06T14:28:29Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.10",
+  "build_number": 110,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_commit_before_build": "f32542307a183a1aa11a613c05e1025899901bbc",
+    "git_tree_before_build": "2bb6eacd7d4058c4203ad390e274dd436ca141f4",
+    "working_tree_was_clean": true
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "d7ed3fdb21ed9ccbc3e0d051f9ab85b453d87a7597dc19ec8a2719004e8b9d43",
+    "dsym_uuids": "ABA1905D-B28D-3421-9A58-7C503EC0E590 (x86_64);96E7342A-B6AE-39EA-9026-770601857450 (arm64)"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.10-local.dmg",
+      "sha256": "029a5f86b9019686aa50f46a1cf109fa6d9e60ef59102048a7d37f9f3591273f",
+      "bytes": 10155764
+    }
+  },
+  "offline_math": {
+    "engine": "KaTeX 0.16.22",
+    "license": "MIT",
+    "network_required": false,
+    "resource_tree_sha256": "c40dc028801c06d2359f42cae4668539382f9a04fb9729c58ef80a19fbe33c54",
+    "resource_tree_hash_recipe": "Within FormulaReader/: rg --files -0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256",
+    "security": "nonpersistent WebKit store, allowlisted bundled custom scheme, CSP, escaped imported text, trust:false, per-formula bounded macro expansion"
+  },
+  "verification": {
+    "targeted_formula_reader": {
+      "status": "PASS",
+      "command": "swift test --filter CoreContractTests.testFormulaReader",
+      "tests": 2,
+      "passed": 2,
+      "failed": 0,
+      "test_seconds": 1.852,
+      "scope": "final changed-source tests: mixed inline/display/bare math and Chinese emphasis, injection/currency/prose exclusion, bundled assets, actual WebKit typesetting, horizontal overflow containment, permanent scroller synchronization, end-marker reachability and resize"
+    },
+    "graphical_formula_fixture": {
+      "status": "PASS_SCOPED_DEVELOPMENT_FIXTURE",
+      "scope": "isolated synthetic formula view: drag native scrollbar 0 to 1, visible end marker, wheel scroll, wide-equation scrollbar, raw source disclosure, expanded reading sheet, Page Down and Escape; compact layout reinspection after adaptive menus. These were development fixture observations, not the mounted production app.",
+      "record": "../../evidence/FormulaReader-1.0.10-validation.md"
+    },
+    "source_panel_graphical_inspection": {
+      "status": "NOT_VERIFIED",
+      "reason": "Native UI inspection pipe closed before a readable source-panel state was returned; fixture app process remained running. Not counted as PASS."
+    },
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -quiet -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination generic/platform=macOS -derivedDataPath .codex-task-tmp-math-layout/DerivedData ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf-with-dsym SWIFT_TREAT_WARNINGS_AS_ERRORS=YES SWIFT_STRICT_CONCURRENCY=complete build",
+      "scope": "clean working-tree source-bound universal Release, warnings-as-errors, matching executable and dSYM UUIDs"
+    },
+    "mounted_dmg_inspection": {
+      "status": "PASS",
+      "scope": "read-only mount: image checksum, strict ad-hoc signature, byte-identical staged/mounted app, exact version/build and architectures; bundled math resources identical to source"
+    },
+    "installed_app_and_live_provider": {
+      "status": "NOT_RUN",
+      "scope": "Installed 1.0.9 was still running at packaging; it was not overwritten or inspected through its library. No real provider, Keychain, Application Support library, research/PDF cache or INSPIRE access."
+    }
+  },
+  "release_status": {
+    "change_scope": "presentation_only",
+    "schema_and_prompt_changed": false,
+    "cached_evidence_reused_without_new_request": true,
+    "manual_acceptance": "NOT_RUN; see MANUAL_1_0_10_ACCEPTANCE.md",
+    "install_boundary": "Quit the installed app before replacing only /Applications/LatticeLens.app. Existing data is not modified by this replacement.",
+    "public_release": "not notarized; same-Mac local candidate only"
+  }
+}
