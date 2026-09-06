@@ -124,11 +124,19 @@ enum PaperInsightV2Validator {
         // escape, never repairs malformed `\\u` escapes, and all semantic,
         // provenance, anchor, numeric and size checks still follow below.
         let normalizedData = BareTeXJSONEscapeNormalizer.normalize(data)
-        guard normalizedData.count <= PaperInsightValidator.maximumResponseBytes else {
+        // A second, deliberately narrower syntax repair handles the common
+        // model omission `[{...}{...}]` or `["step one" "step two"]`.
+        // It inserts a comma only between two fully parsed, unambiguous JSON
+        // array elements. Object punctuation, numbers, escapes, incomplete
+        // strings and every schema/provenance field remain untouched. If the
+        // whole response is not otherwise strict JSON, this returns the bytes
+        // unchanged and the fail-closed grammar walk below reports the error.
+        let commaNormalizedData = MissingArrayCommaJSONNormalizer.normalize(normalizedData)
+        guard commaNormalizedData.count <= PaperInsightValidator.maximumResponseBytes else {
             throw LatticeLensError.schemaViolation("v2 insight 响应超限")
         }
-        try JSONDuplicateKeyDetector.validate(normalizedData)
-        guard let raw = try? JSONDecoder().decode(JSONValue.self, from: normalizedData) else { throw LatticeLensError.schemaViolation("v2 insight JSON 无法解码") }
+        try JSONDuplicateKeyDetector.validate(commaNormalizedData)
+        guard let raw = try? JSONDecoder().decode(JSONValue.self, from: commaNormalizedData) else { throw LatticeLensError.schemaViolation("v2 insight JSON 无法解码") }
         // A number of OpenAI-compatible gateways add harmless transport
         // metadata, or place the model's JSON object under `data`/`result`.
         // That metadata is not evidence and must never be saved.  Recover one
@@ -509,6 +517,208 @@ private enum BareTeXJSONEscapeNormalizer {
 
     private static func isStandardSimpleEscape(_ byte: UInt8) -> Bool {
         [quote, backslash, 0x2F, 0x62, 0x66, 0x6E, 0x72, 0x74].contains(byte)
+    }
+}
+
+/// Repairs one unambiguous model formatting error: a comma omitted *between*
+/// two already-complete JSON values in an array. This is intentionally not a
+/// general JSON repairer. Only `"string" "string"` and `{...}{...}` can cross
+/// this boundary, because those are the two repeated item shapes permitted by
+/// the Evidence schema. Object members, numbers, literals, malformed escapes,
+/// control characters, truncated values and all other malformed constructs are
+/// rejected by returning the original bytes to the strict parser.
+private enum MissingArrayCommaJSONNormalizer {
+    static func normalize(_ data: Data) -> Data {
+        guard !data.isEmpty else { return data }
+        var parser = Parser(bytes: Array(data))
+        guard (try? parser.parseDocument()) != nil, parser.didRepair else { return data }
+        return Data(parser.output)
+    }
+
+    private enum ValueKind: Equatable {
+        case object
+        case array
+        case string
+        case primitive
+    }
+
+    private enum ParseFailure: Error {
+        case invalid
+    }
+
+    private struct Parser {
+        let bytes: [UInt8]
+        var index = 0
+        var output = [UInt8]()
+        var didRepair = false
+
+        init(bytes: [UInt8]) {
+            self.bytes = bytes
+            output.reserveCapacity(bytes.count)
+        }
+
+        mutating func parseDocument() throws {
+            _ = try parseValue()
+            copyWhitespace()
+            guard index == bytes.count else { throw ParseFailure.invalid }
+        }
+
+        mutating func parseValue() throws -> ValueKind {
+            copyWhitespace()
+            guard index < bytes.count else { throw ParseFailure.invalid }
+            switch bytes[index] {
+            case 0x7B:
+                try parseObject()
+                return .object
+            case 0x5B:
+                try parseArray()
+                return .array
+            case 0x22:
+                try parseString()
+                return .string
+            case 0x74:
+                try parseLiteral("true")
+                return .primitive
+            case 0x66:
+                try parseLiteral("false")
+                return .primitive
+            case 0x6E:
+                try parseLiteral("null")
+                return .primitive
+            case 0x2D, 0x30...0x39:
+                try parseNumber()
+                return .primitive
+            default:
+                throw ParseFailure.invalid
+            }
+        }
+
+        mutating func parseObject() throws {
+            try expectAndCopy(0x7B)
+            copyWhitespace()
+            if consumeAndCopy(0x7D) { return }
+            while true {
+                copyWhitespace()
+                try parseString()
+                copyWhitespace()
+                try expectAndCopy(0x3A)
+                _ = try parseValue()
+                copyWhitespace()
+                if consumeAndCopy(0x7D) { return }
+                try expectAndCopy(0x2C)
+            }
+        }
+
+        mutating func parseArray() throws {
+            try expectAndCopy(0x5B)
+            copyWhitespace()
+            if consumeAndCopy(0x5D) { return }
+            while true {
+                let previous = try parseValue()
+                copyWhitespace()
+                if consumeAndCopy(0x5D) { return }
+                if consumeAndCopy(0x2C) { continue }
+                guard index < bytes.count,
+                      isUnambiguousArrayBoundary(after: previous, before: bytes[index]) else {
+                    throw ParseFailure.invalid
+                }
+                // Whitespace preceding this insertion has already been copied;
+                // JSON permits the comma after that whitespace and it leaves
+                // the values themselves byte-identical.
+                output.append(0x2C)
+                didRepair = true
+            }
+        }
+
+        mutating func parseString() throws {
+            try expectAndCopy(0x22)
+            while index < bytes.count {
+                let byte = takeAndCopy()
+                if byte == 0x22 { return }
+                guard byte >= 0x20 else { throw ParseFailure.invalid }
+                guard byte == 0x5C else { continue }
+                guard index < bytes.count else { throw ParseFailure.invalid }
+                let escaped = takeAndCopy()
+                if escaped == 0x75 {
+                    for _ in 0..<4 {
+                        guard index < bytes.count, isHex(bytes[index]) else { throw ParseFailure.invalid }
+                        _ = takeAndCopy()
+                    }
+                } else if !isSimpleEscape(escaped) {
+                    throw ParseFailure.invalid
+                }
+            }
+            throw ParseFailure.invalid
+        }
+
+        mutating func parseLiteral(_ literal: String) throws {
+            for expected in literal.utf8 {
+                guard index < bytes.count, bytes[index] == expected else { throw ParseFailure.invalid }
+                _ = takeAndCopy()
+            }
+        }
+
+        mutating func parseNumber() throws {
+            if index < bytes.count, bytes[index] == 0x2D { _ = takeAndCopy() }
+            guard index < bytes.count else { throw ParseFailure.invalid }
+            if bytes[index] == 0x30 {
+                _ = takeAndCopy()
+            } else {
+                try consumeDigits()
+            }
+            if index < bytes.count, bytes[index] == 0x2E {
+                _ = takeAndCopy()
+                try consumeDigits()
+            }
+            if index < bytes.count, bytes[index] == 0x65 || bytes[index] == 0x45 {
+                _ = takeAndCopy()
+                if index < bytes.count, bytes[index] == 0x2B || bytes[index] == 0x2D { _ = takeAndCopy() }
+                try consumeDigits()
+            }
+        }
+
+        mutating func consumeDigits() throws {
+            let start = index
+            while index < bytes.count, bytes[index] >= 0x30, bytes[index] <= 0x39 { _ = takeAndCopy() }
+            guard index > start else { throw ParseFailure.invalid }
+        }
+
+        mutating func copyWhitespace() {
+            while index < bytes.count, isWhitespace(bytes[index]) { _ = takeAndCopy() }
+        }
+
+        mutating func expectAndCopy(_ expected: UInt8) throws {
+            guard consumeAndCopy(expected) else { throw ParseFailure.invalid }
+        }
+
+        mutating func consumeAndCopy(_ expected: UInt8) -> Bool {
+            guard index < bytes.count, bytes[index] == expected else { return false }
+            _ = takeAndCopy()
+            return true
+        }
+
+        mutating func takeAndCopy() -> UInt8 {
+            let byte = bytes[index]
+            output.append(byte)
+            index += 1
+            return byte
+        }
+
+        private func isUnambiguousArrayBoundary(after previous: ValueKind, before next: UInt8) -> Bool {
+            (previous == .string && next == 0x22) || (previous == .object && next == 0x7B)
+        }
+
+        private func isWhitespace(_ byte: UInt8) -> Bool {
+            [0x20, 0x0A, 0x0D, 0x09].contains(byte)
+        }
+
+        private func isSimpleEscape(_ byte: UInt8) -> Bool {
+            [0x22, 0x5C, 0x2F, 0x62, 0x66, 0x6E, 0x72, 0x74].contains(byte)
+        }
+
+        private func isHex(_ byte: UInt8) -> Bool {
+            (0x30...0x39).contains(byte) || (0x41...0x46).contains(byte) || (0x61...0x66).contains(byte)
+        }
     }
 }
 

@@ -5,6 +5,16 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Promoted the current local candidate to **1.0.9 (109)**. Evidence v2 now
+  repairs exactly one JSON syntax defect that is unambiguous at the grammar
+  boundary: an omitted separator between two completed strings, or two
+  completed objects, inside the same array. The repair neither creates nor
+  edits reader-facing text, evidence IDs, anchors, formula fields, object
+  members, numbers, escapes, or provenance. A malformed object, an incomplete
+  string, malformed Unicode escape, unsupported value type, unknown key, and
+  every post-parse evidence check remain fail-closed. The
+  `paper-insight-prompt-v9` cache key prevents reuse of v8 output.
+
 - Promoted the current local candidate to **1.0.8 (108)**. When a provider
   supplies a structurally valid `direct` or `inference` item but gives no
   evidence ID, or an ID outside the current bounded payload, the app now

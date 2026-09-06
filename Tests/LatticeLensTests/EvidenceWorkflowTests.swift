@@ -101,12 +101,17 @@ final class EvidenceWorkflowTests: XCTestCase {
         XCTAssertFalse(htmlAnchors.isEmpty)
         XCTAssertTrue(htmlAnchors.allSatisfy { $0.page == nil }, "ar5iv HTML 不能伪造 PDF 页码")
 
-        let workflow = EvidenceInsightWorkflow(store: store, client: AppFixtureLLMClient(emitsUnanchoredEvidenceClaims: true))
+        let workflow = EvidenceInsightWorkflow(
+            store: store,
+            client: AppFixtureLLMClient(emitsUnanchoredEvidenceClaims: true, emitsMissingArrayComma: true)
+        )
         let settings = LLMSettings(profiles: ["openAI": ProviderProfile(baseURL: "https://fixture.invalid/v1", manualModel: "fixture-text-model")],
                                    automaticAnalysis: false, mode: .fast, maximumFigures: 0)
         let artifact = try await workflow.generate(for: paper, settings: settings, apiKey: "fixture") { _ in }
         XCTAssertEqual(artifact.insight.physics.importantFormulaDerivations.count, 1)
         XCTAssertTrue(artifact.insight.physics.importantFormulaDerivations[0].formulaTeX?.contains("C(t)=A e^{-mt}") == true)
+        XCTAssertEqual(artifact.insight.physics.importantFormulaDerivations[0].derivationSteps.count, 2,
+                       "缺失逗号的两个完整 formula steps 必须被恢复为两个独立数组项")
         XCTAssertEqual(artifact.insight.physics.researchQuestion.epistemicStatus, .missing)
         XCTAssertTrue(artifact.insight.physics.methodAndDataFlow.isEmpty)
         XCTAssertTrue(artifact.insight.physics.mainResults.isEmpty)
@@ -185,6 +190,15 @@ final class EvidenceWorkflowTests: XCTestCase {
         // not be reclassified as a TeX command and accepted.
         let malformedUnicodeEscape = valid.replacingOccurrences(of: "受限摘要", with: #"\u12"#)
         XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(malformedUnicodeEscape.utf8), source: source, maximumFigures: 0))
+
+        // A missing object-member comma remains invalid. The compatibility
+        // path is limited to two already-complete values in an array and must
+        // not become a general JSON repairer.
+        let missingObjectComma = valid.replacingOccurrences(
+            of: #""title_zh":"格点测试","abstract_zh":"受限摘要""#,
+            with: #""title_zh":"格点测试" "abstract_zh":"受限摘要""#
+        )
+        XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(missingObjectComma.utf8), source: source, maximumFigures: 0))
     }
 
     func testEvidenceValidatorDropsLegacyUnanchoredResearchQuestionStringInsteadOfPromotingIt() throws {

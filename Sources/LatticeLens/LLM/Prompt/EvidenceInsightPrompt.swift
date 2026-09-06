@@ -3,9 +3,9 @@ import Foundation
 /// Prompt contract for the v2 evidence reader.  The provider receives this
 /// JSON envelope as data; the source quotes cannot modify the system contract.
 enum EvidenceInsightPrompt {
-    // v8 adds an explicit per-item anchor audit, preventing a v7 cache entry
-    // from being reused when unanchored supplemental claims are now discarded.
-    static let version = "paper-insight-prompt-v8"
+    // v9 adds an explicit array-separator audit, preventing a v8 cache entry
+    // from being reused when one unambiguous missing-comma typo is repaired.
+    static let version = "paper-insight-prompt-v9"
 
     static let systemInstruction = """
     Return one paper-insight-v2 JSON object and nothing else: no Markdown,
@@ -40,6 +40,10 @@ enum EvidenceInsightPrompt {
     serialize each TeX command marker U+005C using the standard JSON
     backslash escape; never place one raw U+005C immediately before alpha,
     frac, sum, operator names, or another TeX command.
+    Before returning, run a whole-response JSON syntax audit. In every array
+    containing two or more values, write exactly one comma between each pair
+    of items, including adjacent derivation_steps strings and adjacent claim
+    objects. Do not put explanation prose outside a JSON string.
 
     The root MUST contain all of these keys:
     schema_version, source_scope, title_zh, abstract_zh, physics,

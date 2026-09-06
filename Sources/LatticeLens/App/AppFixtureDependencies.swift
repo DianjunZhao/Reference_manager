@@ -32,9 +32,14 @@ final class UIFixtureKeychainStore: KeychainStoring, @unchecked Sendable {
 /// UI automation without modelling a provider's latency or behavior.
 struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
     private let emitsUnanchoredEvidenceClaims: Bool
+    private let emitsMissingArrayComma: Bool
 
-    init(emitsUnanchoredEvidenceClaims: Bool = ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_UNANCHORED_EVIDENCE_CLAIMS"] == "1") {
+    init(
+        emitsUnanchoredEvidenceClaims: Bool = ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_UNANCHORED_EVIDENCE_CLAIMS"] == "1",
+        emitsMissingArrayComma: Bool = ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_MISSING_ARRAY_COMMA"] == "1"
+    ) {
         self.emitsUnanchoredEvidenceClaims = emitsUnanchoredEvidenceClaims
+        self.emitsMissingArrayComma = emitsMissingArrayComma
     }
 
     private static let insightResponse = """
@@ -62,7 +67,11 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
         } else if system == PaperInsightPrompt.translationSystemInstruction {
             response = "{\"title_zh\":\"fixture 格点可观测量\",\"abstract_zh\":\"fixture 摘要：重整化尺度为 2 GeV。\"}"
         } else if system == EvidenceInsightPrompt.systemInstruction {
-            response = try Self.evidenceResponse(for: userPayload, emitsUnanchoredEvidenceClaims: emitsUnanchoredEvidenceClaims)
+            response = try Self.evidenceResponse(
+                for: userPayload,
+                emitsUnanchoredEvidenceClaims: emitsUnanchoredEvidenceClaims,
+                emitsMissingArrayComma: emitsMissingArrayComma
+            )
         } else {
             response = Self.insightResponse
         }
@@ -104,7 +113,11 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
         return response
     }
 
-    private static func evidenceResponse(for payload: String, emitsUnanchoredEvidenceClaims: Bool) throws -> String {
+    private static func evidenceResponse(
+        for payload: String,
+        emitsUnanchoredEvidenceClaims: Bool,
+        emitsMissingArrayComma: Bool
+    ) throws -> String {
         guard let root = try JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any],
               let source = root["source"] as? [String: Any],
               let anchors = source["anchors"] as? [[String: Any]],
@@ -175,7 +188,18 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
             "terminology": []
         ]
         let data = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
-        guard let response = String(data: data, encoding: .utf8) else { throw LatticeLensError.malformedPayload }
+        guard var response = String(data: data, encoding: .utf8) else { throw LatticeLensError.malformedPayload }
+        if emitsMissingArrayComma {
+            // Test only: emulate the precise model typo `"step one" "step
+            // two"` inside an otherwise strict, anchored formula artifact.
+            // The production normalizer may add only this array separator; it
+            // cannot repair source content, claim shape, IDs or provenance.
+            guard let steps = response.range(of: "\"derivation_steps\":["),
+                  let separator = response.range(of: "\",\"", range: steps.upperBound..<response.endIndex) else {
+                throw LatticeLensError.schemaViolation("fixture 无法构造缺失数组逗号的公式响应")
+            }
+            response.remove(at: response.index(after: separator.lowerBound))
+        }
         return response
     }
 }
