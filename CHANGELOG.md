@@ -5,6 +5,16 @@ the authoritative 1.0 gate remains `zsh Scripts/verify_v5.sh --local-only`.
 
 ## Unreleased — Reference_manager 1.0 / v5 in progress
 
+- Promoted the current local candidate to **1.0.8 (108)**. When a provider
+  supplies a structurally valid `direct` or `inference` item but gives no
+  evidence ID, or an ID outside the current bounded payload, the app now
+  drops that exact unprovable item rather than inventing an anchor or failing
+  an independently anchored formula derivation. The original text is never
+  persisted; a generic `missing` notice records the omission. Malformed JSON,
+  malformed/duplicate IDs, wrong section statuses, `missing` claims carrying
+  IDs, and numeric claims not recoverable from their valid anchors still fail
+  closed. The `paper-insight-prompt-v8` cache key prevents reuse of v7 output.
+
 - Promoted the current local candidate to **1.0.7 (107)**.  Evidence v2 now
   binds a full-text anchor's coordinate rule to the actual document
   representation: ar5iv HTML excerpts have `page: null` and must exactly match

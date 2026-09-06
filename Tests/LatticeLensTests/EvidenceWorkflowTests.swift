@@ -101,12 +101,20 @@ final class EvidenceWorkflowTests: XCTestCase {
         XCTAssertFalse(htmlAnchors.isEmpty)
         XCTAssertTrue(htmlAnchors.allSatisfy { $0.page == nil }, "ar5iv HTML 不能伪造 PDF 页码")
 
-        let workflow = EvidenceInsightWorkflow(store: store, client: AppFixtureLLMClient())
+        let workflow = EvidenceInsightWorkflow(store: store, client: AppFixtureLLMClient(emitsUnanchoredEvidenceClaims: true))
         let settings = LLMSettings(profiles: ["openAI": ProviderProfile(baseURL: "https://fixture.invalid/v1", manualModel: "fixture-text-model")],
                                    automaticAnalysis: false, mode: .fast, maximumFigures: 0)
         let artifact = try await workflow.generate(for: paper, settings: settings, apiKey: "fixture") { _ in }
         XCTAssertEqual(artifact.insight.physics.importantFormulaDerivations.count, 1)
         XCTAssertTrue(artifact.insight.physics.importantFormulaDerivations[0].formulaTeX?.contains("C(t)=A e^{-mt}") == true)
+        XCTAssertEqual(artifact.insight.physics.researchQuestion.epistemicStatus, .missing)
+        XCTAssertTrue(artifact.insight.physics.methodAndDataFlow.isEmpty)
+        XCTAssertTrue(artifact.insight.physics.mainResults.isEmpty)
+        XCTAssertTrue(artifact.insight.physics.reasonableInferences.isEmpty)
+        XCTAssertTrue(artifact.insight.physics.caveats.isEmpty)
+        XCTAssertTrue(artifact.insight.physics.missingInformation.contains {
+            $0.textZH.contains("已丢弃且未作为论文结论保存") && $0.epistemicStatus == .missing && $0.evidenceIDs.isEmpty
+        })
     }
 
     func testMetadataAnchorsAreDeterministicAndSurviveFullTextDeletion() async throws {
@@ -139,11 +147,19 @@ final class EvidenceWorkflowTests: XCTestCase {
         }
     }
 
-    func testEvidenceValidatorFailsClosedForUnknownAnchorAndMissingWithAnchor() throws {
+    func testEvidenceValidatorDropsWellFormedUnanchoredClaimsAndFailsClosedForMalformedEvidenceIDs() throws {
         let source = makeEvidencePayload()
         let valid = validInsightJSON(anchorID: source.anchors[0].id)
         XCTAssertNoThrow(try PaperInsightV2Validator.decode(Data(valid.utf8), source: source, maximumFigures: 0))
-        XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(valid.replacingOccurrences(of: source.anchors[0].id, with: "pdf:p9:q9:outside").utf8), source: source, maximumFigures: 0))
+        let unanchored = valid.replacingOccurrences(of: source.anchors[0].id, with: "pdf:p9:q9:outside")
+        let normalized = try PaperInsightV2Validator.decode(Data(unanchored.utf8), source: source, maximumFigures: 0)
+        XCTAssertEqual(normalized.physics.researchQuestion.epistemicStatus, .missing)
+        XCTAssertTrue(normalized.physics.mainResults.isEmpty)
+        XCTAssertTrue(normalized.physics.missingInformation.contains { $0.textZH.contains("已丢弃且未作为论文结论保存") })
+
+        let anchoredIDs = "\"evidence_ids\":[\"\(source.anchors[0].id)\"]"
+        let malformedEvidenceIDs = valid.replacingOccurrences(of: anchoredIDs, with: "\"evidence_ids\":[42]")
+        XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(malformedEvidenceIDs.utf8), source: source, maximumFigures: 0))
         let missingWithAnchor = valid.replacingOccurrences(of: "\"missing_information\":[{\"text_zh\":\"缺少体积\",\"epistemic_status\":\"missing\",\"evidence_ids\":[]}]", with: "\"missing_information\":[{\"text_zh\":\"缺少体积\",\"epistemic_status\":\"missing\",\"evidence_ids\":[\"\(source.anchors[0].id)\"]}]")
         XCTAssertThrowsError(try PaperInsightV2Validator.decode(Data(missingWithAnchor.utf8), source: source, maximumFigures: 0))
     }
@@ -182,7 +198,7 @@ final class EvidenceWorkflowTests: XCTestCase {
         let insight = try PaperInsightV2Validator.decode(Data(legacy.utf8), source: source, maximumFigures: 0)
         XCTAssertEqual(insight.physics.researchQuestion.epistemicStatus, .missing)
         XCTAssertEqual(insight.physics.researchQuestion.evidenceIDs, [])
-        XCTAssertEqual(insight.physics.researchQuestion.textZH, "模型未将研究问题返回为可回查对象；未采纳未锚定的原始文本。")
+        XCTAssertEqual(insight.physics.researchQuestion.textZH, "模型未将研究问题返回为可回查的当前证据；未采纳未锚定的原始文本。")
         XCTAssertFalse(insight.physics.researchQuestion.textZH.contains("模型未附 evidence anchor"),
                        "未锚定的 provider 文本不得作为可持久化物理结论进入 artifact")
     }

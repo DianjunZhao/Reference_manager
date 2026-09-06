@@ -50,7 +50,8 @@ final class LatticeLensUITests: XCTestCase {
                                   initialTagManagerSearch: String? = nil,
                                   initialCollectionManagerSearch: String? = nil,
                                   initialNotebookEntryTitle: String? = nil,
-                                  legacyResearchQuestionString: Bool = false) -> XCUIApplication {
+                                  legacyResearchQuestionString: Bool = false,
+                                  unanchoredEvidenceClaims: Bool = false) -> XCUIApplication {
         // The Xcode `UIFixture` scheme builds the app with a deliberately
         // distinct bundle ID.  Resolving it explicitly avoids macOS XCTest
         // attaching to a menu-bar-only default application proxy when another
@@ -108,6 +109,9 @@ final class LatticeLensUITests: XCTestCase {
         }
         if legacyResearchQuestionString {
             app.launchEnvironment["LATTICELENS_FIXTURE_LEGACY_RESEARCH_QUESTION"] = "1"
+        }
+        if unanchoredEvidenceClaims {
+            app.launchEnvironment["LATTICELENS_FIXTURE_UNANCHORED_EVIDENCE_CLAIMS"] = "1"
         }
         if let fixtureWindowSize {
             precondition(["820x640", "1120x700", "1440x900"].contains(fixtureWindowSize),
@@ -496,7 +500,7 @@ final class LatticeLensUITests: XCTestCase {
         #if SWIFT_PACKAGE
         throw XCTSkip("XCUIApplication 测试仅通过 LatticeLens.xcodeproj 的 UI-test target 运行。")
         #else
-        let app = launchFixtureApp()
+        let app = launchFixtureApp(unanchoredEvidenceClaims: true)
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8),
                       "UI test 必须先确认 process-local fixture 依赖；不得读取用户资料库")
         let selfAuthor = app.staticTexts["authorRow-2010363"].firstMatch
@@ -1251,7 +1255,7 @@ final class LatticeLensUITests: XCTestCase {
         #if SWIFT_PACKAGE
         throw XCTSkip("XCUIApplication 测试仅通过 LatticeLens.xcodeproj 的 UI-test target 运行。")
         #else
-        let app = launchFixtureApp()
+        let app = launchFixtureApp(unanchoredEvidenceClaims: true)
         defer { app.terminate() }
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let paper = app.staticTexts["paperRow-1234567"].firstMatch
@@ -1280,7 +1284,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(app.buttons["acceptEvidenceDisclosure"].waitForExistence(timeout: 5))
         app.buttons["acceptEvidenceDisclosure"].click()
         XCTAssertEqual(waitForValue(of: app.staticTexts["evidenceInsightStatus"], expected: "已完成 · 1 次请求", timeout: 12), .completed,
-                       "同一 ar5iv HTML payload 的公式 anchor 不得被误报为不属于本次 document")
+                       "未锚定的补充 direct/inference 内容必须被丢弃，不能阻断同一 ar5iv HTML 的已锚定公式")
         XCTAssertTrue(app.staticTexts["已验证公式推导（paper-insight-v2）"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["原文公式（直接支持）"].waitForExistence(timeout: 5))
         #endif

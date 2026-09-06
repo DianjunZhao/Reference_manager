@@ -31,6 +31,12 @@ final class UIFixtureKeychainStore: KeychainStoring, @unchecked Sendable {
 /// can be made.  The short suspension leaves a visible, cancellable state for
 /// UI automation without modelling a provider's latency or behavior.
 struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
+    private let emitsUnanchoredEvidenceClaims: Bool
+
+    init(emitsUnanchoredEvidenceClaims: Bool = ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_UNANCHORED_EVIDENCE_CLAIMS"] == "1") {
+        self.emitsUnanchoredEvidenceClaims = emitsUnanchoredEvidenceClaims
+    }
+
     private static let insightResponse = """
     {"schema_version":"paper-insight-v1","source_scope":"title_abstract_figure_captions","title_zh":"fixture 格点可观测量","abstract_zh":"fixture 摘要：重整化尺度为 2 GeV。","physics":{"research_question":"fixture 仅验证离线 UI 分析流程。","background":"该结果来自确定性测试资料。","method_and_data_flow":["fixture 数据流"],"main_results":["fixture 不代表物理结论。"],"lattice_conventions_reported":[],"missing_information":["真实 ensemble、格距和体积未提供。"],"caveats":["仅用于 UI fixture；未调用 provider。"]},"important_figures":[],"terminology":[]}
     """
@@ -56,7 +62,7 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
         } else if system == PaperInsightPrompt.translationSystemInstruction {
             response = "{\"title_zh\":\"fixture 格点可观测量\",\"abstract_zh\":\"fixture 摘要：重整化尺度为 2 GeV。\"}"
         } else if system == EvidenceInsightPrompt.systemInstruction {
-            response = try Self.evidenceResponse(for: userPayload)
+            response = try Self.evidenceResponse(for: userPayload, emitsUnanchoredEvidenceClaims: emitsUnanchoredEvidenceClaims)
         } else {
             response = Self.insightResponse
         }
@@ -98,7 +104,7 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
         return response
     }
 
-    private static func evidenceResponse(for payload: String) throws -> String {
+    private static func evidenceResponse(for payload: String, emitsUnanchoredEvidenceClaims: Bool) throws -> String {
         guard let root = try JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any],
               let source = root["source"] as? [String: Any],
               let anchors = source["anchors"] as? [[String: Any]],
@@ -107,13 +113,15 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
             throw LatticeLensError.schemaViolation("fixture evidence payload 缺少 PDF anchor")
         }
         let direct: [String: Any] = ["text_zh": "fixture 全文含有可回查的局部证据。", "epistemic_status": "direct", "evidence_ids": [anchorID]]
+        let unanchoredDirect: [String: Any] = ["text_zh": "fixture 故意省略了当前 evidence anchor 的直接声明。", "epistemic_status": "direct", "evidence_ids": []]
+        let unanchoredInference: [String: Any] = ["text_zh": "fixture 故意省略了当前 evidence anchor 的推断。", "epistemic_status": "inference", "evidence_ids": []]
         // This deliberate malformed provider reply is available only to the
         // process-local UI fixture.  It exercises the production parser's
         // fail-closed fallback without reading a user library, Keychain, or
         // contacting any provider.
         let researchQuestion: Any = ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_LEGACY_RESEARCH_QUESTION"] == "1"
             ? "fixture provider returned this research question without an anchor object"
-            : direct
+            : (emitsUnanchoredEvidenceClaims ? unanchoredDirect : direct)
         let anchorQuote = anchor["quote"] as? String ?? ""
         let formula: [String: Any]
         if anchorQuote.contains("C(t)=A e^{-mt}") {
@@ -145,7 +153,9 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
                 "evidence_ids": [anchorID]
             ]
         }
-        let inference: [String: Any] = ["text_zh": "fixture 仅用于验证证据流，不构成物理推断。", "epistemic_status": "inference", "evidence_ids": [anchorID]]
+        let inference: [String: Any] = emitsUnanchoredEvidenceClaims
+            ? unanchoredInference
+            : ["text_zh": "fixture 仅用于验证证据流，不构成物理推断。", "epistemic_status": "inference", "evidence_ids": [anchorID]]
         let missing: [String: Any] = ["text_zh": "真实格点参数未在 fixture 中提供。", "epistemic_status": "missing", "evidence_ids": []]
         let envelope: [String: Any] = [
             "schema_version": PaperInsightV2Validator.schemaVersion,
@@ -154,12 +164,12 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
             "abstract_zh": "fixture 本地 PDF 提取的受限证据摘要。",
             "physics": [
                 "research_question": researchQuestion,
-                "method_and_data_flow": [direct],
-                "main_results": [direct],
+                "method_and_data_flow": [emitsUnanchoredEvidenceClaims ? unanchoredDirect : direct],
+                "main_results": [emitsUnanchoredEvidenceClaims ? unanchoredDirect : direct],
                 "important_formula_derivations": [formula],
                 "reasonable_inferences": [inference],
                 "missing_information": [missing],
-                "caveats": [missing]
+                "caveats": [emitsUnanchoredEvidenceClaims ? unanchoredInference : missing]
             ],
             "important_figures": [],
             "terminology": []

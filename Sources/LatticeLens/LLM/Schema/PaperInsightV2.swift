@@ -133,18 +133,24 @@ enum PaperInsightV2Validator {
         // metadata, or place the model's JSON object under `data`/`result`.
         // That metadata is not evidence and must never be saved.  Recover one
         // unambiguous contract object, then validate only the fields the app
-        // actually persists.  Missing required fields, duplicate keys, bad
-        // types, non-allowlisted anchors and unanchored numeric claims remain
-        // hard failures below.
+        // actually persists. Missing required fields, duplicate keys, bad
+        // types, malformed evidence IDs, and unanchored numeric claims remain
+        // hard failures below; only a structurally valid but unprovable
+        // direct/inference item is discarded before persistence.
         let contractRoot = try extractContractRoot(from: raw)
-        // Some otherwise complete OpenAI-compatible replies regress only this
-        // field to a bare string.  Never reinterpret that string as a direct
-        // research claim: the normalizer replaces it with a visible `missing`
-        // sentinel, so formula claims still face the normal anchor/provenance
-        // checks below while an unrelated schema typo does not discard them.
-        let normalizedContractRoot = UnanchoredResearchQuestionNormalizer.normalize(contractRoot)
-        try validateShape(normalizedContractRoot)
         try validateEvidenceInput(source)
+        // A model sometimes returns an otherwise well-formed direct or
+        // inference item with no current anchor (or with an ID outside this
+        // one bounded payload).  Never attach an arbitrary quote to rescue
+        // it: the normalizer discards only that unprovable item and records a
+        // generic missing-data sentinel.  Every claim that survives still
+        // goes through the strict shape, anchor, and numeric-provenance checks
+        // below. Malformed item shapes are deliberately not repaired.
+        let normalizedContractRoot = UnanchoredEvidenceClaimNormalizer.normalize(
+            contractRoot,
+            anchorAllowlist: source.anchorAllowlist
+        )
+        try validateShape(normalizedContractRoot)
         guard let canonicalData = try? JSONEncoder.latticeLens.encode(normalizedContractRoot),
               let insight = try? JSONDecoder.latticeLens.decode(PaperInsightV2.self, from: canonicalData),
               insight.schemaVersion == schemaVersion, insight.sourceScope == sourceScope else {
@@ -348,7 +354,7 @@ enum PaperInsightV2Validator {
 
     /// A research question is normally a direct, anchored claim.  `missing`
     /// is also accepted for the explicit non-claim sentinel emitted by
-    /// `UnanchoredResearchQuestionNormalizer` (or when the supplied source
+    /// `UnanchoredEvidenceClaimNormalizer` (or when the supplied source
     /// genuinely does not state a research question).  Inference remains
     /// forbidden here: it would turn the paper's stated question into a
     /// model-authored interpretation.
@@ -506,29 +512,170 @@ private enum BareTeXJSONEscapeNormalizer {
     }
 }
 
-/// Preserves the evidence boundary when a provider returns the one observed
-/// legacy shape `physics.research_question: "..."`.  A scalar has neither an
-/// epistemic label nor an anchor, so accepting its wording as a direct claim
-/// would fabricate provenance.  Instead, replace only that exact scalar with
-/// an explicit `missing` claim and deliberately drop the unanchored text.  No
-/// arrays, objects, other fields, anchors, numerical claims, or unknown types
-/// are repaired by this compatibility path.
-private enum UnanchoredResearchQuestionNormalizer {
-    static func normalize(_ raw: JSONValue) -> JSONValue {
+/// Prevents unprovable provider prose from crossing the Evidence boundary
+/// without inventing a source relationship. A well-shaped `direct` or
+/// `inference` item is eligible for removal only when its IDs are empty or
+/// outside the current payload allowlist. Its text is never persisted.  Bad
+/// JSON types, duplicate IDs, unknown keys, wrong section statuses, invalid
+/// formula structure, `missing` claims with IDs, and numeric claims whose
+/// *valid* anchors do not contain the value remain hard validation failures.
+private enum UnanchoredEvidenceClaimNormalizer {
+    private static let discardedClaimNotice =
+        "模型返回的部分 direct/inference 内容缺少本次有效 evidence anchor，已丢弃且未作为论文结论保存。"
+    private static let unavailableResearchQuestion =
+        "模型未将研究问题返回为可回查的当前证据；未采纳未锚定的原始文本。"
+
+    static func normalize(_ raw: JSONValue, anchorAllowlist: Set<String>) -> JSONValue {
         guard case .object(var root) = raw,
-              case .object(var physics)? = root["physics"],
-              let question = physics["research_question"]?.stringValue,
-              !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              question.unicodeScalars.count <= 16_000 else {
+              case .object(var physics)? = root["physics"] else {
             return raw
         }
 
-        physics["research_question"] = .object([
-            "text_zh": .string("模型未将研究问题返回为可回查对象；未采纳未锚定的原始文本。"),
+        var discarded = false
+        if let question = physics["research_question"] {
+            if isLegacyScalarResearchQuestion(question) ||
+                isDiscardableUnanchoredClaim(question, anchorAllowlist: anchorAllowlist, requiredStatus: .direct, requiresFormulaStructure: false) {
+                physics["research_question"] = missingClaim(unavailableResearchQuestion)
+                discarded = true
+            }
+        }
+
+        for key in ["method_and_data_flow", "main_results"] {
+            if let filtered = filteringDiscardableClaims(
+                physics[key], anchorAllowlist: anchorAllowlist, allowedStatuses: [.direct], requiresFormulaStructure: false
+            ) {
+                physics[key] = filtered.value
+                discarded = discarded || filtered.didDiscard
+            }
+        }
+        if let filtered = filteringDiscardableClaims(
+            physics["reasonable_inferences"], anchorAllowlist: anchorAllowlist, allowedStatuses: [.inference], requiresFormulaStructure: false
+        ) {
+            physics["reasonable_inferences"] = filtered.value
+            discarded = discarded || filtered.didDiscard
+        }
+        if let filtered = filteringDiscardableClaims(
+            physics["caveats"], anchorAllowlist: anchorAllowlist, allowedStatuses: [.direct, .inference], requiresFormulaStructure: false
+        ) {
+            physics["caveats"] = filtered.value
+            discarded = discarded || filtered.didDiscard
+        }
+        if let filtered = filteringDiscardableClaims(
+            physics["important_formula_derivations"], anchorAllowlist: anchorAllowlist, allowedStatuses: [.direct], requiresFormulaStructure: true
+        ) {
+            physics["important_formula_derivations"] = filtered.value
+            discarded = discarded || filtered.didDiscard
+        }
+
+        if discarded, case .array(var missing)? = physics["missing_information"],
+           missing.count < 32,
+           !missing.contains(where: { $0.objectValue?["text_zh"]?.stringValue == discardedClaimNotice }) {
+            missing.append(missingClaim(discardedClaimNotice))
+            physics["missing_information"] = .array(missing)
+        }
+        root["physics"] = .object(physics)
+        return .object(root)
+    }
+
+    private static func isLegacyScalarResearchQuestion(_ raw: JSONValue) -> Bool {
+        guard let question = raw.stringValue else { return false }
+        return isBoundedNonempty(question)
+    }
+
+    private static func filteringDiscardableClaims(
+        _ raw: JSONValue?,
+        anchorAllowlist: Set<String>,
+        allowedStatuses: Set<EpistemicStatus>,
+        requiresFormulaStructure: Bool
+    ) -> (value: JSONValue, didDiscard: Bool)? {
+        guard case .array(let items)? = raw else { return nil }
+        var didDiscard = false
+        let retained = items.filter { item in
+            guard let itemStatus = status(of: item), allowedStatuses.contains(itemStatus) else {
+                return true
+            }
+            let shouldDiscard = isDiscardableUnanchoredClaim(
+                item,
+                anchorAllowlist: anchorAllowlist,
+                requiredStatus: itemStatus,
+                requiresFormulaStructure: requiresFormulaStructure
+            )
+            didDiscard = didDiscard || shouldDiscard
+            return !shouldDiscard
+        }
+        return (.array(retained), didDiscard)
+    }
+
+    private static func status(of raw: JSONValue) -> EpistemicStatus? {
+        guard let value = raw.objectValue?["epistemic_status"]?.stringValue else { return nil }
+        return EpistemicStatus(rawValue: value)
+    }
+
+    /// This intentionally repeats the bounded item-shape checks used by the
+    /// strict validator. If any shape condition is absent, the item is left
+    /// untouched so `validateShape` can reject it rather than hiding a parser
+    /// or schema failure behind the compatibility path.
+    private static func isDiscardableUnanchoredClaim(
+        _ raw: JSONValue,
+        anchorAllowlist: Set<String>,
+        requiredStatus: EpistemicStatus?,
+        requiresFormulaStructure: Bool
+    ) -> Bool {
+        let requiredKeys: Set<String> = ["text_zh", "epistemic_status", "evidence_ids"]
+        let optionalKeys: Set<String> = ["formula_tex", "derivation_steps", "conclusion_zh"]
+        guard let object = raw.objectValue,
+              requiredKeys.isSubset(of: Set(object.keys)),
+              Set(object.keys).subtracting(requiredKeys).isSubset(of: optionalKeys),
+              let status = status(of: raw), let requiredStatus, status == requiredStatus,
+              status == .direct || status == .inference,
+              let text = object["text_zh"]?.stringValue, isBoundedNonempty(text),
+              let evidenceValues = object["evidence_ids"]?.arrayValue,
+              evidenceValues.count <= 16 else {
+            return false
+        }
+        let evidenceIDs = evidenceValues.compactMap(\.stringValue)
+        guard evidenceIDs.count == evidenceValues.count,
+              Set(evidenceIDs).count == evidenceIDs.count,
+              evidenceIDs.allSatisfy(isBoundedNonempty),
+              validOptionalFormulaFields(object, requiresFormulaStructure: requiresFormulaStructure) else {
+            return false
+        }
+        return evidenceIDs.isEmpty || !Set(evidenceIDs).isSubset(of: anchorAllowlist)
+    }
+
+    private static func validOptionalFormulaFields(
+        _ object: [String: JSONValue],
+        requiresFormulaStructure: Bool
+    ) -> Bool {
+        if let formula = object["formula_tex"],
+           !(formula.stringValue.map(isBoundedNonempty) ?? false) {
+            return false
+        }
+        if let steps = object["derivation_steps"] {
+            guard let values = steps.arrayValue, values.count <= 8,
+                  values.allSatisfy({ $0.stringValue.map(isBoundedNonempty) ?? false }),
+                  !requiresFormulaStructure || !values.isEmpty else {
+                return false
+            }
+        } else if requiresFormulaStructure {
+            return false
+        }
+        if let conclusion = object["conclusion_zh"],
+           !(conclusion.stringValue.map(isBoundedNonempty) ?? false) {
+            return false
+        }
+        return !requiresFormulaStructure || object["formula_tex"] != nil
+    }
+
+    private static func missingClaim(_ text: String) -> JSONValue {
+        .object([
+            "text_zh": .string(text),
             "epistemic_status": .string(EpistemicStatus.missing.rawValue),
             "evidence_ids": .array([])
         ])
-        root["physics"] = .object(physics)
-        return .object(root)
+    }
+
+    private static func isBoundedNonempty(_ text: String) -> Bool {
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.unicodeScalars.count <= 16_000
     }
 }
