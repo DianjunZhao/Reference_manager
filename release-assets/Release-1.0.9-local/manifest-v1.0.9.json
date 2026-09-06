@@ -1,0 +1,72 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.9",
+  "generated_at_utc": "2026-09-06T12:32:07Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.9",
+  "build_number": 109,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_commit_before_build": "fef3d67d2181b4274c11ea5f77831edfa97ae387",
+    "git_tree_before_build": "f4770dc75214fa67bbe7217c1478ac69fe1f54ef",
+    "working_tree_was_clean": true
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "92d41a9f9f74193bbd21eb175bfe4618d577a144af828cf17ffb87b11c51d178",
+    "dsym_uuids": "21E362EA-68C9-3293-85FD-0D9DD73C9235 (x86_64);00FBE602-E5C2-30CE-A9CB-9E5A84C13092 (arm64)"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.9-local.dmg",
+      "sha256": "ed568a280b8d736c6a60bcd298a96bcaa0588aa798d798e2a75b347e24ac4ef8"
+    }
+  },
+  "verification": {
+    "targeted_arxiv_html_formula_workflow": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testArxivHTMLFormulaDerivationWorkflowAcceptsCurrentDocumentAnchors",
+      "tests": 1,
+      "scope": "offline host workflow: ar5iv HTML extraction, bounded current-document payload, fixture response with an omitted comma between two complete derivation_steps strings, strict comma restoration, unanchored supplemental-claim discard, exact anchored formula preservation, and durable artifact save"
+    },
+    "targeted_strict_syntax_boundary": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testEvidenceValidatorPermitsOnlyExplicitEmptyAbstractSentinelAndRepairsBareTeXCommandEscapes",
+      "tests": 1,
+      "scope": "offline validator regression: bare TeX command and only an unambiguous array separator may be normalized; malformed Unicode escapes and missing object-member commas remain failures"
+    },
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -quiet -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination generic/platform=macOS -derivedDataPath .codex-task-tmp-v109-build-X9NM61/DerivedData ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf-with-dsym SWIFT_TREAT_WARNINGS_AS_ERRORS=YES SWIFT_STRICT_CONCURRENCY=complete build",
+      "scope": "clean-tree universal warnings-as-errors Release build; executable and dSYM UUIDs match"
+    },
+    "mounted_dmg_inspection": {
+      "status": "PASS",
+      "scope": "read-only mounted DMG: image checksum, ad-hoc signature, bundle identifier, version/build, both architectures, and executable SHA-256 match the staged build"
+    },
+    "isolated_fixture_launch": {
+      "status": "PASS",
+      "scope": "DMG inspection copy launched for three seconds only with LATTICELENS_USE_FIXTURES=1 and a project-local temporary store, then terminated; no live service was requested"
+    },
+    "fixture_ui_arxiv_html_route": {
+      "status": "NOT_RUN",
+      "scope": "Not repeated for 1.0.9 because the requested scope was the two targeted host regressions plus packaging checks; prior XCTest automation-host timeouts are not treated as this version's result."
+    },
+    "live_provider_and_installed_app": {
+      "status": "NOT_RUN",
+      "scope": "no real provider endpoint, Keychain credential, Application Support library, research document, INSPIRE, or LLM POST was accessed; /Applications still contains 1.0.8 until the user exits it and authorizes the staged replacement."
+    }
+  },
+  "release_status": {
+    "syntax_contract": "Only a missing comma between two complete strings or two complete objects in one JSON array is restored. The parser must successfully scan the entire strict document after that insertion; otherwise it returns the original bytes to the duplicate-key grammar validator. No source/evidence field is invented, edited, or promoted.",
+    "anchor_contract": "Every surviving direct/inference claim still requires one or more current-document allowlisted anchors. Unprovable but structurally valid supplemental claims are discarded without saving their text; malformed IDs, fabricated missing anchors, malformed formula structure, and numeric claims that cannot be checked against a valid anchor fail closed.",
+    "prompt_cache_invalidation": "paper-insight-prompt-v9 prevents reuse of a v8 Evidence artifact under the array-separator syntax contract.",
+    "manual_receipt_rebinding": "required before any final seal for this exact DMG and installed executable",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "DMG smoke used only a project-local inspection copy. Replacing /Applications requires the user to quit every running LatticeLens process and explicitly authorize the staged bundle."
+  }
+}
