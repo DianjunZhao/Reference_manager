@@ -4,7 +4,7 @@
 > notarized/final release。它在 `release-assets/Release-1.0.8-local/` 中带有独立的
 > `manifest-v1.0.8.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
 > 版本号和 executable SHA-256，而不能以旧 `/Applications` 二进制代替它。当前发布包的
-> executable SHA-256 以同目录的 `manifest-v1.0.5.json` 为准。
+> executable SHA-256 以同目录的 `manifest-v1.0.8.json` 为准。
 > 当前 verifier 会执行 SwiftPM、actual SwiftData disk benchmark、Xcode build/analyze/unit、normal/
 > large fixture UI、synthetic disposable V7 migration、typed-store/physics/Radar/Compare/Notebook/
 > Bundle 与 same-Mac DMG smoke；其成功仍不替代下列人工 P0 gate。

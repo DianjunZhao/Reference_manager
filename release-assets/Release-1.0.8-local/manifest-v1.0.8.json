@@ -1,0 +1,77 @@
+{
+  "schema_version": "latticelens-local-candidate-v1.0.8",
+  "generated_at_utc": "2026-09-06T03:55:38Z",
+  "artifact_class": "same_mac_local_ad_hoc_candidate",
+  "product_version": "1.0.8",
+  "build_number": 108,
+  "minimum_macos": "14.0",
+  "bundle_id": "org.latticelens.app",
+  "signature_class": "ad_hoc_local",
+  "developer_id": false,
+  "notarized": false,
+  "source": {
+    "git_commit_before_build": "a185d0fe967e06c3f5eee84681ca92781a663e93",
+    "git_tree_before_build": "c87e83f2d817d45d14f74ebcd0dd6149d450a428",
+    "working_tree_was_clean": true
+  },
+  "app": {
+    "bundle": "LatticeLens.app",
+    "architectures": "x86_64 arm64",
+    "executable_sha256": "1cdd112ac206539a6bc4a277b8cd9bbd5d82ace8848cd333b9047ce7736b8f14",
+    "dsym_uuids": "D624A954-A15E-3449-BE18-A7BAFE1A56B6 (x86_64);9FA89DD9-4633-3302-84AC-D8E2C5FB08CD (arm64)"
+  },
+  "artifacts": {
+    "dmg": {
+      "file": "LatticeLens-1.0.8-local.dmg",
+      "sha256": "d3d9d1c6d100c67f4681ac2ea261065c6e356b01e66f4d857d864c2a06bd5de7"
+    }
+  },
+  "verification": {
+    "targeted_arxiv_html_formula_workflow": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testArxivHTMLFormulaDerivationWorkflowAcceptsCurrentDocumentAnchors",
+      "tests": 1,
+      "scope": "offline host workflow: ar5iv HTML extraction, bounded current-document payload, malformed supplemental claims discarded, strict anchor validation, fixture LLM response, and anchored formula artifact"
+    },
+    "targeted_unanchored_claim_regression": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testEvidenceValidatorDropsWellFormedUnanchoredClaimsAndFailsClosedForMalformedEvidenceIDs",
+      "tests": 1,
+      "scope": "offline validator regression: structurally valid direct/inference claims without an allowlisted current-payload anchor are discarded; malformed IDs and missing claims carrying anchors remain hard failures"
+    },
+    "targeted_scalar_research_question_regression": {
+      "status": "PASS",
+      "command": "swift test --filter EvidenceWorkflowTests.testEvidenceValidatorDropsLegacyUnanchoredResearchQuestionStringInsteadOfPromotingIt",
+      "tests": 1,
+      "scope": "offline unit regression: a legacy scalar research_question is discarded to an explicit unavailable sentinel rather than promoted as a paper conclusion"
+    },
+    "release_xcode_build": {
+      "status": "PASS",
+      "command": "xcodebuild -quiet -project LatticeLens.xcodeproj -scheme LatticeLens -configuration Release -destination generic/platform=macOS -derivedDataPath .codex-task-tmp-v108-build-wWA8TD/DerivedData ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf-with-dsym SWIFT_TREAT_WARNINGS_AS_ERRORS=YES SWIFT_STRICT_CONCURRENCY=complete build",
+      "scope": "universal warnings-as-errors Release build; executable and dSYM UUIDs match"
+    },
+    "mounted_dmg_inspection": {
+      "status": "PASS",
+      "scope": "read-only mounted DMG: image checksum, ad-hoc signature, bundle identifier, version/build, both architectures, and executable SHA-256 match the staged build"
+    },
+    "isolated_fixture_launch": {
+      "status": "PASS",
+      "scope": "DMG inspection copy launched for three seconds only with LATTICELENS_USE_FIXTURES=1 and a project-local temporary store, then terminated; no live service was requested"
+    },
+    "fixture_ui_arxiv_html_route": {
+      "status": "BLOCKED",
+      "scope": "one graphical Xcode attempt and one command-line attempt could not initialize XCTest UI automation; command-line underlying error: Timed out while enabling automation mode. No product assertion executed."
+    },
+    "live_provider_and_installed_app": {
+      "status": "NOT_RUN",
+      "scope": "no real provider endpoint, Keychain credential, Application Support library, research document, INSPIRE, or LLM POST was accessed; this manifest does not itself authorize replacement of /Applications."
+    }
+  },
+  "release_status": {
+    "anchor_contract": "Only current-document allowlisted anchors can support direct/inference claims. A structurally valid direct/inference claim with no valid supplied evidence ID is discarded in full, and a missing-information sentinel records that it was not saved as a paper conclusion. Malformed IDs, fabricated missing anchors, malformed formula structure, and numeric claims that cannot be checked against a valid anchor still fail closed.",
+    "prompt_cache_invalidation": "paper-insight-prompt-v8 prevents reuse of a v7 Evidence artifact under the unanchored-claim handling contract.",
+    "manual_receipt_rebinding": "required before any final seal for this exact DMG and installed executable",
+    "developer_id_and_notarization": "out_of_scope",
+    "install_boundary": "DMG smoke used only a project-local inspection copy. Replacing /Applications requires the user to quit every running LatticeLens process and explicitly authorize the staged bundle."
+  }
+}
