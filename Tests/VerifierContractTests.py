@@ -617,6 +617,19 @@ class InputManifestContractTests(unittest.TestCase):
         self.assertEqual(VERIFIER.V10_MIGRATION_DRILL_TEST,
                          "V4LocalTests/testAuthorizedDisposableV10ToV12MigrationDrill")
 
+    def test_optional_live_author_window_smoke_skip_is_allowlisted(self):
+        test_name = "testOptInLiveAuthorPartitionCompletesAcrossINSPIREWindow"
+        self.assertEqual(VERIFIER.SKIP_ALLOWLIST[test_name],
+                         "Live INSPIRE author-window smoke is opt-in and was not enabled.")
+        summary = VERIFIER.parse_test_summary(
+            "Test Suite 'LatticeLensTests.xctest' passed at 2026-10-18 00:00:00.000.\n"
+            "\t Executed 1 test, with 1 test skipped and 0 failures (0 unexpected) in 0.001 seconds.\n"
+            f"Test Case '-[LatticeLensTests.CoreContractTests {test_name}]' skipped "
+            "- requires explicit read-only INSPIRE author-window smoke opt-in (0.001 seconds)\n"
+        )
+        self.assertEqual(summary["unknown_skips"], [])
+        self.assertTrue(summary["skip_reasons"][0]["allowlisted"])
+
     def test_verifier_hash_format_version_matches_swift_canonical_fingerprint(self):
         source = (ROOT / "Sources" / "LatticeLens" / "Core" / "Persistence" /
                  "V4NormalizedStore.swift").read_text(encoding="utf-8")

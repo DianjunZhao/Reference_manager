@@ -336,13 +336,24 @@ struct InspireClient: Sendable {
             }
         }
         let responsePage = try decoder.decode(InspireSearchPage<InspireAuthorHit>.self, from: responseData)
+        let advertisedNextURL = responsePage.links?.next.flatMap { URL(string: $0) }
+        let advertisedNextComponents = advertisedNextURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        let advertisedNextPage = advertisedNextComponents
+            .flatMap { Int($0.queryItems?.first(where: { $0.name == "page" })?.value ?? "") }
+        let nextBeyondWindow = advertisedNextPage.map { $0 > maximumPageNumber } ?? false
+        // INSPIRE or an intervening proxy can cap `hits.total` at 10,000 or
+        // omit/rewrite `size` in its next link. A page-41 link is still direct
+        // evidence that this partition cannot be completed inside the service
+        // window, even when the reported total is exactly 10,000.
+        let windowHasAdvertisedMore = pageNumber >= maximumPageNumber && responsePage.links?.next != nil
+        let advertisedDataBeyondWindow = nextBeyondWindow || windowHasAdvertisedMore
         // INSPIRE rejects offsets beyond its 10,000-result window. Split an
         // overfull numeric range into adjacent, non-overlapping children and
         // persist the right child in the cursor fragment. The probe response
         // itself is deliberately discarded: its rows will be returned by the
         // children, so staging the parent page would double-count them.
         if let currentRange, let cursorState,
-           responsePage.hits.total > Self.maximumAuthorCandidateResultsPerPartition {
+           (responsePage.hits.total > Self.maximumAuthorCandidateResultsPerPartition || advertisedDataBeyondWindow) {
             guard let split = currentRange.split(openRangeWindow: Self.openAuthorRangeWindow) else {
                 throw incompleteAuthorPartitionError(currentRange)
             }
@@ -376,8 +387,6 @@ struct InspireClient: Sendable {
         // omit `size` from their next URL; retain their link in that case so a
         // valid page-1 -> page-2 response is not discarded merely because its
         // synthetic total is smaller than the product's default page size.
-        let advertisedNextURL = responsePage.links?.next.flatMap { URL(string: $0) }
-        let advertisedNextComponents = advertisedNextURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
         let advertisedNextSize = advertisedNextComponents?.queryItems?
             .first(where: { $0.name == "size" })?.value.flatMap(Int.init)
         let hasMoreByTotal: Bool
@@ -387,9 +396,6 @@ struct InspireClient: Sendable {
             hasMoreByTotal = responsePage.links?.next != nil
         }
         let exhaustedWindow = pageNumber >= maximumPageNumber && hasMoreByTotal
-        let advertisedNextPage = advertisedNextComponents
-            .flatMap { Int($0.queryItems?.first(where: { $0.name == "page" })?.value ?? "") }
-        let nextBeyondWindow = advertisedNextPage.map { $0 > maximumPageNumber } ?? false
         let next: URL?
         if isPartitioned {
             // Do not persist the service-supplied next link for the candidate

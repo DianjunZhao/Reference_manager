@@ -772,6 +772,91 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testAuthorCandidateWindowBoundarySplitsWhenINSPIREAdvertisesPage41AtCappedTotal() async throws {
+        let payload = Data(#"{"hits":{"hits":[{"id":999001,"metadata":{"name":{"value":"Probe, Must Not Persist"},"arxiv_categories":["hep-lat"]}}],"total":10000},"links":{"next":"https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-ph%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B1000000%20TO%201249999%5D&size=250&page=41"}}"#.utf8)
+        let transport = ScriptedHTTPTransport([.init(data: payload, statusCode: 200, headers: nil)])
+        let client = InspireClient(transport: transport)
+        let page40 = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-ph%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B1000000%20TO%201249999%5D&size=250&page=40"))
+
+        let result = try await client.authorCandidatesPage(
+            nextURL: page40,
+            categories: [.hepLat, .hepPh, .hepTh]
+        )
+
+        XCTAssertTrue(result.authors.isEmpty,
+                      "page-40 rows must not be staged when INSPIRE still advertises data beyond its 10,000-row window")
+        XCTAssertEqual(result.total, 10_000)
+        let childURL = try XCTUnwrap(result.nextURL,
+                                     "a saturated partition must be split and resumed rather than failed or truncated")
+        let childItems = URLComponents(url: childURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(childItems.first(where: { $0.name == "q" })?.value?
+            .contains("control_number:[1000000 TO 1124999]") == true)
+        XCTAssertEqual(childItems.first(where: { $0.name == "page" })?.value, "1")
+        XCTAssertNotNil(childURL.fragment, "the remaining sibling range must survive as a durable cursor")
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    func testAuthorCandidateWindowBoundarySplitsWhenPage41LinkOmitsPageSize() async throws {
+        let payload = Data(#"{"hits":{"hits":[],"total":10000},"links":{"next":"https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-ph%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B1000000%20TO%201249999%5D&page=41"}}"#.utf8)
+        let transport = ScriptedHTTPTransport([.init(data: payload, statusCode: 200, headers: nil)])
+        let client = InspireClient(transport: transport)
+        let page40 = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-ph%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B1000000%20TO%201249999%5D&size=250&page=40"))
+
+        do {
+            let result = try await client.authorCandidatesPage(
+                nextURL: page40,
+                categories: [.hepLat, .hepPh, .hepTh]
+            )
+            XCTAssertTrue(result.authors.isEmpty)
+            let childURL = try XCTUnwrap(result.nextURL)
+            let childQuery = URLComponents(url: childURL, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "q" })?.value
+            XCTAssertTrue(childQuery?.contains("control_number:[1000000 TO 1124999]") == true)
+        } catch {
+            XCTFail("a resumable over-window partition must split at page 40, not fail with \(error)")
+        }
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    func testOptInLiveAuthorPartitionCompletesAcrossINSPIREWindow() async throws {
+        guard ProcessInfo.processInfo.environment["LATTICELENS_LIVE_AUTHOR_WINDOW_SMOKE"] == "1" else {
+            throw XCTSkip("requires explicit read-only INSPIRE author-window smoke opt-in")
+        }
+        let categories: Set<SupportedArxivCategory> = [.hepLat, .hepPh, .hepTh]
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "inspirehep.net"
+        components.path = "/api/authors/"
+        components.queryItems = [
+            URLQueryItem(name: "q", value: "(\(ArxivCategoryQueryBuilder.query(categories: categories))) AND control_number:[1000000 TO 1249999]"),
+            URLQueryItem(name: "size", value: "250"),
+            URLQueryItem(name: "page", value: "1"),
+            URLQueryItem(name: "fields", value: "name,native_names,ids,arxiv_categories")
+        ]
+        var nextURL = try XCTUnwrap(components.url)
+        let client = InspireClient(transport: URLSessionTransport(), maximumGETAttempts: 1)
+        var recids: [Int] = []
+        var requestCount = 0
+        while true {
+            guard requestCount < 512 else {
+                XCTFail("the bounded author partition must finish within one 512-request run")
+                break
+            }
+            let page = try await client.authorCandidatesPage(nextURL: nextURL, categories: categories)
+            recids.append(contentsOf: page.authors.map(\.recid))
+            requestCount += 1
+            guard let followingURL = page.nextURL else { break }
+            nextURL = followingURL
+        }
+
+        XCTAssertGreaterThan(recids.count, 10_000,
+                             "the live partition must exercise the service's 10,000-result boundary")
+        XCTAssertEqual(Set(recids).count, recids.count,
+                       "adjacent recursive ranges must not duplicate author records")
+    }
+
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
         let store = InMemoryLibraryStore()
         let author = Author(recid: 21, preferredName: "Author, Fixture", nativeNames: [], bai: nil,

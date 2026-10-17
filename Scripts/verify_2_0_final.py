@@ -26,6 +26,8 @@ SUMMARY_PATH = ROOT / "VALIDATION_2.0_FINAL.md"
 MANUAL_ACCEPTANCE_PATH = ROOT / "evidence" / "ManualAcceptance-2.0-final-local.json"
 XCODE_PROJECT = "LatticeLens.xcodeproj"
 SKIP_ALLOWLIST = {
+    "testOptInLiveAuthorPartitionCompletesAcrossINSPIREWindow":
+        "Live INSPIRE author-window smoke is opt-in and was not enabled.",
     "testOptInLiveInspireFreshPersistentStoreLoadsPinnedAuthorAndPapers":
         "Live INSPIRE is optional and was not enabled.",
     "testActualSwiftDataLargeStoreBenchmark":
