@@ -7,6 +7,17 @@ not certify the current source tree.
 
 ## Unreleased — Reference_manager 2.0 / v5 in progress
 
+- 2026-10-17 author-index window recovery (Build 203): page-window limits now
+  follow the effective request size, so a recovered `size=100` request may
+  continue through page 100 while respecting INSPIRE's 10,000-result offset
+  cap. Stale out-of-window checkpoints rewind only their validated partition
+  to page 1; an overfull partition is then split and resumed through its cursor
+  instead of leaving the index permanently paused. Pagination identity advances
+  to revision 4, rebuilding older in-flight generations without replacing the
+  last completed index. Synthetic tests cover the reported 17,477-result
+  page-41 case and encoded stale checkpoints. No live INSPIRE or real-library
+  migration is claimed by these fixtures.
+
 - 2026-10-17 author-index recovery: control-number ranges reporting more than
   INSPIRE's 10,000-result paging window are recursively divided into adjacent,
   disjoint child ranges. The split probe page is discarded, remaining work is

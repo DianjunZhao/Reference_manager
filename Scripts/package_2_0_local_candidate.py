@@ -702,9 +702,9 @@ def app_identity(app):
     with info_path.open("rb") as stream:
         info = plistlib.load(stream)
     if (info.get("CFBundleShortVersionString") != "2.0.0" or
-            info.get("CFBundleVersion") != "202" or
+            info.get("CFBundleVersion") != "203" or
             info.get("CFBundleIdentifier") != "org.latticelens.app"):
-        fail("app identity does not match LatticeLens 2.0.0 (202)")
+        fail("app identity does not match LatticeLens 2.0.0 (203)")
     executable = info.get("CFBundleExecutable")
     binary = app / "Contents" / "MacOS" / str(executable)
     if not binary.is_file():
@@ -758,9 +758,9 @@ def main(arguments=None):
 
     if (validation.get("schema_version") != "latticelens-verify-2.0-final-local" or
             validation.get("product_version") != "2.0.0" or
-            validation.get("build_number") != 202 or
+            validation.get("build_number") != 203 or
             validation.get("verdict") != "PARTIAL_NOT_FINAL"):
-        fail("this packager requires a current 2.0.0 (202) PARTIAL_NOT_FINAL receipt")
+        fail("this packager requires a current 2.0.0 (203) PARTIAL_NOT_FINAL receipt")
     manifest_hash = validation.get("input_manifest_sha256")
     if (input_manifest_path.relative_to(ROOT).as_posix() != validation.get("input_manifest_path") or
             sha256(input_manifest_path) != manifest_hash):
@@ -1050,7 +1050,7 @@ def main(arguments=None):
             "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "artifact_class": "same_mac_local_ad_hoc_candidate",
             "product_version": "2.0.0",
-            "build_number": 202,
+            "build_number": 203,
             "minimum_macos": "14.0",
             "bundle_id": "org.latticelens.app",
             "signature_class": "ad_hoc_local",

@@ -2,7 +2,7 @@
 
 ## Current status
 
-The current target is **LatticeLens 2.0.0 (202)**. It remains a project-local development candidate, not a final release. The checked-in [VALIDATION_2.0_FINAL.md](VALIDATION_2.0_FINAL.md) and `evidence/Validation-2.0-final-local.json` are historical receipts until explicitly regenerated. Prefer the newest run-specific Markdown/JSON report and its matching `*-inputs.json`; treat any receipt as current only when its frozen input manifest matches the source snapshot being evaluated.
+The current target is **LatticeLens 2.0.0 (203)**. It remains a project-local development candidate, not a final release. The checked-in [VALIDATION_2.0_FINAL.md](VALIDATION_2.0_FINAL.md) and `evidence/Validation-2.0-final-local.json` are historical receipts until explicitly regenerated. Prefer the newest run-specific Markdown/JSON report and its matching `*-inputs.json`; treat any receipt as current only when its frozen input manifest matches the source snapshot being evaluated.
 
 The final verifier places its managed SwiftPM/Xcode build products, test stores, fixture caches, temporary roots, logs, and result bundles under a unique project-local scratch. `TMPDIR` is provided to child tools, but Foundation/XCTest may resolve their system temporary directory independently; application/test data therefore uses explicit project-local roots and fails closed when an isolated store root is missing. This does not claim control over OS-managed XCTest state.
 

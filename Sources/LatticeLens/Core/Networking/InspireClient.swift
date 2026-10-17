@@ -243,7 +243,8 @@ struct InspireClient: Sendable {
         // request on the next page.
         var effectiveURL = url
         var components = URLComponents(url: effectiveURL, resolvingAgainstBaseURL: false)
-        let pageNumber = Int(components?.queryItems?.first(where: { $0.name == "page" })?.value ?? "1") ?? 1
+        let pageNumber = max(1, Int(components?.queryItems?.first(where: { $0.name == "page" })?.value ?? "1") ?? 1)
+        var maximumPageNumber = Self.maximumAuthorCandidatePageNumber(for: components)
         let queryValue = components?.queryItems?.first(where: { $0.name == "q" })?.value
         // URLComponents intentionally preserves `+` in query values and a
         // checkpoint copied through a proxy may contain a second percent-
@@ -270,14 +271,18 @@ struct InspireClient: Sendable {
             cursorState = nil
         }
 
-        // A checkpoint written by an older build may already contain the
-        // server's page-41 URL.  INSPIRE rejects that URL with HTTP 400 before
-        // returning a JSON page, so repair it locally instead of sending the
-        // known-invalid request.  The current writer normally prevents this
-        // state; this guard is for interrupted upgrades and hand-copied
-        // checkpoints.
-        if pageNumber > 40 {
-            if let currentRange { throw incompleteAuthorPartitionError(currentRange) }
+        // Checkpoints written by older builds may point past the current
+        // INSPIRE window. Rewind only that partition to page 1, carrying its
+        // validated adaptive-split cursor forward. This lets the next request
+        // probe the total and split an overfull range instead of repeatedly
+        // surfacing an unrecoverable page-41 error. The window is based on the
+        // effective page size: size=100 can safely reach page 100.
+        if pageNumber > maximumPageNumber {
+            if let currentRange, let cursorState {
+                return ([], try authorCandidateURL(range: currentRange, page: 1,
+                                                   size: Self.authorCandidatePageSize(for: components),
+                                                   categories: categories, cursor: cursorState), 0)
+            }
             return ([], try authorCandidateURL(range: Self.authorCandidatePartitions[0], page: 1,
                                                categories: categories), 0)
         }
@@ -327,6 +332,7 @@ struct InspireClient: Sendable {
             if let recoveredURL {
                 effectiveURL = recoveredURL
                 components = URLComponents(url: effectiveURL, resolvingAgainstBaseURL: false)
+                maximumPageNumber = Self.maximumAuthorCandidatePageNumber(for: components)
             }
         }
         let responsePage = try decoder.decode(InspireSearchPage<InspireAuthorHit>.self, from: responseData)
@@ -380,10 +386,10 @@ struct InspireClient: Sendable {
         } else {
             hasMoreByTotal = responsePage.links?.next != nil
         }
-        let exhaustedWindow = pageNumber >= 40 && hasMoreByTotal
+        let exhaustedWindow = pageNumber >= maximumPageNumber && hasMoreByTotal
         let advertisedNextPage = advertisedNextComponents
             .flatMap { Int($0.queryItems?.first(where: { $0.name == "page" })?.value ?? "") }
-        let nextBeyondWindow = advertisedNextPage.map { $0 > 40 } ?? false
+        let nextBeyondWindow = advertisedNextPage.map { $0 > maximumPageNumber } ?? false
         let next: URL?
         if isPartitioned {
             // Do not persist the service-supplied next link for the candidate
@@ -395,7 +401,7 @@ struct InspireClient: Sendable {
             // page are already locally proven, so construct the next request
             // from that immutable state instead.
             guard let currentRange, let cursorState else { throw LatticeLensError.malformedPayload }
-            if hasMoreByTotal && (exhaustedWindow || nextBeyondWindow || pageNumber >= 40) {
+            if hasMoreByTotal && (exhaustedWindow || nextBeyondWindow || pageNumber >= maximumPageNumber) {
                 throw incompleteAuthorPartitionError(currentRange)
             }
             if hasMoreByTotal {
@@ -452,6 +458,17 @@ struct InspireClient: Sendable {
         .init(lowerBound: 2_000_000, upperBound: 2_999_999),
         .init(lowerBound: 3_000_000, upperBound: nil)
     ]
+
+    private static func authorCandidatePageSize(for components: URLComponents?) -> Int {
+        guard let rawValue = components?.queryItems?.first(where: { $0.name == "size" })?.value,
+              let parsed = Int(rawValue), parsed > 0 else { return 250 }
+        return min(parsed, 250)
+    }
+
+    private static func maximumAuthorCandidatePageNumber(for components: URLComponents?) -> Int {
+        let pageSize = authorCandidatePageSize(for: components)
+        return (maximumAuthorCandidateResultsPerPartition + pageSize - 1) / pageSize
+    }
 
     private func authorCandidateURL(range: AuthorControlNumberRange, page: Int, size: Int = 250,
                                     grouped: Bool = true,

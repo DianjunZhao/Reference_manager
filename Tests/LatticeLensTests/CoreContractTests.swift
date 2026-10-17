@@ -702,40 +702,74 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
     }
 
-    func testAuthorCandidatePaginationRejectsPersistedOverWindowPage41WithoutARequest() async throws {
+    func testAuthorCandidatePaginationRewindsStalePage41WithoutARequest() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B0%20TO%20999999%5D&size=250&page=41"))
-        let client = InspireClient(transport: SequentialTransport([]))
-        await XCTAssertThrowsLatticeLensError(
-            { try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1) },
-            expected: .incompleteAuthorPartition(lowerBound: 0, upperBound: 999_999)
-        )
+        let transport = ScriptedHTTPTransport([])
+        let client = InspireClient(transport: transport)
+        let repaired = try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1)
+        XCTAssertTrue(repaired.authors.isEmpty)
+        let restart = try XCTUnwrap(repaired.nextURL)
+        let query = URLComponents(url: restart, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[0 TO 999999]") == true)
+        XCTAssertNotNil(restart.fragment, "the repaired checkpoint must carry its validated cursor")
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 0)
     }
 
-    func testAuthorCandidatePaginationRecognizesPlusEncodedOverWindowPartition() async throws {
+    func testAuthorCandidatePaginationRewindsPlusEncodedOverWindowPartition() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat+OR+arxiv_categories%3Ahep-th%29+AND+control_number%3A%5B1000000+TO+1249999%5D&size=250&page=41"))
-        let client = InspireClient(transport: SequentialTransport([]))
-        await XCTAssertThrowsLatticeLensError(
-            { try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1) },
-            expected: .incompleteAuthorPartition(lowerBound: 1_000_000, upperBound: 1_249_999)
-        )
+        let transport = ScriptedHTTPTransport([])
+        let client = InspireClient(transport: transport)
+        let repaired = try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1)
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(repaired.nextURL), resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "page" })?.value, "1")
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 0)
     }
 
-    func testAuthorCandidatePaginationRecognizesMixedEncodingBeforeFailingClosed() async throws {
+    func testAuthorCandidatePaginationRewindsMixedEncodedOverWindowPartition() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR+arxiv_categories%3Ahep-th%29%20AND+control_number%3A%5B1000000%20TO+1249999%5D&size=250&page=41"))
-        let client = InspireClient(transport: SequentialTransport([]))
-        await XCTAssertThrowsLatticeLensError(
-            { try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1) },
-            expected: .incompleteAuthorPartition(lowerBound: 1_000_000, upperBound: 1_249_999)
-        )
+        let transport = ScriptedHTTPTransport([])
+        let client = InspireClient(transport: transport)
+        let repaired = try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1)
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(repaired.nextURL), resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "page" })?.value, "1")
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 0)
     }
 
-    func testAuthorCandidatePaginationRecognizesDoubleEncodedCheckpoint() async throws {
+    func testAuthorCandidatePaginationRewindsDoubleEncodedCheckpoint() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%2528arxiv_categories%253Ahep-lat%2520OR%2520arxiv_categories%253Ahep-th%2529%2520AND%2520control_number%253A%255B1000000%2520TO%25201249999%255D&size=250&page=41"))
-        let client = InspireClient(transport: SequentialTransport([]))
-        await XCTAssertThrowsLatticeLensError(
-            { try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1) },
-            expected: .incompleteAuthorPartition(lowerBound: 1_000_000, upperBound: 1_249_999)
-        )
+        let transport = ScriptedHTTPTransport([])
+        let client = InspireClient(transport: transport)
+        let repaired = try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1)
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(repaired.nextURL), resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "page" })?.value, "1")
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 0)
+    }
+
+    func testAuthorCandidatePage41WithSize100IsInsideWindowAndSplitsOverfullPartition() async throws {
+        let payload = Data(#"{"hits":{"hits":[],"total":17477},"links":{}}"#.utf8)
+        let transport = ScriptedHTTPTransport([.init(data: payload, statusCode: 200, headers: nil)])
+        let client = InspireClient(transport: transport)
+        let page41 = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-ph)%20AND%20control_number:%5B1000000%20TO%201249999%5D&size=100&page=41"))
+
+        let result = try await client.authorCandidatesPage(nextURL: page41)
+
+        XCTAssertTrue(result.authors.isEmpty, "the parent probe rows must not be staged before scanning its child ranges")
+        XCTAssertEqual(result.total, 17_477)
+        let childURL = try XCTUnwrap(result.nextURL)
+        let childItems = URLComponents(url: childURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(childItems.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1124999]") == true)
+        XCTAssertEqual(childItems.first(where: { $0.name == "page" })?.value, "1")
+        let request = await transport.url(at: 0)
+        let requestItems = URLComponents(url: try XCTUnwrap(request), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(requestItems.first(where: { $0.name == "page" })?.value, "41")
+        XCTAssertEqual(requestItems.first(where: { $0.name == "size" })?.value, "100")
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 1)
     }
 
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {

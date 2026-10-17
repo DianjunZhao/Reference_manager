@@ -2501,8 +2501,8 @@ def validate_v12_performance_report(path, expected_manifest_hash):
     if not isinstance(build, dict):
         build = {}
         errors.append("The benchmark build identity is missing or malformed.")
-    if build.get("configuration") != "SwiftPM-debug-XCTest" or build.get("product_version") != "2.0.0" or build.get("build_number") != 202:
-        errors.append("The benchmark build identity does not match the current 2.0.0 (202) fixture build.")
+    if build.get("configuration") != "SwiftPM-debug-XCTest" or build.get("product_version") != "2.0.0" or build.get("build_number") != 203:
+        errors.append("The benchmark build identity does not match the current 2.0.0 (203) fixture build.")
     machine = value.get("machine", {})
     if not isinstance(machine, dict) or not isinstance(machine.get("architecture"), str) or not machine.get("operating_system"):
         errors.append("The benchmark is missing its machine architecture or operating-system identity.")
@@ -3716,7 +3716,7 @@ def main():
         "summary_path": summary_path.relative_to(ROOT).as_posix(),
         "recorded_at_utc": now,
         "product_version": "2.0.0",
-        "build_number": 202,
+        "build_number": 203,
         "input_manifest_sha256": manifest_hash,
         "input_manifest_path": manifest_path.relative_to(ROOT).as_posix(),
         "input_file_count": len(manifest_entries),
