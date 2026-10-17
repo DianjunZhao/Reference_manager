@@ -184,7 +184,7 @@ enum ArxivCategoryQueryBuilder {
 /// windows, or next-page trust rules change; the revision is bound into every
 /// modern profile/job/checkpoint identity without being sent over the wire.
 enum AuthorCandidatePaginationContract {
-    static let revision = 6
+    static let revision = 7
 }
 
 struct CategoryCheckpointMigration: Codable, Hashable, Sendable {

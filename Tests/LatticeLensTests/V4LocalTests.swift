@@ -329,7 +329,7 @@ final class V4LocalTests: XCTestCase {
         let firstSet: Set<SupportedArxivCategory> = [.hepLat, .hepPh, .hepTh]
         let sameSet: Set<SupportedArxivCategory> = [.hepTh, .hepLat, .hepPh]
         XCTAssertEqual(fresh.queryIdentity,
-                       "author-candidates:hep-lat-hep-ph-profile-v3-query-v3-pagination-v6",
+                       "author-candidates:hep-lat-hep-ph-profile-v3-query-v3-pagination-v7",
                        "profile, query-contract and pagination revisions must be separate identity components")
         XCTAssertEqual(fresh.profileRevision, fresh.revision)
         XCTAssertEqual(fresh.queryContractRevision, ArxivCategoryQueryBuilder.revision)

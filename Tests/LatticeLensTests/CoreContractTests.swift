@@ -47,9 +47,9 @@ final class CoreContractTests: XCTestCase {
                                                                    profile: persistedProfile))
         XCTAssertTrue(persistedProfile.provenance.contains("query-v\(ArxivCategoryQueryBuilder.revision)"))
         XCTAssertTrue(persistedProfile.provenance.contains("pagination-v\(AuthorCandidatePaginationContract.revision)"))
-        XCTAssertEqual(AuthorCandidatePaginationContract.revision, 6,
-                       "the capped-total recovery must invalidate Build 204's resumable pagination identity")
-        XCTAssertFalse(persistedProfile.checkpointIdentity.contains("pagination-v5"))
+        XCTAssertEqual(AuthorCandidatePaginationContract.revision, 7,
+                       "the corrected 10,000-hit first-page recovery must invalidate Build 205 checkpoints")
+        XCTAssertFalse(persistedProfile.checkpointIdentity.contains("pagination-v6"))
 
         _ = try await client.authorCandidatesPage()
         let capturedURL = await transport.url(at: 0)
@@ -823,6 +823,66 @@ final class CoreContractTests: XCTestCase {
         XCTAssertNotNil(childURL.fragment, "the sibling range must survive in the durable cursor")
         let requestCount = await transport.requestCount()
         XCTAssertEqual(requestCount, 1)
+    }
+
+    func testAuthorCandidateFirstPageSplitsINSPIREGTECapAndResumesBothChildren() async throws {
+        let cappedProbe = Data(#"{"hits":{"hits":[{"id":99,"metadata":{"name":{"value":"Probe, Must Not Persist"},"arxiv_categories":["hep-lat"]}}],"total":{"value":10000,"relation":"gte"}},"links":{}}"#.utf8)
+        let leftChild = Data(#"{"hits":{"hits":[{"id":101,"metadata":{"name":{"value":"Left, Child"},"arxiv_categories":["hep-ph"]}}],"total":{"value":1,"relation":"eq"}},"links":{}}"#.utf8)
+        let rightChild = Data(#"{"hits":{"hits":[{"id":102,"metadata":{"name":{"value":"Right, Child"},"arxiv_categories":["hep-lat"]}}],"total":{"value":1,"relation":"eq"}},"links":{}}"#.utf8)
+        let transport = ScriptedHTTPTransport([
+            .init(data: cappedProbe, statusCode: 200, headers: nil),
+            .init(data: leftChild, statusCode: 200, headers: nil),
+            .init(data: rightChild, statusCode: 200, headers: nil)
+        ])
+        let client = InspireClient(transport: transport)
+        let categories: Set<SupportedArxivCategory> = [.hepLat, .hepPh, .hepTh]
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "inspirehep.net"
+        components.path = "/api/authors/"
+        components.queryItems = [
+            URLQueryItem(name: "q", value: "(arxiv_categories:hep-lat OR arxiv_categories:hep-ph OR arxiv_categories:hep-th) AND control_number:[1000000 TO 1249999]"),
+            URLQueryItem(name: "size", value: "250"),
+            URLQueryItem(name: "page", value: "1")
+        ]
+        let parentURL = try XCTUnwrap(components.url)
+
+        let probe = try await client.authorCandidatesPage(nextURL: parentURL, categories: categories)
+        XCTAssertTrue(probe.authors.isEmpty,
+                      "the 10,000-hit probe rows must not be published as the parent partition")
+        XCTAssertEqual(probe.total, 10_000)
+        let leftURL = try XCTUnwrap(probe.nextURL,
+                                    "an INSPIRE relation=gte cap without links.next must split at page 1")
+        let leftQueryItems = URLComponents(url: leftURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(leftQueryItems.first(where: { $0.name == "q" })?.value?
+            .contains("control_number:[1000000 TO 1124999]") == true)
+        XCTAssertEqual(leftQueryItems.first(where: { $0.name == "page" })?.value, "1")
+        XCTAssertNotNil(leftURL.fragment, "the right sibling must remain in the durable resume cursor")
+
+        let left = try await client.authorCandidatesPage(nextURL: leftURL, categories: categories)
+        XCTAssertEqual(left.authors.map(\.recid), [101])
+        let rightURL = try XCTUnwrap(left.nextURL)
+        let rightQueryItems = URLComponents(url: rightURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(rightQueryItems.first(where: { $0.name == "q" })?.value?
+            .contains("control_number:[1125000 TO 1249999]") == true)
+
+        let right = try await client.authorCandidatesPage(nextURL: rightURL, categories: categories)
+        XCTAssertEqual(right.authors.map(\.recid), [102])
+        let publishedAuthors = probe.authors + left.authors + right.authors
+        XCTAssertEqual(publishedAuthors.map(\.recid), [101, 102])
+        XCTAssertFalse(publishedAuthors.contains(where: { $0.recid == 99 }),
+                       "the parent probe author must never enter the completed child results")
+        let followingQuery = URLComponents(url: try XCTUnwrap(right.nextURL),
+                                           resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "q" })?.value
+        XCTAssertTrue(followingQuery?.contains("control_number:[1250000 TO 1499999]") == true)
+
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 3)
+        for index in 0..<requestCount {
+            let requestURL = await transport.url(at: index)
+            XCTAssertNil(requestURL?.fragment, "the internal cursor must not be sent to INSPIRE")
+        }
     }
 
     func testAuthorCandidateWindowBoundarySplitsWhenPage41LinkOmitsPageSize() async throws {

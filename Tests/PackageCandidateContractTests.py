@@ -21,7 +21,7 @@ SPEC.loader.exec_module(PACKAGE_CANDIDATE)
 
 class PackageCandidateContractTests(unittest.TestCase):
     def test_packager_release_identity_matches_the_xcode_project(self):
-        self.assertEqual(PACKAGE_CANDIDATE.current_product_identity(ROOT), ("2.0.0", 205))
+        self.assertEqual(PACKAGE_CANDIDATE.current_product_identity(ROOT), ("2.0.0", 206))
         self.assertEqual((PACKAGE_CANDIDATE.PRODUCT_VERSION, PACKAGE_CANDIDATE.BUILD_NUMBER),
                          PACKAGE_CANDIDATE.current_product_identity(ROOT))
 
