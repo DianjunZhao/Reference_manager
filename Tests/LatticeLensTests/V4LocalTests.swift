@@ -212,6 +212,7 @@ final class V4LocalTests: XCTestCase {
         let checkpoint = SyncCheckpoint(jobID: "author-candidates:hep-lat-or-hep-th",
             jobKind: "author-candidates", query: "arxiv_categories:hep-lat OR arxiv_categories:hep-th",
             generationID: "checkpoint-\(paperID)",
+            startedAt: timestamp, updatedAt: timestamp,
             activeMembership: Set(checkpointActiveMembership),
             stagingMembership: Set(checkpointStagingMembership))
         let notebook = NotebookEntry(id: notebookID, paperID: paperID, title: "Notebook",
