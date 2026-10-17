@@ -32,6 +32,118 @@ final class V2RecoveryTests: XCTestCase {
         XCTAssertNotNil(resumedSnapshot.authors[22])
     }
 
+    @MainActor
+    func testDenseAuthorPartitionRecursivelySplitsAndResumesFromV12DiskCheckpoint() async throws {
+        let root = try makeProjectLocalTestDirectory(prefix: "author-index-dense-v12")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storeURL = root.appendingPathComponent("Library-v12.store")
+        let profile = CategoryProfile(categories: [.hepLat, .hepPh, .hepTh])
+        let pageSize = 250
+        var responses: [Data] = []
+
+        func page(total: Int, number: Int, authorID: Int? = nil) throws -> Data {
+            var hits: [[String: Any]] = []
+            if let authorID {
+                hits.append([
+                    "id": authorID,
+                    "metadata": ["name": ["value": "Fixture, \(authorID)"], "arxiv_categories": ["hep-lat"]]
+                ])
+            }
+            var links: [String: String] = [:]
+            if total > number * pageSize {
+                links["next"] = "https://inspirehep.net/api/authors/?size=\(pageSize)&page=\(number + 1)"
+            }
+            return try JSONSerialization.data(withJSONObject: [
+                "hits": ["hits": hits, "total": total],
+                "links": links
+            ], options: [.sortedKeys])
+        }
+
+        func leafPages(total: Int, authorID: Int) throws {
+            let pageCount = (total + pageSize - 1) / pageSize
+            for number in 1...pageCount {
+                responses.append(try page(total: total, number: number,
+                                          authorID: number == pageCount ? authorID : nil))
+            }
+        }
+
+        // The screenshot's parent partition contains 17,477 candidates.
+        // Its left child still contains 10,728, so a single-level split is
+        // insufficient; the nested split must preserve both pending siblings.
+        responses.append(try page(total: 17_477, number: 1, authorID: 900_001))
+        responses.append(try page(total: 10_728, number: 1, authorID: 900_002))
+        try leafPages(total: 8_681, authorID: 101)
+        try leafPages(total: 2_047, authorID: 102)
+        try leafPages(total: 6_749, authorID: 103)
+        // After the dense 1,000,000–1,249,999 range, the remaining base
+        // partitions are empty in this fixture, including the open-ended tail.
+        for _ in 0..<5 { responses.append(try page(total: 0, number: 1)) }
+        XCTAssertEqual(responses.count, 78)
+
+        var start = URLComponents()
+        start.scheme = "https"
+        start.host = "inspirehep.net"
+        start.path = "/api/authors/"
+        start.queryItems = [
+            URLQueryItem(name: "q", value: "(\(profile.query)) AND control_number:[1000000 TO 1249999]"),
+            URLQueryItem(name: "size", value: String(pageSize)),
+            URLQueryItem(name: "page", value: "1"),
+            URLQueryItem(name: "fields", value: "name,native_names,ids,arxiv_categories")
+        ]
+        let startURL = try XCTUnwrap(start.url)
+        let initialCheckpoint = SyncCheckpoint(
+            jobID: profile.jobID(), jobKind: "author-candidates", query: profile.checkpointIdentity,
+            generationID: "dense-author-partition", nextURL: startURL, state: .paused
+        )
+        let projectOnlyEnvironment = [
+            "LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS": "1",
+            "LATTICELENS_TEST_STORE_ROOT": root.path,
+            "LATTICELENS_TEST_TMP_ROOT": root.path.appending("/tmp")
+        ]
+
+        do {
+            let store = LibraryStoreFactory.makeDefault(
+                storeURLOverride: storeURL, environment: projectOnlyEnvironment
+            )
+            try await store.save(checkpoint: initialCheckpoint)
+            let service = AuthorIndexService(
+                client: InspireClient(transport: SequentialTransport(Array(responses.prefix(4)))),
+                store: store, categoryProfile: profile
+            )
+            let progress = try await service.rebuildCandidateIndex()
+            XCTAssertEqual(progress.state, .paused)
+            XCTAssertEqual(progress.completedPages, 4)
+            let paused = try await store.checkpoint(jobID: profile.jobID())
+            XCTAssertEqual(paused?.state, .paused)
+            XCTAssertEqual(paused?.completedPages, 4)
+            let resumeURL = try XCTUnwrap(paused?.nextURL)
+            XCTAssertNotNil(resumeURL.fragment, "the recursive split queue must be durable")
+            let resumeItems = URLComponents(url: resumeURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertTrue(resumeItems.first(where: { $0.name == "q" })?.value?
+                .contains("control_number:[1000000 TO 1062499]") == true)
+            XCTAssertEqual(resumeItems.first(where: { $0.name == "page" })?.value, "3")
+        }
+
+        let reopenedStore = LibraryStoreFactory.makeDefault(
+            storeURLOverride: storeURL, environment: projectOnlyEnvironment
+        )
+        let resumedService = AuthorIndexService(
+            client: InspireClient(transport: SequentialTransport(Array(responses.dropFirst(4)))),
+            store: reopenedStore, categoryProfile: profile
+        )
+        let resumed = try await resumedService.rebuildCandidateIndex()
+        XCTAssertEqual(resumed.state, .active)
+        let completed = try await reopenedStore.checkpoint(jobID: profile.jobID())
+        XCTAssertEqual(completed?.state, .completed)
+        XCTAssertEqual(completed?.completedPages, 78)
+        XCTAssertEqual(completed?.successfulRecords, 3)
+        XCTAssertEqual(completed?.stagingMembership, [101, 102, 103])
+        let finalSnapshot = await reopenedStore.snapshot()
+        XCTAssertNil(finalSnapshot.authors[900_001], "over-window parent probe rows must not enter staging")
+        XCTAssertNil(finalSnapshot.authors[900_002], "over-window nested probe rows must not enter staging")
+        for authorID in [101, 102, 103] { XCTAssertNotNil(finalSnapshot.authors[authorID]) }
+    }
+
     func testCandidatePageTwoFailurePreservesProfileCheckpointAndResumesThatPage() async throws {
         let store = InMemoryLibraryStore()
         let profile = CategoryProfile(categories: [.hepLat, .hepPh], revision: 6)
