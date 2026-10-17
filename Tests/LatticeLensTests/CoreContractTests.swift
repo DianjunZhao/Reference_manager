@@ -4,6 +4,73 @@ import WebKit
 @testable import LatticeLens
 
 final class CoreContractTests: XCTestCase {
+    func testVerifierOutputRootsAreProjectLocalWhenRequired() {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"] == "1" else {
+            return
+        }
+        var workspaceRoot = URL(fileURLWithPath: #filePath).standardizedFileURL
+        for _ in 0..<3 {
+            workspaceRoot.deleteLastPathComponent()
+        }
+        workspaceRoot = workspaceRoot.resolvingSymlinksInPath()
+
+        for key in ["TMPDIR", "LATTICELENS_TEST_STORE_ROOT", "LATTICELENS_TEST_TMP_ROOT"] {
+            guard let rawPath = environment[key], rawPath.hasPrefix("/") else {
+                return XCTFail("The isolated verifier must provide an absolute \(key) path")
+            }
+            let path = URL(fileURLWithPath: rawPath).standardizedFileURL.resolvingSymlinksInPath()
+            XCTAssertTrue(path.path.hasPrefix(workspaceRoot.path + "/"),
+                          "Verifier-managed \(key) path escaped Reference_manager: \(path.path)")
+        }
+    }
+
+    func testFreshAuthorIndexAndClientDefaultsUseHepPhWithoutChangingLegacyProfile() async throws {
+        let payload = #"{"hits":{"hits":[],"total":0},"links":{}}"#.data(using: .utf8)!
+        let transport = ScriptedHTTPTransport([.init(data: payload, statusCode: 200, headers: nil)])
+        let client = InspireClient(transport: transport)
+        let service = AuthorIndexService(client: client, store: InMemoryLibraryStore())
+        XCTAssertEqual(service.categoryProfile.categories, SupportedArxivCategory.defaultEnabled)
+        XCTAssertEqual(service.configuredCandidateQuery, "arxiv_categories:hep-lat OR arxiv_categories:hep-ph")
+        XCTAssertEqual(AuthorIndexService(client: client, store: InMemoryLibraryStore(),
+                                          categories: SupportedArxivCategory.legacyV1).configuredCandidateQuery,
+                       "arxiv_categories:hep-lat OR arxiv_categories:hep-th")
+
+        let persistedProfile = CategoryProfile(categories: [.hepLat, .hepPh], revision: 12)
+        let frozenService = AuthorIndexService(client: client, store: InMemoryLibraryStore(),
+                                               categoryProfile: persistedProfile)
+        XCTAssertEqual(frozenService.categoryProfile.profileRevision, 12,
+                       "production service construction must retain the loaded profile revision")
+        XCTAssertEqual(frozenService.configuredCandidateQueryCheckpoint, persistedProfile.checkpointIdentity)
+        XCTAssertEqual(frozenService.configuredCandidateJobID, persistedProfile.jobID())
+        XCTAssertTrue(ArxivCategoryQueryBuilder.checkpointMatches(persistedProfile.checkpointIdentity,
+                                                                   profile: persistedProfile))
+        XCTAssertTrue(persistedProfile.provenance.contains("query-v\(ArxivCategoryQueryBuilder.revision)"))
+        XCTAssertTrue(persistedProfile.provenance.contains("pagination-v\(AuthorCandidatePaginationContract.revision)"))
+
+        _ = try await client.authorCandidatesPage()
+        let capturedURL = await transport.url(at: 0)
+        let requestURL = try XCTUnwrap(capturedURL)
+        let query = try XCTUnwrap(URLComponents(url: requestURL, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "q" })?.value)
+        XCTAssertEqual(query, "(arxiv_categories:hep-lat OR arxiv_categories:hep-ph) AND control_number:[0 TO 999999]")
+    }
+
+    func testEnabledAuthorFacetExcludesQualifiedAuthorsOnlyInDisabledCategories() {
+        let enabled = SupportedArxivCategory.defaultEnabled
+
+        XCTAssertTrue(CategoryFacet.allEnabled.matches(categories: ["hep-lat"], enabled: enabled))
+        XCTAssertTrue(CategoryFacet.allEnabled.matches(categories: ["hep-ph"], enabled: enabled))
+        XCTAssertTrue(CategoryFacet.allEnabled.matches(categories: ["hep-lat", "hep-ph"], enabled: enabled))
+        XCTAssertFalse(CategoryFacet.allEnabled.matches(categories: ["hep-th"], enabled: enabled),
+                       "qualification is not a substitute for membership in an enabled category")
+        XCTAssertTrue(CategoryFacet.hepTh.matches(categories: ["hep-th"], enabled: enabled),
+                      "legacy records remain inspectable through the explicit hep-th facet")
+        XCTAssertTrue(CategoryFacet.multiCategory.matches(categories: ["hep-lat", "hep-ph"], enabled: enabled))
+        XCTAssertFalse(CategoryFacet.multiCategory.matches(categories: ["hep-ph", "hep-th"], enabled: enabled),
+                       "multi-category counts only the currently enabled category set")
+    }
+
     func testFormulaReaderNormalizesMathWithoutExecutingImportedMarkup() {
         let mixed = FormulaReaderDocument.prose(#"句中 $\mathcal O$，和 \(\Gamma\)；裸公式 \frac{a}{b}。独立：\[\sum_n a_n\]"#)
         XCTAssertEqual(mixed.components(separatedBy: "class=\"math-inline\"").count - 1, 3)
@@ -22,6 +89,29 @@ final class CoreContractTests: XCTestCase {
         XCTAssertTrue(html.contains("&lt;script&gt;"))
         XCTAssertTrue(html.contains("公式 · 基于原文的推断"), "presentation must not promote inference to direct")
         XCTAssertEqual(html.components(separatedBy: "<details>").count - 1, 1)
+
+        let typedStep = FormulaDerivationStep(stepID: "equation-1:step:1", ordinal: 1,
+            textZH: "由来源表达式开始；此处不声称数学等价。", beforeTeX: "x=1", afterTeX: "x=1",
+            ruleOrAssumption: "原文定义", evidenceAnchorIDs: ["anchor-current"],
+            sourceDocumentHashes: ["document-current"], epistemicStatus: .inference)
+        let typedClaim = EvidenceClaim(textZH: "当前编号公式的受限解释。", epistemicStatus: .direct,
+            evidenceIDs: ["anchor-current"], formulaTeX: "x=1", equationID: "equation-1",
+            formulaDerivationSteps: [typedStep])
+        let typedHTML = FormulaReaderDocument.html(claims: [typedClaim], anchors: [:])
+        XCTAssertTrue(typedHTML.contains("结构化推导步骤"))
+        XCTAssertTrue(typedHTML.contains("物理核验：需人工物理核验"))
+        XCTAssertTrue(typedHTML.contains("公式依赖：无"))
+        XCTAssertTrue(typedHTML.contains("document-current"))
+    }
+
+    func testFormulaStepStructureChecksBasicTeXGroupsAndMarksUnknownMacrosManual() {
+        XCTAssertEqual(FormulaStepTeXStructure.status(before: #"\frac{a_1}{b^2}"#, after: #"\frac{a_1}{b^2}"#),
+                       .verifiedStructural)
+        XCTAssertEqual(FormulaStepTeXStructure.status(before: #"\customphysics{x}"#, after: #"\customphysics{x}"#),
+                       .needsManual)
+        XCTAssertEqual(FormulaStepTeXStructure.status(before: #"\frac{a}{b"#, after: #"\frac{a}{b"#),
+                       .rejected)
+        XCTAssertEqual(FormulaStepTeXStructure.status(before: "x^", after: "x^"), .rejected)
     }
 
     @MainActor
@@ -64,7 +154,10 @@ final class CoreContractTests: XCTestCase {
         XCTAssertFalse(host.scroller.isHidden)
         XCTAssertLessThan(host.scroller.knobProportion, 0.5)
         _ = try await readerValue("window.scrollTo(0,document.documentElement.scrollHeight)", in: host.webView)
-        try await Task.sleep(for: .milliseconds(200))
+        let scrollSyncDeadline = ContinuousClock.now + .seconds(2)
+        while host.scroller.doubleValue <= 0.98, ContinuousClock.now < scrollSyncDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertGreaterThan(host.scroller.doubleValue, 0.98, "native scrollbar must follow wheel/keyboard/DOM scroll")
         try await check("document.querySelector('.end-marker').getBoundingClientRect().bottom <= innerHeight", equals: "true")
         // Resizing and opening the raw-source disclosure must update geometry.
@@ -117,6 +210,106 @@ final class CoreContractTests: XCTestCase {
         ))
     }
 
+    func testFixtureCacheRootStaysBesideIsolatedStoreWhenLaunchEnvironmentIsReduced() {
+        let explicit = AppLaunchConfiguration.fixtureCacheRoot(
+            environment: ["LATTICELENS_FIXTURE_CACHE_ROOT": "/task/derived/fixture-cache",
+                         "LATTICELENS_TEST_STORE_ROOT": "/task/derived/test-store"],
+            infoDictionary: ["LatticeLensFixtureCacheRoot": "/bundle/fixture-cache"])
+        XCTAssertEqual(explicit, "/task/derived/fixture-cache")
+
+        let bundled = AppLaunchConfiguration.fixtureCacheRoot(
+            environment: ["LATTICELENS_TEST_STORE_ROOT": "/task/derived/test-store"],
+            infoDictionary: ["LatticeLensFixtureCacheRoot": "/bundle/fixture-cache"])
+        XCTAssertEqual(bundled, "/bundle/fixture-cache")
+
+        let inherited = AppLaunchConfiguration.fixtureCacheRoot(
+            environment: ["LATTICELENS_TEST_STORE_ROOT": "/task/derived/test-store"],
+            infoDictionary: [:])
+        XCTAssertEqual(inherited, "/task/derived/test-store/FixtureCache")
+
+        XCTAssertNil(AppLaunchConfiguration.fixtureCacheRoot(
+            environment: ["LATTICELENS_TEST_STORE_ROOT": "relative-test-store"],
+            infoDictionary: [:]))
+    }
+
+    func testDiskBackedLargeFixtureRequiresExplicitOptInAndProjectLocalChildRoot() throws {
+        let projectRoot = "/workspace/Reference_manager"
+        let testStoreRoot = "/workspace/Reference_manager/.codex-task-tmp/ui/test-stores"
+        let fixtureRoot = testStoreRoot + "/disk-relaunch-123"
+        let info: [String: Any] = [
+            "LatticeLensProjectLocalRoot": projectRoot
+        ]
+        let environment = [
+            "LATTICELENS_USE_FIXTURES": "1",
+            "LATTICELENS_LARGE_UI_FIXTURE": "1",
+            "LATTICELENS_DISK_BACKED_UI_FIXTURE": "1",
+            "LATTICELENS_TEST_STORE_ROOT": testStoreRoot,
+            "LATTICELENS_DISK_UI_FIXTURE_STORE_ROOT": fixtureRoot
+        ]
+
+        XCTAssertEqual(
+            AppLaunchConfiguration.diskBackedLargeFixtureStoreURL(
+                environment: environment, arguments: [], infoDictionary: info)?.path,
+            fixtureRoot + "/LatticeLens-v11.store"
+        )
+        var inMemoryFixture = environment
+        inMemoryFixture.removeValue(forKey: "LATTICELENS_DISK_BACKED_UI_FIXTURE")
+        XCTAssertNil(AppLaunchConfiguration.diskBackedLargeFixtureStoreURL(
+            environment: inMemoryFixture, arguments: [], infoDictionary: info),
+            "ordinary and in-memory fixture launches must not acquire a disk store")
+        var nonLargeFixture = environment
+        nonLargeFixture.removeValue(forKey: "LATTICELENS_LARGE_UI_FIXTURE")
+        XCTAssertNil(AppLaunchConfiguration.diskBackedLargeFixtureStoreURL(
+            environment: nonLargeFixture, arguments: [], infoDictionary: info),
+            "disk mode without the large fixture corpus must be refused")
+
+        var escaped = environment
+        escaped["LATTICELENS_DISK_UI_FIXTURE_STORE_ROOT"] = "/workspace/outside"
+        XCTAssertNil(AppLaunchConfiguration.diskBackedLargeFixtureStoreURL(
+            environment: escaped, arguments: [], infoDictionary: info))
+
+        var sibling = environment
+        sibling["LATTICELENS_DISK_UI_FIXTURE_STORE_ROOT"] = testStoreRoot
+        XCTAssertNil(AppLaunchConfiguration.diskBackedLargeFixtureStoreURL(
+            environment: sibling, arguments: [], infoDictionary: info),
+            "the fixture must use a distinct child, not the shared test root")
+
+        let reducedEnvironment = ["LATTICELENS_TEST_STORE_ROOT": testStoreRoot]
+        let launchArguments = ["-LatticeLensLargeUIFixture", "YES",
+                               "-LatticeLensDiskBackedUIFixture", "YES",
+                               "-LatticeLensDiskUIFixtureStoreRoot", fixtureRoot]
+        XCTAssertEqual(
+            AppLaunchConfiguration.diskBackedLargeFixtureStoreURL(
+                environment: reducedEnvironment, arguments: launchArguments, infoDictionary: info)?.path,
+            fixtureRoot + "/LatticeLens-v11.store",
+            "XCTest launch arguments must preserve the opt-in when per-launch environment is reduced")
+
+        let actualProjectRoot = try XCTUnwrap(AppLaunchConfiguration.projectLocalRoot())
+        XCTAssertEqual(URL(fileURLWithPath: actualProjectRoot).lastPathComponent, "Reference_manager")
+        let localTestRoot = actualProjectRoot + "/.codex-task-tmp-boundary-test"
+        var sourceBoundEnvironment = environment
+        sourceBoundEnvironment["LATTICELENS_TEST_STORE_ROOT"] = localTestRoot
+        sourceBoundEnvironment["LATTICELENS_DISK_UI_FIXTURE_STORE_ROOT"] = localTestRoot + "/run-001"
+        XCTAssertEqual(
+            AppLaunchConfiguration.diskBackedLargeFixtureStoreURL(
+                environment: sourceBoundEnvironment, arguments: [], infoDictionary: [:])?.path,
+            localTestRoot + "/run-001/LatticeLens-v11.store",
+            "the built fixture must derive its project boundary when custom Info.plist keys are absent")
+    }
+
+    func testDiskBackedFixtureSeederRejectsUnknownAndPartialStores() {
+        XCTAssertTrue(AppFixtureLargeData.isPristineStore(LibrarySnapshot()))
+        XCTAssertFalse(AppFixtureLargeData.isCompleteFixture(LibrarySnapshot()))
+
+        var unknown = LibrarySnapshot()
+        let tag = LibraryTag(id: UUID(), name: "unrelated prior row", colorName: "blue", createdAt: Date())
+        unknown.tags[tag.id] = tag
+        XCTAssertFalse(AppFixtureLargeData.isPristineStore(unknown),
+                       "a non-empty store must never be treated as a fresh fixture target")
+        XCTAssertFalse(AppFixtureLargeData.isCompleteFixture(unknown),
+                       "partial/unknown contents must not be reseeded over or shown as a complete corpus")
+    }
+
     func testProductionIsolationRootRequiresExplicitTwoKeyOptInAndDoesNotEnableFixtures() {
         XCTAssertNil(AppLaunchConfiguration.productionIsolationStoreRoot(environment: [:]))
         XCTAssertNil(AppLaunchConfiguration.productionIsolationStoreRoot(environment: [
@@ -136,8 +329,12 @@ final class CoreContractTests: XCTestCase {
     }
 
     func testFreshActiveStoreDirectoryIsCreatedBeforeSwiftDataOpens() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: "latticelens-fresh-store-directory-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let root = projectRoot.appending(path: ".codex-test-fresh-store-\(UUID().uuidString)",
+                                         directoryHint: .isDirectory)
         let storeURL = root.appending(path: "nested/swiftdata/LatticeLens-v8.store")
         let parent = storeURL.deletingLastPathComponent()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -359,18 +556,57 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(viewModel.syncStatus.phase, .failed)
     }
 
-    func testAuthorCandidatePaginationPartitionsBeyondInspireResultWindow() async throws {
-        // INSPIRE rejects page 41 for a 250-row author query.  The client must
-        // switch to the next disjoint control-number partition instead of
-        // persisting a URL that will deterministically return HTTP 400.
+    func testAuthorCandidatePaginationRefusesAnOverWindowPartitionInsteadOfSkippingItsRemainder() async throws {
+        // A partition advertising more than the 10,000-result window cannot
+        // be replaced by the next range: that would silently omit authors.
         let page = #"{"hits":{"hits":[],"total":10001},"links":{"next":"https://inspirehep.net/api/authors/?q=old&page=41&size=250"}}"#
-        let transport = SequentialTransport([Data(page.utf8)])
+        let client = InspireClient(transport: SequentialTransport([Data(page.utf8)]))
+        await XCTAssertThrowsLatticeLensError(
+            { try await client.authorCandidatesPage() },
+            expected: .incompleteAuthorPartition(lowerBound: 0, upperBound: 999_999)
+        )
+    }
+
+    func testAuthorCandidatePaginationRejectsWrongCategoryCheckpointBeforeTransport() async throws {
+        let response = Data(#"{"hits":{"hits":[],"total":0},"links":{}}"#.utf8)
+        let transport = ScriptedHTTPTransport([.init(data: response, statusCode: 200, headers: nil)])
         let client = InspireClient(transport: transport)
-        let result = try await client.authorCandidatesPage()
-        let next = try XCTUnwrap(result.nextURL)
+        let staleLegacyURL = try XCTUnwrap(URL(string:
+            "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th%29%20AND%20control_number%3A%5B0%20TO%20999999%5D&size=250&page=2"
+        ))
+
+        await XCTAssertThrowsLatticeLensError(
+            { try await client.authorCandidatesPage(nextURL: staleLegacyURL, categories: [.hepLat, .hepPh]) },
+            expected: .malformedPayload
+        )
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 0,
+                       "a stale hep-lat/hep-th checkpoint must not be sent into the hep-lat/hep-ph generation")
+    }
+
+    func testAuthorCandidateOpenEndedPartitionContinuesAboveLegacyRecidCeiling() async throws {
+        let payload = #"{"hits":{"hits":[{"id":4000001,"metadata":{"name":{"value":"Beyond, Fixture"},"arxiv_categories":["hep-ph"]}}],"total":251},"links":{"next":"https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-ph)%20AND%20control_number%3A%5B3000000%20TO%20%2A%5D&size=250&page=2"}}"#
+        let tailURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-ph)%20AND%20control_number%3A%5B3000000%20TO%20%2A%5D&size=250&page=1"))
+        let client = InspireClient(transport: SequentialTransport([Data(payload.utf8)]))
+
+        let page = try await client.authorCandidatesPage(nextURL: tailURL)
+
+        XCTAssertEqual(page.authors.map(\.recid), [4_000_001])
+        let next = try XCTUnwrap(page.nextURL)
         let query = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
-        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[3000000 TO *]") == true)
+        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "2")
+    }
+
+    func testAuthorCandidatePaginationRejectsAnOverWindowOpenEndedTail() async throws {
+        let payload = #"{"hits":{"hits":[],"total":10001},"links":{"next":"https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-ph)%20AND%20control_number%3A%5B3000000%20TO%20%2A%5D&size=250&page=41"}}"#
+        let tailPage40 = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-ph)%20AND%20control_number%3A%5B3000000%20TO%20%2A%5D&size=250&page=40"))
+        let client = InspireClient(transport: SequentialTransport([Data(payload.utf8)]))
+
+        await XCTAssertThrowsLatticeLensError(
+            { try await client.authorCandidatesPage(nextURL: tailPage40) },
+            expected: .incompleteAuthorPartition(lowerBound: 3_000_000, upperBound: nil)
+        )
     }
 
     func testAuthorCandidatePaginationStopsAtPartialLivePageAndAdvancesPartition() async throws {
@@ -381,7 +617,8 @@ final class CoreContractTests: XCTestCase {
         let payload = #"{"hits":{"hits":[{"id":77,"metadata":{"name":{"value":"Fixture, Final"},"arxiv_categories":["hep-lat"]}}],"total":1865},"links":{"next":"https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th)%20AND%20control_number%3A%5B0%20TO%20999999%5D&size=250&page=9"}}"#
         let client = InspireClient(transport: SequentialTransport([Data(payload.utf8)]))
         let finalPageURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th)%20AND%20control_number%3A%5B0%20TO%20999999%5D&size=250&page=8"))
-        let result = try await client.authorCandidatesPage(nextURL: finalPageURL)
+        let result = try await client.authorCandidatesPage(nextURL: finalPageURL,
+                                                           categories: SupportedArxivCategory.legacyV1)
         XCTAssertEqual(result.authors.map(\.recid), [77])
         let next = try XCTUnwrap(result.nextURL)
         let query = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -389,49 +626,40 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
     }
 
-    func testAuthorCandidatePaginationRepairsPersistedPartitionPage41WithoutARequest() async throws {
+    func testAuthorCandidatePaginationRejectsPersistedOverWindowPage41WithoutARequest() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B0%20TO%20999999%5D&size=250&page=41"))
         let client = InspireClient(transport: SequentialTransport([]))
-        let result = try await client.authorCandidatesPage(nextURL: staleURL)
-        XCTAssertTrue(result.authors.isEmpty)
-        let query = URLComponents(url: try XCTUnwrap(result.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
-        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
-        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+        await XCTAssertThrowsLatticeLensError(
+            { try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1) },
+            expected: .incompleteAuthorPartition(lowerBound: 0, upperBound: 999_999)
+        )
     }
 
-    func testAuthorCandidatePaginationRecognizesPlusEncodedControlNumberPartition() async throws {
-        // URLComponents exposes `+` literally in query-item values.  A page
-        // 40 link from the second partition must therefore advance to the
-        // third partition instead of restarting partition 2 indefinitely.
+    func testAuthorCandidatePaginationRecognizesPlusEncodedOverWindowPartition() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat+OR+arxiv_categories%3Ahep-th%29+AND+control_number%3A%5B1000000+TO+1249999%5D&size=250&page=41"))
         let client = InspireClient(transport: SequentialTransport([]))
-        let result = try await client.authorCandidatesPage(nextURL: staleURL)
-        let next = try XCTUnwrap(result.nextURL)
-        let query = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
-        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1250000 TO 1499999]") == true)
-        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+        await XCTAssertThrowsLatticeLensError(
+            { try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1) },
+            expected: .incompleteAuthorPartition(lowerBound: 1_000_000, upperBound: 1_249_999)
+        )
     }
 
-    func testAuthorCandidatePaginationRecognizesMixedPercentAndPlusEncoding() async throws {
-        // A hand-copied checkpoint can contain a mixture of proxy-style
-        // `%20` and form-style `+` spaces.  It must still advance from the
-        // second control-number partition without issuing the invalid page-41
-        // request again.
+    func testAuthorCandidatePaginationRecognizesMixedEncodingBeforeFailingClosed() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR+arxiv_categories%3Ahep-th%29%20AND+control_number%3A%5B1000000%20TO+1249999%5D&size=250&page=41"))
         let client = InspireClient(transport: SequentialTransport([]))
-        let result = try await client.authorCandidatesPage(nextURL: staleURL)
-        let query = URLComponents(url: try XCTUnwrap(result.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
-        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1250000 TO 1499999]") == true)
-        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+        await XCTAssertThrowsLatticeLensError(
+            { try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1) },
+            expected: .incompleteAuthorPartition(lowerBound: 1_000_000, upperBound: 1_249_999)
+        )
     }
 
     func testAuthorCandidatePaginationRecognizesDoubleEncodedCheckpoint() async throws {
         let staleURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%2528arxiv_categories%253Ahep-lat%2520OR%2520arxiv_categories%253Ahep-th%2529%2520AND%2520control_number%253A%255B1000000%2520TO%25201249999%255D&size=250&page=41"))
         let client = InspireClient(transport: SequentialTransport([]))
-        let result = try await client.authorCandidatesPage(nextURL: staleURL)
-        let query = URLComponents(url: try XCTUnwrap(result.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
-        XCTAssertTrue(query.first(where: { $0.name == "q" })?.value?.contains("control_number:[1250000 TO 1499999]") == true)
-        XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "1")
+        await XCTAssertThrowsLatticeLensError(
+            { try await client.authorCandidatesPage(nextURL: staleURL, categories: SupportedArxivCategory.legacyV1) },
+            expected: .incompleteAuthorPartition(lowerBound: 1_000_000, upperBound: 1_249_999)
+        )
     }
 
     func testPaperSyncPageDiffUsesOnlyCurrentPageRows() async throws {
@@ -811,7 +1039,8 @@ final class CoreContractTests: XCTestCase {
         """.utf8)
         let client = InspireClient(transport: SequentialTransport([payload]))
         let current = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th%29%20AND%20control_number%3A%5B1000000%20TO%201249999%5D&size=250&page=2"))
-        let result = try await client.authorCandidatesPage(nextURL: current)
+        let result = try await client.authorCandidatesPage(nextURL: current,
+                                                           categories: SupportedArxivCategory.legacyV1)
         let items = URLComponents(url: try XCTUnwrap(result.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
         XCTAssertTrue(items.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1249999]") == true)
         XCTAssertEqual(items.first(where: { $0.name == "page" })?.value, "3")
@@ -853,7 +1082,10 @@ final class CoreContractTests: XCTestCase {
             .init(data: recovered, statusCode: 200, headers: nil)
         ])
         let client = InspireClient(transport: transport, retrySleeper: { _ in })
-        let first = try await client.authorCandidatesPage(nextURL: URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th%29%20AND%20control_number%3A%5B1000000%20TO%201249999%5D&size=250&page=2")!)
+        let first = try await client.authorCandidatesPage(
+            nextURL: URL(string: "https://inspirehep.net/api/authors/?q=%28arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-th%29%20AND%20control_number%3A%5B1000000%20TO%201249999%5D&size=250&page=2")!,
+            categories: SupportedArxivCategory.legacyV1
+        )
         XCTAssertEqual(first.authors.map(\.recid), [77])
         let next = try XCTUnwrap(first.nextURL)
         let query = URLComponents(url: next, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -1339,4 +1571,20 @@ private func XCTAssertThrowsErrorAsync(
         try await expression()
         XCTFail("Expected an error but the operation succeeded", file: file, line: line)
     } catch {}
+}
+
+private func XCTAssertThrowsLatticeLensError<T>(
+    _ expression: @escaping () async throws -> T,
+    expected: LatticeLensError,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected \(expected), but the operation succeeded", file: file, line: line)
+    } catch let error as LatticeLensError {
+        XCTAssertEqual(error, expected, file: file, line: line)
+    } catch {
+        XCTFail("Expected \(expected), got \(error)", file: file, line: line)
+    }
 }

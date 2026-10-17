@@ -7,6 +7,28 @@ import XCTest
 /// policy objects only; they never create a network connection or read a real
 /// Keychain/library.
 final class V5FinalTests: XCTestCase {
+    func testFixtureFullTextCacheLifetimeMatchesItsStoreLifetime() {
+        let fixtureRoot = URL(fileURLWithPath: "/project-local/Reference_manager/test-root/disk-fixture",
+                              isDirectory: true)
+        let storeURL = fixtureRoot.appending(path: "LatticeLens-v11.store")
+
+        let diskCache = FullTextService.diskBackedFixtureCacheDirectory(storeURL: storeURL)
+        XCTAssertEqual(diskCache, fixtureRoot.appending(path: "FullText", directoryHint: .isDirectory))
+
+        let processLocalRoot = URL(fileURLWithPath: "/project-local/Reference_manager/test-root/cache",
+                                   isDirectory: true)
+        let firstProcessCache = FullTextService.processLocalFixtureCacheDirectory(
+            root: processLocalRoot, processIdentifier: 100
+        )
+        let secondProcessCache = FullTextService.processLocalFixtureCacheDirectory(
+            root: processLocalRoot, processIdentifier: 101
+        )
+        XCTAssertNotEqual(firstProcessCache, secondProcessCache,
+                          "ordinary process-local fixtures must remain isolated by process")
+        XCTAssertTrue(firstProcessCache.path.hasPrefix(processLocalRoot.path + "/"))
+        XCTAssertTrue(secondProcessCache.path.hasPrefix(processLocalRoot.path + "/"))
+    }
+
     func testLocalOpenAICompatibleProfileIsDefaultAndKeyOptional() throws {
         let settings = LLMSettings()
         XCTAssertEqual(settings.activeProvider, .localOpenAICompatible)
@@ -222,6 +244,149 @@ final class V5FinalTests: XCTestCase {
         XCTAssertEqual(LLMSettings(terminology: terms).terminology.count, AppFixtureLargeData.terminologyCount)
     }
 
+    @MainActor
+    func testDiskRelaunchFormulaFixturePersistsCompleteSegmentProofAcrossV12Reopen() async throws {
+        let root = try makeProjectLocalTestDirectory(prefix: "g06-formula-proof")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storeURL = root.appendingPathComponent("Library-v12.store")
+        let schema = Schema(versionedSchema: LatticeLensSchemaV12.self)
+        let configuration = ModelConfiguration(schema: schema, url: storeURL)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let checkpoint = try AppFixtureLargeData.formulaRelaunchCheckpoint(now: now)
+        let equationID = "fixture-equation-1"
+
+        do {
+            let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV12.self,
+                                               configurations: configuration)
+            let repository = V10FormulaJobStore(modelContainer: container)
+            try await repository.saveFormulaJob(checkpoint)
+            let storedValue = try await repository.formulaJob(id: checkpoint.job.jobID)
+            let stored = try XCTUnwrap(storedValue)
+            let claim = try XCTUnwrap(stored.completedClaimsByBatch[0]?.first)
+            let segment = try XCTUnwrap(stored.derivationSegmentsByEquation?[equationID])
+            XCTAssertTrue(segment.isComplete)
+            XCTAssertFalse(segment.completedSteps.isEmpty)
+            XCTAssertEqual(claim.formulaDerivationSteps, segment.completedSteps)
+            XCTAssertEqual(claim.conclusionZH, segment.conclusionZH)
+            XCTAssertEqual(claim.derivationSegmentProvenanceHash, try segment.provenanceHash())
+        }
+
+        let reopenedContainer = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV12.self,
+                                                   configurations: configuration)
+        let reopenedRepository = V10FormulaJobStore(modelContainer: reopenedContainer)
+        let reopenedValue = try await reopenedRepository.formulaJob(id: checkpoint.job.jobID)
+        let reopened = try XCTUnwrap(reopenedValue)
+        let reopenedClaim = try XCTUnwrap(reopened.completedClaimsByBatch[0]?.first)
+        let reopenedSegment = try XCTUnwrap(reopened.derivationSegmentsByEquation?[equationID])
+        XCTAssertTrue(reopenedSegment.isComplete)
+        XCTAssertEqual(reopenedClaim.formulaDerivationSteps, reopenedSegment.completedSteps)
+        XCTAssertEqual(reopenedClaim.derivationSegmentProvenanceHash, try reopenedSegment.provenanceHash())
+    }
+
+    @MainActor
+    func testDiskBackedLargeFixtureSeedCompletesWithinUIReadinessBudgetAndReopens() async throws {
+        let root = try makeProjectLocalTestDirectory(prefix: "g06-disk-seed")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storeURL = root.appendingPathComponent("LatticeLens-v11.store")
+        let schema = Schema(versionedSchema: LatticeLensSchemaV11.self)
+        let configuration = ModelConfiguration(schema: schema, url: storeURL)
+        let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let clock = ContinuousClock()
+
+        do {
+            let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV11.self,
+                                               configurations: configuration)
+            try V8TypedStoreCodec.materialize(LibrarySnapshot(schemaVersion: 8, v3SchemaVersion: 3),
+                                              in: container.mainContext, sourceSchemaVersion: 8)
+            try V9TypedSearchIndex.rebuild(in: container.mainContext, at: fixedNow)
+            let store = V8TypedLibraryStore(modelContainer: container)
+            let startedAt = clock.now
+            try await AppFixtureLargeData.seed(into: store, now: fixedNow)
+            let elapsed = startedAt.duration(to: clock.now)
+            let elapsedMilliseconds = Double(elapsed.components.seconds) * 1_000 +
+                Double(elapsed.components.attoseconds) / 1_000_000_000_000_000
+            print("G06_DISK_FIXTURE_SEED elapsed_ms=\(String(format: "%.3f", elapsedMilliseconds))")
+            XCTAssertLessThan(elapsedMilliseconds, 90_000,
+                              "cold disk-backed seed must finish inside the existing 90-second UI readiness budget")
+
+            let seeded = await store.snapshot()
+            XCTAssertNil(seeded.readErrorMessage)
+            XCTAssertTrue(AppFixtureLargeData.isCompleteFixture(seeded))
+            XCTAssertEqual(seeded.authors.count, AppFixtureLargeData.authorCount)
+            XCTAssertEqual(seeded.papers.count, AppFixtureLargeData.paperCount)
+            XCTAssertEqual(seeded.paperAuthorLinks.count, AppFixtureLargeData.paperCount)
+            func categoryKey<C: Collection>(_ categories: C) -> String where C.Element == String {
+                categories.sorted().joined(separator: "|")
+            }
+            let authorCategoryCounts = Dictionary(
+                grouping: seeded.authors.values.filter { !$0.isSelf },
+                by: { categoryKey($0.arxivCategories) }
+            ).mapValues { $0.count }
+            let paperCategoryCounts = Dictionary(
+                grouping: seeded.papers.values,
+                by: { categoryKey($0.arxivCategories) }
+            ).mapValues { $0.count }
+            XCTAssertEqual(authorCategoryCounts, [
+                "hep-lat": 60, "hep-ph": 60, "hep-lat|hep-ph": 60,
+                "hep-th": 60, "hep-ph|hep-th": 60,
+            ])
+            XCTAssertEqual(paperCategoryCounts, [
+                "hep-lat": 200, "hep-ph": 200, "hep-lat|hep-ph": 200,
+                "hep-th": 200, "hep-ph|hep-th": 200,
+            ])
+            let lastPaperResults = await store.searchPapers("Large Fixture Lattice Paper 0999", limit: 10)
+            XCTAssertEqual(lastPaperResults.map(\.literatureID), [AppFixtureLargeData.firstPaperID + 999])
+        }
+
+        let reopenedContainer = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV11.self,
+                                                   configurations: configuration)
+        let reopenedStore = V8TypedLibraryStore(modelContainer: reopenedContainer)
+        let reopened = await reopenedStore.snapshot()
+        XCTAssertTrue(AppFixtureLargeData.isCompleteFixture(reopened),
+                      "the batched seed must remain complete after a fresh SwiftData reopen")
+        XCTAssertEqual(reopened.radarEvents.count, AppFixtureLargeData.radarEventCount)
+        XCTAssertEqual(reopened.evidenceAnchors.count, AppFixtureLargeData.evidenceAnchorCount)
+        let reopenedLastPaperResults = await reopenedStore.searchPapers("Large Fixture Lattice Paper 0999", limit: 10)
+        XCTAssertEqual(reopenedLastPaperResults.map(\.literatureID), [AppFixtureLargeData.firstPaperID + 999])
+    }
+
+    @MainActor
+    func testLargeFixtureBatchSeederRefusesNonemptyTypedStoreWithoutMutation() async throws {
+        let root = try makeProjectLocalTestDirectory(prefix: "g06-nonempty-store")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let storeURL = root.appendingPathComponent("LatticeLens-v11.store")
+        let schema = Schema(versionedSchema: LatticeLensSchemaV11.self)
+        let configuration = ModelConfiguration(schema: schema, url: storeURL)
+        let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV11.self,
+                                           configurations: configuration)
+        let paper = Paper(literatureID: 7_654_321,
+                          titles: [PaperTitle(value: "Preserve existing record", source: "test")],
+                          abstracts: [], preprintDate: nil, earliestDate: nil, arxivID: nil,
+                          arxivCategories: ["hep-lat"], doi: nil, citationCount: nil,
+                          publicationStatus: nil, updated: nil, figures: [], firstSeenAt: Date(), isRead: false)
+        try V8TypedStoreCodec.materialize(LibrarySnapshot(papers: [paper.literatureID: paper],
+                                                          schemaVersion: 8, v3SchemaVersion: 3),
+                                          in: container.mainContext, sourceSchemaVersion: 8)
+        try V9TypedSearchIndex.rebuild(in: container.mainContext)
+        let store = V8TypedLibraryStore(modelContainer: container)
+
+        do {
+            try await AppFixtureLargeData.seed(into: store, now: Date(timeIntervalSince1970: 1_700_000_000))
+            XCTFail("a nonempty typed store must not be treated as a disposable fixture target")
+        } catch LatticeLensError.persistenceUnavailable(_) {
+            // The seeder fails closed before its first insert.
+        }
+
+        let after = await store.snapshot()
+        XCTAssertNil(after.readErrorMessage)
+        let preserved = try XCTUnwrap(after.papers[paper.literatureID])
+        XCTAssertEqual(preserved.displayTitle, paper.displayTitle)
+        XCTAssertEqual(preserved.arxivCategories, paper.arxivCategories)
+        XCTAssertEqual(preserved.isRead, paper.isRead)
+        XCTAssertTrue(after.authors.isEmpty)
+        XCTAssertTrue(after.radarEvents.isEmpty)
+    }
+
     /// Exercises the production OpenAI-compatible HTTP client and workflow
     /// together.  The URLProtocol is an in-process transport substitute, not
     /// the UI fixture client: it returns an OpenAI-compatible SSE payload that
@@ -267,7 +432,7 @@ final class V5FinalTests: XCTestCase {
 
         let tag = LibraryTag(id: UUID(), name: "Wilson loop", colorName: nil, createdAt: Date())
         let first = paper(101, title: "Gluon helicity from lattice QCD")
-        let second = paper(202, title: "Hadron structure fixture")
+        let second = paper(202, title: "Hadron structure in lattice QCD")
         let snapshot = LibrarySnapshot(papers: [first.literatureID: first, second.literatureID: second],
                                        tags: [tag.id: tag],
                                        paperTags: [PaperTagLink(paperID: second.literatureID, tagID: tag.id)])
@@ -285,11 +450,28 @@ final class V5FinalTests: XCTestCase {
         let wilsonResults = await store.searchPapers("wil", limit: 10)
         XCTAssertEqual(gluonResults.map(\.literatureID), [first.literatureID])
         XCTAssertEqual(wilsonResults.map(\.literatureID), [second.literatureID])
+        let sharedPaperTermsBeforeNoteEdit = await store.searchPapers("qcd", limit: 10)
+        XCTAssertEqual(Set(sharedPaperTermsBeforeNoteEdit.map(\.literatureID)), Set([first.literatureID, second.literatureID]))
 
-        try await store.applyReferenceMutation(.upsertNote(UserNote(id: UUID(), paperID: second.literatureID,
+        let noteID = UUID()
+        try await store.applyReferenceMutation(.upsertNote(UserNote(id: noteID, paperID: second.literatureID,
                                                                       body: "renormalization cache", createdAt: Date(), updatedAt: Date())))
         let noteResults = await store.searchPapers("renorm", limit: 10)
         XCTAssertEqual(noteResults.map(\.literatureID), [second.literatureID])
+
+        try await store.applyReferenceMutation(.upsertNote(UserNote(id: noteID, paperID: second.literatureID,
+                                                                      body: "workflow archive", createdAt: Date(), updatedAt: Date())))
+        let removedNoteTermResults = await store.searchPapers("renorm", limit: 10)
+        let updatedNoteTermResults = await store.searchPapers("workflow", limit: 10)
+        let sharedPaperTermResults = await store.searchPapers("qcd", limit: 10)
+        XCTAssertTrue(removedNoteTermResults.isEmpty, "note replacement must retire only the old note-specific search token")
+        XCTAssertEqual(updatedNoteTermResults.map(\.literatureID), [second.literatureID])
+        XCTAssertEqual(Set(sharedPaperTermResults.map(\.literatureID)), Set([first.literatureID, second.literatureID]),
+                       "unchanged common paper postings must survive a note-only edit")
+
+        try await store.applyReferenceMutation(.deleteNote(noteID))
+        let deletedNoteTermResults = await store.searchPapers("workflow", limit: 10)
+        XCTAssertTrue(deletedNoteTermResults.isEmpty, "deleting a note must remove its last note-specific token")
 
         var replacement = first
         replacement.titles = [PaperTitle(value: "Quark momentum fraction", source: "fixture")]

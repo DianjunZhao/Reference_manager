@@ -39,6 +39,22 @@ struct MainWorkspaceView: View {
                                 .accessibilityLabel("大数据夹具已就绪")
                                 .accessibilityValue("ready")
                         }
+                        if let fixtureRoot = viewModel.diskBackedFixtureStoreRoot {
+                            Text("隔离磁盘夹具")
+                                .foregroundStyle(.orange)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityIdentifier("diskBackedFixtureModeIndicator")
+                                .accessibilityLabel("隔离磁盘夹具")
+                                .accessibilityValue(fixtureRoot)
+                        }
+                        if let receipt = viewModel.fixtureFormulaRelaunchReceipt {
+                            Text("公式 checkpoint 夹具")
+                                .foregroundStyle(.orange)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityIdentifier("formulaJobRelaunchReceipt")
+                                .accessibilityLabel("公式 checkpoint 夹具")
+                                .accessibilityValue(receipt)
+                        }
                     }
                     Button {
                         viewModel.presentSyncCenter = true
@@ -314,7 +330,7 @@ private struct AuthorSidebar: View {
         // never reloaded as the user types, so search cannot start a request,
         // reset a selection, or briefly leave an out-of-date A-Z row visible.
         let ordinary = viewModel.authors.filter {
-            !$0.isSelf && !$0.isTracked && $0.matches(search: localAuthorSearch)
+            !$0.isSelf && !$0.isTracked && matchesCategory($0) && $0.matches(search: localAuthorSearch)
         }
         let grouped = Dictionary(grouping: ordinary, by: \Author.sectionKey)
         return grouped.keys.sorted().map { key in
@@ -327,7 +343,7 @@ private struct AuthorSidebar: View {
 
     private var trackedAuthors: [Author] {
         viewModel.authors
-            .filter { !$0.isSelf && $0.isTracked && $0.matches(search: localAuthorSearch) }
+            .filter { !$0.isSelf && $0.isTracked && matchesCategory($0) && $0.matches(search: localAuthorSearch) }
             .sorted {
                 if $0.stableSortKey != $1.stableSortKey { return $0.stableSortKey < $1.stableSortKey }
                 return $0.preferredName.localizedStandardCompare($1.preferredName) == .orderedAscending
@@ -360,6 +376,19 @@ private struct AuthorSidebar: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
+
+            Picker("作者分类", selection: $viewModel.authorCategoryFacet) {
+                ForEach(CategoryFacet.allCases) { facet in
+                    Text(facet.displayNameZH)
+                        .tag(facet)
+                        .accessibilityIdentifier("authorCategoryFacetOption-\(facet.id)")
+                }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("authorCategoryFacet")
+            .accessibilityLabel("作者分类筛选")
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
 
             if let match = singleOrdinarySearchMatch {
                 // Keep the native List row below as the rendered search
@@ -399,16 +428,16 @@ private struct AuthorSidebar: View {
                     }
                     if !trackedAuthors.isEmpty {
                         Section("置顶作者") {
-                            ForEach(trackedAuthors) { AuthorRow(author: $0).tag($0.recid).id($0.recid) }
+                            ForEach(trackedAuthors) { author in authorListRow(author) }
                         }
                     }
                     ForEach(authorSections.filter { $0.0 != "#" }, id: \.0) { section, authors in
                         Section(section) {
-                            ForEach(authors) { AuthorRow(author: $0).tag($0.recid).id($0.recid) }
+                            ForEach(authors) { author in authorListRow(author) }
                         }
                     }
                     if let hashes = authorSections.first(where: { $0.0 == "#" })?.1, !hashes.isEmpty {
-                        Section("#") { ForEach(hashes) { AuthorRow(author: $0).tag($0.recid).id($0.recid) } }
+                        Section("#") { ForEach(hashes) { author in authorListRow(author) } }
                     }
                 }
                 .scrollIndicators(.visible)
@@ -432,6 +461,18 @@ private struct AuthorSidebar: View {
                     } else { Text("作者索引尚未构建") }
                     Text(viewModel.authorIndexStatus.message)
                         .accessibilityIdentifier("authorIndexStatus")
+                    if let profileMessage = viewModel.categoryProfileStatusMessage {
+                        Text(profileMessage)
+                            .accessibilityIdentifier("categoryProfileStatus")
+                        if !viewModel.isCategoryProfileReady,
+                           viewModel.categoryProfilePersistenceError != nil {
+                            Button("重试加载分类设置") { viewModel.retryCategoryProfileLoad() }
+                                .buttonStyle(.link)
+                        } else if viewModel.categoryProfilePersistenceError != nil {
+                            Button("重试保存分类设置") { viewModel.retryCategoryProfileSave() }
+                                .buttonStyle(.link)
+                        }
+                    }
                     if !localAuthorSearch.isEmpty {
                         // This uses the same dedicated AX-element pattern as
                         // the paper search provenance below.  Without the
@@ -450,9 +491,24 @@ private struct AuthorSidebar: View {
                             .buttonStyle(.link)
                             .accessibilityIdentifier("clearAuthorSearch")
                     }
-                    Button("构建 hep-lat / hep-th 作者索引") { viewModel.buildAuthorIndex() }
+                    Button("构建 \(viewModel.categoryProfile.rawValues.joined(separator: " / ")) 作者索引") { viewModel.buildAuthorIndex() }
                         .buttonStyle(.link)
                         .accessibilityIdentifier("buildAuthorIndex")
+                        .disabled(!viewModel.canBuildAuthorIndex)
+                    Menu("作者分类设置") {
+                        ForEach(SupportedArxivCategory.allCases, id: \.self) { category in
+                            Toggle(isOn: Binding(
+                                get: { viewModel.categoryProfile.categories.contains(category) },
+                                set: { viewModel.setCategoryEnabled(category, enabled: $0) }
+                            )) {
+                                Text(category.displayNameZH)
+                            }
+                            .accessibilityIdentifier("authorCategoryEnabled.\(category.rawValue)")
+                        }
+                    }
+                    .accessibilityIdentifier("authorCategorySettings")
+                    .disabled(!viewModel.isCategoryProfileReady || viewModel.isCategoryProfileSavePending ||
+                              viewModel.categoryProfilePersistenceError != nil)
                     if viewModel.isAuthorIndexRunning {
                         Button("暂停索引") { viewModel.pauseAuthorIndex() }
                             .buttonStyle(.link)
@@ -464,6 +520,7 @@ private struct AuthorSidebar: View {
                         Button("继续索引") { viewModel.buildAuthorIndex() }
                             .buttonStyle(.link)
                             .accessibilityIdentifier("resumeAuthorIndex")
+                            .disabled(!viewModel.canBuildAuthorIndex)
                     }
                 }
                 .font(.caption)
@@ -485,6 +542,22 @@ private struct AuthorSidebar: View {
             viewModel.selectAuthor(recid)
         }
     }
+
+    private func matchesCategory(_ author: Author) -> Bool {
+        guard !author.isSelf else { return true }
+        // Facets only change this projection; they never rewrite durable
+        // author state. In particular, a qualified author from a disabled
+        // historical category must not leak into the enabled-category union.
+        return viewModel.authorCategoryFacet.matches(categories: author.arxivCategories,
+                                                     enabled: viewModel.categoryProfile.categories)
+    }
+
+    @ViewBuilder
+    private func authorListRow(_ author: Author) -> some View {
+        AuthorRow(author: author)
+            .tag(author.recid)
+            .id(author.recid)
+    }
 }
 
 private struct SyncCenterView: View {
@@ -504,12 +577,13 @@ private struct SyncCenterView: View {
             // moving the only close action out of view.
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
-                    SyncJobRow(title: "hep-lat / hep-th 作者索引", status: viewModel.authorIndexStatus.message) {
+                    SyncJobRow(title: "\(viewModel.categoryProfile.rawValues.joined(separator: " / ")) 作者索引", status: viewModel.authorIndexStatus.message) {
                         if viewModel.isAuthorIndexRunning {
                             Button("暂停") { viewModel.pauseAuthorIndex() }
                             Button("取消", role: .destructive) { viewModel.cancelAuthorIndex() }
                         } else {
                             Button("继续") { viewModel.buildAuthorIndex() }
+                                .disabled(!viewModel.canBuildAuthorIndex)
                         }
                     }
                     SyncJobRow(title: "当前作者文献", status: viewModel.syncStatus.message) {
@@ -578,6 +652,18 @@ private struct AuthorRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(author.preferredName)
                 if author.isSelf { Text("recid \(author.recid)").font(.caption2).foregroundStyle(.secondary) }
+                if !author.supportedCategoryMemberships.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(author.supportedCategoryMemberships.sorted { $0.rawValue < $1.rawValue }, id: \.rawValue) { category in
+                            Text(category.rawValue)
+                                .font(.caption2.monospaced())
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(.quaternary, in: Capsule())
+                                .accessibilityLabel(category.rawValue)
+                        }
+                    }
+                }
             }
             Spacer()
             if let h = author.hIndex {
@@ -835,7 +921,9 @@ private struct PaperRow: View {
             }
             HStack(spacing: 6) {
                 if let arxiv = paper.arxivID { Text("arXiv:\(arxiv)") }
-                if let category = paper.arxivCategories.first { Text(category) }
+                ForEach(SupportedArxivCategory.canonical(paper.arxivCategories.compactMap(SupportedArxivCategory.init)), id: \.rawValue) { category in
+                    Text(category.rawValue)
+                }
                 if let publicationYear = paper.publicationYear { Text("发表 \(publicationYear)") }
                 if let count = paper.citationCount { Text("引用 \(count)") }
             }

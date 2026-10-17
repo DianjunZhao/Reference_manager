@@ -137,6 +137,15 @@ protocol LibraryStoring: Sendable {
     func snapshotResult() async -> LibrarySnapshotReadResult
 }
 
+/// Durable repository for the source-bound numbered-equation inventory. The
+/// V10 store persists the inventory header and each equation under stable IDs;
+/// compatibility stores may omit this capability without claiming typed
+/// inventory durability.
+protocol FormulaInventoryStoring: Sendable {
+    func saveFormulaInventory(_ inventory: FormulaInventory, paperID: Int) async throws
+    func formulaInventory(paperID: Int, documentHash: String) async throws -> FormulaInventory?
+}
+
 struct FullTextDeletionPlan: Sendable, Equatable {
     let documentID: String
     let blobHash: String?
@@ -690,12 +699,15 @@ extension LibrarySnapshot {
 actor InMemoryLibraryStore: LibraryStoring {
     private var value = LibrarySnapshot()
     private var snapshotReads = 0
+    private var evidenceInsightSaveFailuresRemaining = 0
 
     func snapshot() -> LibrarySnapshot { snapshotReads += 1; return value }
     /// Test instrumentation only.  Production V8 reads use typed projections;
     /// this makes the same first-paint invariant observable in host-free tests.
     func snapshotReadCount() -> Int { snapshotReads }
     func resetSnapshotReadCount() { snapshotReads = 0 }
+    /// Test instrumentation for a one-shot final artifact publication failure.
+    func failNextEvidenceInsightSave() { evidenceInsightSaveFailuresRemaining += 1 }
     func snapshotResult() -> LibrarySnapshotReadResult {
         LibrarySnapshotReadResult(state: .ready, snapshot: value, message: nil)
     }
@@ -831,7 +843,13 @@ actor InMemoryLibraryStore: LibraryStoring {
     func saveFullText(document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor]) throws { value.storeFullText(document: document, chunks: chunks, anchors: anchors) }
     func saveEvidenceAnchors(_ anchors: [EvidenceAnchor]) throws { value.storeEvidenceAnchors(anchors) }
     func deleteFullText(documentID: String) throws { value.deleteFullText(documentID: documentID) }
-    func saveEvidenceInsight(_ artifact: EvidenceInsightArtifact) throws { value.evidenceInsights[artifact.cacheKey] = artifact }
+    func saveEvidenceInsight(_ artifact: EvidenceInsightArtifact) throws {
+        if evidenceInsightSaveFailuresRemaining > 0 {
+            evidenceInsightSaveFailuresRemaining -= 1
+            throw LatticeLensError.persistenceUnavailable("synthetic one-shot evidence artifact write failure")
+        }
+        value.evidenceInsights[artifact.cacheKey] = artifact
+    }
     func saveVisionArtifact(_ artifact: VisionArtifact) throws { value.visionArtifacts[artifact.cacheKey] = artifact }
     func saveBibTeXRecord(_ record: BibTeXRecord) throws { value.bibTeXRecords[record.paperID] = record }
     func commitAcceptedImport(paper: Paper, conflict: V3ImportConflict) throws {

@@ -173,12 +173,18 @@ struct InspireClient: Sendable {
         return try InspireMapper.author(from: hit)
     }
 
-    func authorCandidatesPage(nextURL: URL? = nil) async throws -> (authors: [Author], nextURL: URL?, total: Int) {
+    /// Fetch one bounded author page for the supplied category set. Fresh 2.0
+    /// callers default to hep-lat + hep-ph; 1.0 checkpoints must explicitly
+    /// pass the preserved legacy hep-lat + hep-th profile.
+    func authorCandidatesPage(
+        nextURL: URL? = nil,
+        categories: Set<SupportedArxivCategory> = SupportedArxivCategory.defaultEnabled
+    ) async throws -> (authors: [Author], nextURL: URL?, total: Int) {
         let url: URL
         if let nextURL {
             url = try validatedNextURL(nextURL, expectedPath: "/api/authors")
         } else {
-            url = try authorCandidateURL(partition: 0, page: 1)
+            url = try authorCandidateURL(partition: 0, page: 1, categories: categories)
         }
         // Keep the URL actually accepted by the service.  A 400 recovery can
         // downgrade `size=250` to `size=100`; pagination must continue with
@@ -195,8 +201,11 @@ struct InspireClient: Sendable {
         // be misclassified as an unpartitioned query and the next request is
         // sent to INSPIRE unchanged (HTTP 400).
         let decodedQuery = decodeAuthorQuery(queryValue)
-        let isPartitioned = decodedQuery.localizedCaseInsensitiveContains("control_number")
-        let partition = authorCandidatePartition(for: decodedQuery)
+        let hasControlNumberClause = decodedQuery.localizedCaseInsensitiveContains("control_number")
+        let matchedPartition = authorCandidatePartition(for: decodedQuery)
+        guard !hasControlNumberClause || matchedPartition != nil else { throw LatticeLensError.malformedPayload }
+        let isPartitioned = matchedPartition != nil
+        let partition = matchedPartition ?? 0
 
         // A checkpoint written by an older build may already contain the
         // server's page-41 URL.  INSPIRE rejects that URL with HTTP 400 before
@@ -205,13 +214,22 @@ struct InspireClient: Sendable {
         // state; this guard is for interrupted upgrades and hand-copied
         // checkpoints.
         if pageNumber > 40 {
-            if isPartitioned, partition + 1 < Self.authorCandidatePartitions.count {
-                return ([], try authorCandidateURL(partition: partition + 1, page: 1), 0)
+            if isPartitioned { throw incompleteAuthorPartitionError(partition) }
+            return ([], try authorCandidateURL(partition: 0, page: 1, categories: categories), 0)
+        }
+        if isPartitioned {
+            let actualQuery = normalizedAuthorCandidateQuery(decodedQuery)
+            let expectedQueries = try [true, false].map { grouped in
+                normalizedAuthorCandidateQuery(try Self.authorCandidateQueryValue(
+                    partition: partition, categories: categories, grouped: grouped))
             }
-            if !isPartitioned {
-                return ([], try authorCandidateURL(partition: 0, page: 1), 0)
+            guard expectedQueries.contains(actualQuery) else {
+                // A durable page URL is part of the category generation, not
+                // an independent transport hint. Sending a stale hep-lat /
+                // hep-th URL while the caller owns hep-lat / hep-ph would
+                // contaminate the new generation with the wrong directory.
+                throw LatticeLensError.malformedPayload
             }
-            return ([], nil, 0)
         }
         let responseData: Data
         do {
@@ -234,9 +252,9 @@ struct InspireClient: Sendable {
             // caller persist a paused checkpoint if the service still
             // rejects all canonical forms.
             let variants = [
-                try authorCandidateURL(partition: partition, page: pageNumber, size: 100, grouped: true),
-                try authorCandidateURL(partition: partition, page: pageNumber, size: 250, grouped: false),
-                try authorCandidateURL(partition: partition, page: pageNumber, size: 100, grouped: false)
+                try authorCandidateURL(partition: partition, page: pageNumber, size: 100, grouped: true, categories: categories),
+                try authorCandidateURL(partition: partition, page: pageNumber, size: 250, grouped: false, categories: categories),
+                try authorCandidateURL(partition: partition, page: pageNumber, size: 100, grouped: false, categories: categories)
             ]
             var recovered: Data?
             var recoveredURL: URL?
@@ -286,6 +304,12 @@ struct InspireClient: Sendable {
         let advertisedNextComponents = advertisedNextURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
         let advertisedNextSize = advertisedNextComponents?.queryItems?
             .first(where: { $0.name == "size" })?.value.flatMap(Int.init)
+        // INSPIRE only exposes the first 10,000 hits through page offsets. A
+        // control-number partition whose authoritative total is larger cannot
+        // be completed by advancing to the next disjoint range.
+        if isPartitioned, responsePage.hits.total > Self.maximumAuthorCandidateResultsPerPartition {
+            throw incompleteAuthorPartitionError(partition)
+        }
         let hasMoreByTotal: Bool
         if let requestedPageSize, let advertisedNextSize, requestedPageSize == advertisedNextSize {
             hasMoreByTotal = responsePage.hits.total > pageNumber * pageSize
@@ -306,10 +330,13 @@ struct InspireClient: Sendable {
             // while silently dropping later hep-th ranges.  The partition and
             // page are already locally proven, so construct the next request
             // from that immutable state instead.
-            if hasMoreByTotal, !exhaustedWindow, !nextBeyondWindow, pageNumber < 40 {
-                next = try authorCandidateURL(partition: partition, page: pageNumber + 1, size: pageSize)
+            if hasMoreByTotal && (exhaustedWindow || nextBeyondWindow || pageNumber >= 40) {
+                throw incompleteAuthorPartitionError(partition)
+            }
+            if hasMoreByTotal {
+                next = try authorCandidateURL(partition: partition, page: pageNumber + 1, size: pageSize, categories: categories)
             } else if partition + 1 < Self.authorCandidatePartitions.count {
-                next = try authorCandidateURL(partition: partition + 1, page: 1)
+                next = try authorCandidateURL(partition: partition + 1, page: 1, categories: categories)
             } else {
                 next = nil
             }
@@ -323,31 +350,49 @@ struct InspireClient: Sendable {
         return (authors, next, responsePage.hits.total)
     }
 
-    /// Disjoint INSPIRE author control-number ranges.  The largest range is
-    /// intentionally below the service's 10,000-result offset ceiling; the
-    /// final range is kept explicit so a future increase in record IDs cannot
-    /// silently reintroduce an unbounded page walk.
-    private static let authorCandidatePartitions: [(Int, Int)] = [
+    /// Disjoint INSPIRE author control-number ranges. The final range is open
+    /// ended so new recids cannot disappear beyond a guessed product ceiling.
+    /// Every range is still capped by the service's 10,000-result page window;
+    /// a dense range fails closed instead of being mistaken for complete.
+    private static let maximumAuthorCandidateResultsPerPartition = 10_000
+    private static let authorCandidatePartitions: [(lowerBound: Int, upperBound: Int?)] = [
         (0, 999_999), (1_000_000, 1_249_999), (1_250_000, 1_499_999),
         (1_500_000, 1_749_999), (1_750_000, 1_999_999),
-        (2_000_000, 2_999_999), (3_000_000, 3_999_999)
+        (2_000_000, 2_999_999), (3_000_000, nil)
     ]
 
-    private func authorCandidateURL(partition: Int, page: Int, size: Int = 250, grouped: Bool = true) throws -> URL {
-        guard Self.authorCandidatePartitions.indices.contains(partition) else { throw LatticeLensError.paginationLimitExceeded }
-        let range = Self.authorCandidatePartitions[partition]
-        let categoryQuery = grouped
-            ? "(arxiv_categories:hep-lat OR arxiv_categories:hep-th)"
-            : "(arxiv_categories:hep-lat AND control_number:[\(range.0) TO \(range.1)]) OR (arxiv_categories:hep-th AND control_number:[\(range.0) TO \(range.1)])"
-        let query = grouped
-            ? "\(categoryQuery) AND control_number:[\(range.0) TO \(range.1)]"
-            : categoryQuery
+    private func authorCandidateURL(partition: Int, page: Int, size: Int = 250, grouped: Bool = true,
+                                    categories: Set<SupportedArxivCategory> = SupportedArxivCategory.defaultEnabled) throws -> URL {
+        let query = try Self.authorCandidateQueryValue(partition: partition, categories: categories, grouped: grouped)
         return try makeURL(path: "/api/authors", query: [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "size", value: String(max(1, min(size, 250)))),
             URLQueryItem(name: "page", value: String(max(1, page))),
             URLQueryItem(name: "fields", value: Self.authorCandidateFields)
         ])
+    }
+
+    private static func authorCandidateQueryValue(partition: Int,
+                                                  categories: Set<SupportedArxivCategory>,
+                                                  grouped: Bool) throws -> String {
+        guard Self.authorCandidatePartitions.indices.contains(partition) else { throw LatticeLensError.paginationLimitExceeded }
+        let range = Self.authorCandidatePartitions[partition]
+        let upperBound = range.upperBound.map { String($0) } ?? "*"
+        let controlNumberRange = "control_number:[\(range.lowerBound) TO \(upperBound)]"
+        let baseQuery = ArxivCategoryQueryBuilder.query(categories: categories)
+        let categoryTerms = SupportedArxivCategory.canonical(categories).map { category in
+            "arxiv_categories:\(category.rawValue)"
+        }
+        let categoryQuery = grouped
+            ? "(\(baseQuery))"
+            : categoryTerms.map { "(\($0) AND \(controlNumberRange))" }.joined(separator: " OR ")
+        return grouped
+            ? "\(categoryQuery) AND \(controlNumberRange)"
+            : categoryQuery
+    }
+
+    private func normalizedAuthorCandidateQuery(_ query: String) -> String {
+        query.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     /// A 400 from the author endpoint is usually a stale pagination URL, but
@@ -363,8 +408,7 @@ struct InspireClient: Sendable {
         }
     }
 
-    private func authorCandidatePartition(for query: String?) -> Int {
-        guard let query else { return 0 }
+    private func authorCandidatePartition(for query: String) -> Int? {
         // URLComponents keeps `+` as a literal plus in query-item values
         // (rather than decoding it to a space).  INSPIRE's pagination links
         // commonly mix `+` and `%20` for the spaces around `OR`, `AND`, and
@@ -375,14 +419,17 @@ struct InspireClient: Sendable {
             .split { $0 == " " || $0 == "\t" || $0 == "\n" || $0 == "\r" }
             .joined(separator: " ")
         for (index, range) in Self.authorCandidatePartitions.enumerated() {
-            if normalizedQuery.contains("control_number:[\(range.0) TO \(range.1)]") {
+            let upperBound = range.upperBound.map { String($0) } ?? "*"
+            if normalizedQuery.contains("control_number:[\(range.lowerBound) TO \(upperBound)]") {
                 return index
             }
         }
-        // A pre-partition checkpoint has no control-number clause.  Treat it
-        // as the first partition; AuthorIndexService invalidates such a
-        // checkpoint before calling us, so this is only a defensive bound.
-        return 0
+        return nil
+    }
+
+    private func incompleteAuthorPartitionError(_ index: Int) -> LatticeLensError {
+        let range = Self.authorCandidatePartitions[index]
+        return .incompleteAuthorPartition(lowerBound: range.lowerBound, upperBound: range.upperBound)
     }
 
     /// Bounded decoding for persisted INSPIRE query values.  Four passes are

@@ -148,6 +148,49 @@ struct V4LocalSearchIndex: Codable, Sendable {
         }
     }
 
+    /// Reconstruct field-level provenance for papers already selected by the
+    /// bounded V9 token index.  The V9 posting rows intentionally identify
+    /// matching papers, not matching text fields; this projection names
+    /// bibliographic fields only when their stored text actually matches and
+    /// leaves note/tag/collection-only matches explicitly at the local-index
+    /// level instead of guessing a source.
+    static func bibliographicHits(query: String, papers: [Paper]) -> [V4SearchHit] {
+        let queryTerms = Set(V4SearchTokenTerms.make(query))
+        guard !queryTerms.isEmpty else { return [] }
+
+        return papers.flatMap { paper -> [V4SearchHit] in
+            let fields: [(name: String, text: String)] = [
+                ("title", paper.displayTitle),
+                ("abstract", paper.preferredAbstract ?? ""),
+                ("arxiv", paper.arxivID ?? ""),
+                ("doi", paper.doi ?? "")
+            ] + paper.contributors.map { ("author", $0.fullName) }
+            let matches = fields.enumerated().filter { _, field in
+                let fieldTerms = Set(V4SearchTokenTerms.make(field.text))
+                return queryTerms.allSatisfy { queryTerm in
+                    fieldTerms.contains { $0 == queryTerm || $0.hasPrefix(queryTerm) }
+                }
+            }
+            guard !matches.isEmpty else {
+                return [V4SearchHit(id: "local-index:\(paper.literatureID)", paperID: paper.literatureID,
+                                    title: paper.displayTitle, source: "本地索引", field: "indexed",
+                                    snippet: "", page: nil, quote: nil, score: 0)]
+            }
+            return matches.map { index, field in
+                let score = field.name == "title" ? 100 : (field.name == "abstract" ? 80 : 60)
+                return V4SearchHit(id: "\(field.name):\(paper.literatureID):\(index)", paperID: paper.literatureID,
+                                   title: paper.displayTitle, source: field.name, field: field.name,
+                                   snippet: String(field.text.prefix(240)), page: nil,
+                                   quote: field.name == "abstract" ? field.text : nil, score: score)
+            }
+        }
+        .sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            if lhs.paperID != rhs.paperID { return lhs.paperID < rhs.paperID }
+            return lhs.id < rhs.id
+        }
+    }
+
     private static func matchesFacets(paper: Paper, snapshot: LibrarySnapshot, facets: Set<V4SearchFacet>) -> Bool {
         for facet in facets {
             switch facet {
@@ -335,26 +378,25 @@ struct V4AnalysisTimeouts: Sendable, Equatable {
     let firstContent: TimeInterval
     let idle: TimeInterval
     let hard: TimeInterval
+    var isValidRequestBudget: Bool {
+        [connect, firstContent, idle, hard].allSatisfy { $0.isFinite && $0 > 0 }
+    }
     /// Real providers may spend more than 30 s preparing a long paper report
     /// or pause between SSE chunks.  These finite budgets avoid false idle
     /// failures while retaining a hard upper bound and the one-request
     /// fail-closed contract.
     static let `default` = V4AnalysisTimeouts(connect: 30, firstContent: 120, idle: 120, hard: 600)
-    /// Evidence is an explicit, foreground action and its UI continuously
-    /// shows elapsed time and offers cancellation.  A long article can require
-    /// a slow provider to prefill before it sends response headers, so this
-    /// particular workflow must not manufacture a timeout in any phase.  It
-    /// ends only on a provider/network result, the local response-byte limit,
-    /// or the user's Cancel action.  The finite defaults above remain in force
-    /// for the ordinary insight and vision workflows.
-    static let evidence = V4AnalysisTimeouts(connect: .infinity, firstContent: .infinity,
-                                              idle: .infinity, hard: .infinity)
+    /// Evidence is a multi-request, user-cancellable job, not an unbounded
+    /// HTTP request. Each prose/formula request uses the same finite phase and
+    /// resource limits; the job can continue or resume across many attempts.
+    static let evidence = V4AnalysisTimeouts.default
 }
 
 /// A deadline identifies the transport phase that failed.  It deliberately
 /// does not imply a retry: re-sending an analysis request could disclose the
 /// same local source a second time and would make request accounting false.
 enum V4AnalysisDeadlineError: LocalizedError, Equatable, Sendable {
+    case invalidTimeoutConfiguration
     case connect
     case firstContent
     case idle
@@ -363,6 +405,7 @@ enum V4AnalysisDeadlineError: LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .invalidTimeoutConfiguration: "LLM request timeout configuration must be finite and greater than zero"
         case .connect: "LLM connect deadline exceeded before response headers"
         case .firstContent: "LLM first-content deadline exceeded"
         case .idle: "LLM stream idle deadline exceeded"
@@ -401,9 +444,11 @@ private actor V4AnalysisDeadlineMonitor {
             connectedAt = connectedAt ?? date
         case .waitingFirstContent:
             break
-        case .receivedFirstContent:
-            firstContentAt = firstContentAt ?? date
-            lastContentAt = date
+        case .receivedTransportActivity:
+            // Raw response bytes and SSE heartbeats are not decoded model
+            // content. They must not satisfy first-content or extend the
+            // decoded-content idle deadline.
+            break
         }
         evaluate(at: date)
         return terminalFailure == nil
@@ -432,9 +477,8 @@ private actor V4AnalysisDeadlineMonitor {
     func waitForFailure() async throws -> String {
         while true {
             if let error = failure() { throw error }
-            // Avoid waking every millisecond for an intentionally unbounded
-            // Evidence request.  Cancellation of this task remains immediate
-            // when either the user cancels or the provider operation resolves.
+            // Each request has finite deadlines; long formula jobs are a
+            // sequence of such requests and remain cancellable between them.
             try await Task.sleep(nanoseconds: nextWakeNanoseconds())
         }
     }
@@ -447,7 +491,7 @@ private actor V4AnalysisDeadlineMonitor {
         if connectedAt == nil, timeouts.connect.isFinite {
             deadlines.append(startedAt.addingTimeInterval(timeouts.connect))
         } else if firstContentAt == nil, timeouts.firstContent.isFinite {
-            deadlines.append(startedAt.addingTimeInterval(timeouts.firstContent))
+            deadlines.append((connectedAt ?? startedAt).addingTimeInterval(timeouts.firstContent))
         } else if let lastContentAt, timeouts.idle.isFinite {
             deadlines.append(lastContentAt.addingTimeInterval(timeouts.idle))
         }
@@ -462,11 +506,14 @@ private actor V4AnalysisDeadlineMonitor {
         guard terminalFailure == nil else { return }
         if timeouts.hard.isFinite && date >= startedAt.addingTimeInterval(timeouts.hard) {
             terminalFailure = .hard
-        } else if connectedAt == nil, date >= startedAt.addingTimeInterval(timeouts.connect) {
+        } else if connectedAt == nil, timeouts.connect.isFinite,
+                  date >= startedAt.addingTimeInterval(timeouts.connect) {
             terminalFailure = .connect
-        } else if firstContentAt == nil, date >= startedAt.addingTimeInterval(timeouts.firstContent) {
+        } else if firstContentAt == nil, timeouts.firstContent.isFinite,
+                  date >= (connectedAt ?? startedAt).addingTimeInterval(timeouts.firstContent) {
             terminalFailure = .firstContent
-        } else if let lastContentAt, date >= lastContentAt.addingTimeInterval(timeouts.idle) {
+        } else if let lastContentAt, timeouts.idle.isFinite,
+                  date >= lastContentAt.addingTimeInterval(timeouts.idle) {
             terminalFailure = .idle
         }
     }
@@ -558,6 +605,7 @@ enum V4AnalysisDeadlineEnforcer {
         operation: @escaping @Sendable (@escaping @Sendable (LLMTransportState) async -> Void,
                                         @escaping @Sendable (String) async -> Void) async throws -> String
     ) async throws -> String {
+        guard timeouts.isValidRequestBudget else { throw V4AnalysisDeadlineError.invalidTimeoutConfiguration }
         guard maximumResponseBytes > 0 else { throw V4AnalysisDeadlineError.responseTooLarge }
         let monitor = V4AnalysisDeadlineMonitor(timeouts: timeouts, maximumResponseBytes: maximumResponseBytes)
         let gateBox = V4AnalysisCompletionGateBox()

@@ -20,6 +20,10 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var evidenceInsightArtifact: EvidenceInsightArtifact?
     @Published private(set) var evidenceInsightState: InsightWorkflowState = .idle
     @Published private(set) var evidenceInsightStartedAt: Date?
+    /// A local-only preparatory state for the all-numbered-equations contract.
+    /// It is deliberately separate from provider transport status so the UI
+    /// never claims that cached ar5iv HTML is already being sent to a model.
+    @Published private(set) var numberedEquationIndexStatusMessage: String?
     @Published private(set) var visionArtifact: VisionArtifact?
     @Published private(set) var visionState: InsightWorkflowState = .idle
     @Published private(set) var visionStartedAt: Date?
@@ -59,25 +63,46 @@ final class AppViewModel: ObservableObject {
     @Published var presentFullTextPreflight = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var workbenchSnapshot = LibrarySnapshot()
+    @Published private(set) var researchBundleStatusMessage: String?
+    @Published private(set) var researchBundleCanRollback = false
     /// The large-fixture sentinel may become visible only after all fixture
     /// rows have been written and the first local projections are loaded.
     /// It is intentionally not an environment echo: UI cases use it to avoid
     /// interacting with a partially seeded list.
     @Published private(set) var isLargeFixtureReady = false
+    /// Non-nil only when the explicitly opted-in large UI fixture is backed
+    /// by a project-local disposable SwiftData store. The path is surfaced to
+    /// the fixture UI test as an isolation receipt, never used in production.
+    @Published private(set) var diskBackedFixtureStoreRoot: String?
+    /// Fixture-only receipt proving a typed formula checkpoint was reopened
+    /// from the same disk store without issuing a provider request.
+    @Published private(set) var fixtureFormulaRelaunchReceipt: String?
+    /// Durable category profile for the current library generation. A fresh
+    /// 2.0 installation uses hep-lat + hep-ph; a migrated legacy profile can
+    /// explicitly retain hep-th without deleting historical rows.
+    @Published private(set) var categoryProfile: CategoryProfile
+    @Published private(set) var isCategoryProfileReady = false
+    @Published private(set) var isCategoryProfileSavePending = false
+    @Published private(set) var categoryProfilePersistenceError: String?
+    /// View-only author facet. It never changes `categoryProfile` or a remote
+    /// checkpoint, so filtering cannot resume an incompatible job.
+    @Published var authorCategoryFacet: CategoryFacet = .allEnabled
     /// UI-local projections bridge the actor persistence round trip for the
     /// active reference record.  They are not an alternative datastore: a
     /// failed write removes the projection and reloads authoritative state.
     @Published private var favoriteStateProjections: [Int: Bool] = [:]
 
     private let store: any LibraryStoring
+    private let categoryProfileStore: (any CategoryProfileStoring)?
     private let inspireClient: InspireClient
-    private let authorIndex: AuthorIndexService
+    private var authorIndex: AuthorIndexService
     private let paperSync: PaperSyncService
     private let insightWorkflow: InsightWorkflow
     private let evidenceInsightWorkflow: EvidenceInsightWorkflow
     private let visionWorkflow: VisionWorkflow
     private let fullTextService: FullTextService
     private let referenceManager: ReferenceManagerService
+    private let researchBundleBaseStoreURL: URL?
     private let keychain: any KeychainStoring
     private let modelDiscoverer: any ModelDiscovering
     private let connectionTester: any ProviderConnectionTesting
@@ -85,6 +110,8 @@ final class AppViewModel: ObservableObject {
     private let usesFixtureDependencies: Bool
 
     private var authorIndexTask: Task<Void, Never>?
+    private var categoryProfileLoadTask: Task<Void, Never>?
+    private var categoryProfilePersistenceTask: Task<Void, Never>?
     private var authorIndexSessionID = UUID()
     private var authorIndexStopIntent: SyncCheckpointState = .cancelled
     private var paperSyncTasks: [Int: Task<Void, Never>] = [:]
@@ -130,6 +157,9 @@ final class AppViewModel: ObservableObject {
     private var pendingBibTeXExport: (paperIDs: [Int], format: V3ExportFormat, contents: String)?
     private var pendingMarkdownExport: (paperIDs: [Int], format: V3ExportFormat, contents: String)?
     private var pendingWorkbenchExport: (paperIDs: [Int], format: V3ExportFormat, contents: String)?
+    private var stagedResearchBundleStoreURL: URL?
+    private var stagedResearchBundlePDFs: V4BundlePDFStage?
+    private var stagedResearchBundleManifestHash: String?
     /// A durable index update can arrive every few hundred milliseconds.  The
     /// SQLite row is committed for every outcome, but rebuilding a large
     /// SwiftUI author sidebar at that cadence causes perceptible scrolling and
@@ -149,10 +179,43 @@ final class AppViewModel: ObservableObject {
         llmClient: (any LLMCompleting)? = nil,
         modelDiscoverer: (any ModelDiscovering)? = nil,
         connectionTester: (any ProviderConnectionTesting)? = nil,
-        useFixtureDependencies: Bool? = nil
+        useFixtureDependencies: Bool? = nil,
+        categoryProfile: CategoryProfile? = nil,
+        researchBundleBaseStoreURLForTesting: URL? = nil
     ) {
+        let initialCategoryProfile = categoryProfile ?? CategoryProfile()
         let usesFixtures = (useFixtureDependencies ?? AppLaunchConfiguration.usesFixtureDependencies) && store == nil
-        let concreteStore: any LibraryStoring = store ?? (usesFixtures ? InMemoryLibraryStore() : LibraryStoreFactory.makeDefault())
+        let diskFixtureURL: URL?
+        if usesFixtures && AppLaunchConfiguration.requestsDiskBackedLargeFixture {
+            guard let resolved = AppLaunchConfiguration.diskBackedLargeFixtureStoreURL else {
+                preconditionFailure("拒绝启动 disk-backed UI fixture：缺少或越界的 project-local disposable store root")
+            }
+            diskFixtureURL = resolved
+        } else {
+            diskFixtureURL = nil
+        }
+        let researchBundleBaseStoreURL: URL?
+        if let researchBundleBaseStoreURLForTesting {
+            researchBundleBaseStoreURL = Self.projectLocalBundleStoreURLForTesting(
+                researchBundleBaseStoreURLForTesting, store: store)
+        } else if let diskFixtureURL {
+            researchBundleBaseStoreURL = diskFixtureURL
+        } else if store == nil && !usesFixtures {
+            researchBundleBaseStoreURL = LibraryStoreFactory.defaultStoreURL(
+                environment: ProcessInfo.processInfo.environment)
+        } else {
+            researchBundleBaseStoreURL = nil
+        }
+        let concreteStore: any LibraryStoring
+        if let store {
+            concreteStore = store
+        } else if usesFixtures, let diskFixtureURL {
+            concreteStore = LibraryStoreFactory.makeDefault(storeURLOverride: diskFixtureURL)
+        } else if usesFixtures {
+            concreteStore = InMemoryLibraryStore()
+        } else {
+            concreteStore = LibraryStoreFactory.makeDefault()
+        }
         let configuredClient = usesFixtures ? InspireClient(transport: AppFixtureTransport()) : client
         let configuredLLMClient: any LLMCompleting = usesFixtures ? AppFixtureLLMClient() : (llmClient ?? OpenAICompatibleClient())
         let configuredVisionClient: any VisionCompleting = usesFixtures ? AppFixtureLLMClient() : OpenAICompatibleClient()
@@ -168,8 +231,13 @@ final class AppViewModel: ObservableObject {
             configuredKeychain = keychain
         }
         self.store = concreteStore
+        self.researchBundleBaseStoreURL = researchBundleBaseStoreURL
+        self.diskBackedFixtureStoreRoot = diskFixtureURL?.deletingLastPathComponent().path
+        self.categoryProfileStore = concreteStore as? any CategoryProfileStoring
+        self.categoryProfile = initialCategoryProfile
         self.inspireClient = configuredClient
-        self.authorIndex = AuthorIndexService(client: configuredClient, store: concreteStore)
+        self.authorIndex = AuthorIndexService(client: configuredClient, store: concreteStore,
+                                              categoryProfile: initialCategoryProfile)
         self.paperSync = PaperSyncService(client: configuredClient, store: concreteStore)
         self.insightWorkflow = InsightWorkflow(store: concreteStore, client: configuredLLMClient)
         self.evidenceInsightWorkflow = EvidenceInsightWorkflow(store: concreteStore, client: configuredLLMClient)
@@ -190,10 +258,48 @@ final class AppViewModel: ObservableObject {
         self.connectionTester = configuredConnectionTester
         self.usesFixtureDependencies = usesFixtures
         self.settings = usesFixtures ? AppLaunchConfiguration.fixtureSettings() : Self.loadSettings()
+        if categoryProfile == nil, let profileStore = self.categoryProfileStore {
+            categoryProfileLoadTask = Task { [weak self] in
+                await self?.loadCategoryProfile(profileStore)
+            }
+        } else {
+            isCategoryProfileReady = true
+        }
+    }
+
+    /// Integration tests need the real AppViewModel bundle orchestration, but
+    /// must never route it to the user's Application Support library.  This
+    /// optional seam is ignored unless the caller supplies a V8 typed store
+    /// and an existing, non-symlink path strictly below this source checkout.
+    private static func projectLocalBundleStoreURLForTesting(
+        _ candidate: URL,
+        store: (any LibraryStoring)?
+    ) -> URL? {
+        guard candidate.isFileURL, store is V8TypedLibraryStore else { return nil }
+
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+        var cursor = sourceURL.deletingLastPathComponent()
+        while cursor.lastPathComponent != "Sources" {
+            let parent = cursor.deletingLastPathComponent()
+            guard parent.path != cursor.path else { return nil }
+            cursor = parent
+        }
+        let projectRoot = cursor.deletingLastPathComponent()
+            .standardizedFileURL.resolvingSymlinksInPath().standardizedFileURL
+        let requested = candidate.standardizedFileURL
+        let canonical = requested.resolvingSymlinksInPath().standardizedFileURL
+        guard let values = try? canonical.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              values.isDirectory != true, values.isSymbolicLink != true,
+              FileManager.default.fileExists(atPath: canonical.path) else { return nil }
+        guard requested.path == canonical.path,
+              canonical.path.hasPrefix(projectRoot.path + "/") else { return nil }
+        return canonical
     }
 
     deinit {
         authorIndexTask?.cancel()
+        categoryProfileLoadTask?.cancel()
         analysisDebounceTask?.cancel()
         insightTask?.cancel()
         evidenceInsightTask?.cancel()
@@ -220,6 +326,147 @@ final class AppViewModel: ObservableObject {
     /// expensive read, so normal browsing and Settings stay responsive.
     func openWorkbench() {
         presentWorkbench = true
+    }
+
+    var supportsResearchBundle: Bool {
+        researchBundleBaseStoreURL != nil && store is V8TypedLibraryStore
+    }
+
+    func refreshResearchBundleStatus() {
+        guard let baseStoreURL = researchBundleBaseStoreURL else {
+            researchBundleCanRollback = false
+            researchBundleStatusMessage = "目前的記憶體／fixture store 不支援持久 Bundle 切換。"
+            return
+        }
+        do {
+            researchBundleCanRollback = try V4BundleActivationCoordinator.resolveActiveStoreURL(
+                for: baseStoreURL) != nil
+            if researchBundleStatusMessage == nil {
+                researchBundleStatusMessage = researchBundleCanRollback
+                    ? "目前有一個已排定於下次啟動使用的 Bundle library。"
+                    : "Bundle 匯入會建立獨立的 V12 staging store；確認前不會切換目前 library。"
+            }
+        } catch {
+            researchBundleCanRollback = false
+            researchBundleStatusMessage = "active library descriptor 驗證失敗；目前 library 未切換：\(error.localizedDescription)"
+        }
+    }
+
+    func exportResearchBundle(to destination: URL, includePDFBytes: Bool) async throws -> V4BundleManifest {
+        guard supportsResearchBundle, let typedStore = store as? V8TypedLibraryStore else {
+            throw LatticeLensError.persistenceUnavailable("Research Bundle 需要可持久化的 V12 typed store")
+        }
+        let hasScope = destination.startAccessingSecurityScopedResource()
+        defer { if hasScope { destination.stopAccessingSecurityScopedResource() } }
+        let manifest = try await typedStore.exportResearchBundle(
+            to: destination, includePDFBytes: includePDFBytes,
+            pdfRoot: includePDFBytes ? FullTextService.defaultCacheDirectory : nil)
+        researchBundleStatusMessage = "Bundle 已匯出並寫入 per-file hashes（schema \(manifest.schemaVersion)）；未包含 Keychain、endpoint 或 raw model response。"
+        return manifest
+    }
+
+    func previewResearchBundle(at url: URL) async throws -> V4ResearchBundleImportPreview {
+        let hasScope = url.startAccessingSecurityScopedResource()
+        defer { if hasScope { url.stopAccessingSecurityScopedResource() } }
+        let manifest = try V4ResearchBundle.verify(url)
+        let dryRun = try V4ResearchBundle.dryRun(url, activeSnapshot: await store.snapshot())
+        let pdfCount = manifest.files.filter { $0.relativePath.hasPrefix("pdf/") }.count
+        researchBundleStatusMessage = "Bundle hash 與 typed state 已驗證；預演顯示 \(dryRun.paperCount) 篇、\(dryRun.noteCount) 則筆記、\(dryRun.conflictPaperIDs.count) 個 paper ID 衝突、\(pdfCount) 個 PDF。尚未寫入目前 library。"
+        return V4ResearchBundleImportPreview(sourceURL: url, manifest: manifest, dryRun: dryRun)
+    }
+
+    func stageResearchBundleImport(_ preview: V4ResearchBundleImportPreview) async throws {
+        guard supportsResearchBundle, let baseStoreURL = researchBundleBaseStoreURL else {
+            throw LatticeLensError.persistenceUnavailable("Research Bundle 匯入需要隔離的持久 library root")
+        }
+        guard stagedResearchBundleStoreURL == nil else {
+            throw V4ResearchBundleError.activeTargetExists
+        }
+        let hasScope = preview.sourceURL.startAccessingSecurityScopedResource()
+        defer { if hasScope { preview.sourceURL.stopAccessingSecurityScopedResource() } }
+        let verifiedManifest = try V4ResearchBundle.verify(preview.sourceURL)
+        guard verifiedManifest == preview.manifest else {
+            throw V4ResearchBundleError.hashMismatch("manifest changed after preview")
+        }
+        let runID = UUID()
+        let root = baseStoreURL.deletingLastPathComponent()
+        let target = root.appendingPathComponent(".latticelens-bundle-stage-\(runID.uuidString).store")
+        let pdfStageDirectory = FullTextService.defaultCacheDirectory
+            .appendingPathComponent(".latticelens-bundle-pdf-stage-\(runID.uuidString)", isDirectory: true)
+        let latestSnapshot = await store.snapshot()
+        let restoredDryRun = try await V4ResearchBundle.restoreToNewTypedStoreV2(
+            preview.sourceURL, targetStoreURL: target, activeSnapshot: latestSnapshot)
+        guard restoredDryRun == preview.dryRun else {
+            try? V4BundleActivationCoordinator.discardStagingStore(at: target, baseStoreURL: baseStoreURL)
+            throw V4ResearchBundleError.malformedTypedState("active library changed after dry-run; preview again before staging")
+        }
+        do {
+            let pdfStage = try V4ResearchBundle.stagePDFAssets(from: preview.sourceURL, into: pdfStageDirectory)
+            stagedResearchBundleStoreURL = target
+            stagedResearchBundlePDFs = pdfStage
+            stagedResearchBundleManifestHash = preview.manifest.manifestHash
+            researchBundleStatusMessage = "獨立 V12 staging 與 semantic round-trip 驗證完成；目前 library 仍未切換。按下確認後只寫入相對檔名 descriptor，並於重新啟動後生效。"
+        } catch {
+            try? V4BundleActivationCoordinator.discardStagingStore(at: target, baseStoreURL: baseStoreURL)
+            throw error
+        }
+    }
+
+    func cancelStagedResearchBundleImport() {
+        guard let baseStoreURL = researchBundleBaseStoreURL else { return }
+        if let stagedResearchBundlePDFs {
+            V4ResearchBundle.discardPDFStage(stagedResearchBundlePDFs)
+        }
+        if let stagedResearchBundleStoreURL {
+            do {
+                try V4BundleActivationCoordinator.discardStagingStore(
+                    at: stagedResearchBundleStoreURL, baseStoreURL: baseStoreURL)
+                researchBundleStatusMessage = "Bundle staging 已取消並清除；active library descriptor 未變更。"
+                self.stagedResearchBundleStoreURL = nil
+                stagedResearchBundlePDFs = nil
+                stagedResearchBundleManifestHash = nil
+            } catch {
+                researchBundleStatusMessage = "取消未能清除 staging；active library 未切換：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    func activateStagedResearchBundleForNextLaunch() throws {
+        guard let baseStoreURL = researchBundleBaseStoreURL,
+              let stagedStoreURL = stagedResearchBundleStoreURL,
+              let pdfStage = stagedResearchBundlePDFs,
+              let manifestHash = stagedResearchBundleManifestHash else {
+            throw V4ResearchBundleError.invalidActiveLibraryDescriptor
+        }
+        let installedPDFs = try V4ResearchBundle.installStagedPDFAssets(
+            pdfStage, into: FullTextService.defaultCacheDirectory)
+        do {
+            _ = try V4BundleActivationCoordinator.activate(
+                stagingStoreURL: stagedStoreURL, baseStoreURL: baseStoreURL,
+                bundleManifestHash: manifestHash)
+        } catch {
+            V4ResearchBundle.removeInstalledPDFAssets(installedPDFs, from: pdfStage)
+            throw error
+        }
+        V4ResearchBundle.discardPDFStage(pdfStage)
+        stagedResearchBundleStoreURL = nil
+        stagedResearchBundlePDFs = nil
+        stagedResearchBundleManifestHash = nil
+        researchBundleCanRollback = true
+        researchBundleStatusMessage = "Bundle library 已原子設為下次啟動的 active library；本次執行仍使用舊 store。重新啟動後切換，舊 store 保留可回復。"
+    }
+
+    func rollbackResearchBundleActivationForNextLaunch() throws {
+        guard let baseStoreURL = researchBundleBaseStoreURL else {
+            throw V4ResearchBundleError.invalidActiveLibraryDescriptor
+        }
+        let descriptor = try V4BundleActivationCoordinator.rollback(for: baseStoreURL)
+        researchBundleCanRollback = true
+        researchBundleStatusMessage = "已將下次啟動的 active library 指回此前 store（\(descriptor.storeName)）；重新啟動後生效。"
+    }
+
+    func reportResearchBundleError(_ error: Error) {
+        researchBundleStatusMessage = "Research Bundle 操作失敗：\(error.localizedDescription)"
     }
 
     /// Settings edit only a local draft until Save.  Drive the binding rather
@@ -294,6 +541,7 @@ final class AppViewModel: ObservableObject {
         case .connecting: "连接中"
         case .waitingFirstContent: "等待首段内容"
         case .receiving(let characters, let bytes): "接收中：\(characters) 字符 / \(bytes) 字节"
+        case .formulaProgress(let completed, let total, let bytes, let characters): "公式批次 \(completed)/\(total)：\(characters) 字符 / \(bytes) 字节"
         case .validating: "校验中"
         case .completed(let cacheHit, let requests): cacheHit ? "已完成（缓存）" : "已完成（\(requests) 次请求）"
         case .cancelled: "已取消"
@@ -306,6 +554,9 @@ final class AppViewModel: ObservableObject {
             switch paperFilter {
             case .all: true
             case .hepLat: paper.arxivCategories.contains("hep-lat")
+            case .hepPh: paper.arxivCategories.contains("hep-ph")
+            case .hepTh: paper.arxivCategories.contains("hep-th")
+            case .multiCategory: Set(paper.arxivCategories).intersection(Set(["hep-lat", "hep-ph", "hep-th"])).count > 1
             case .published: paper.publicationStatus != nil
             case .unread: !paper.isRead
             case .figures: !paper.figures.isEmpty
@@ -335,16 +586,59 @@ final class AppViewModel: ObservableObject {
         }
         if case .readOnlyFailure(let reason) = await store.initializationState() {
             errorMessage = "本地资料库只读：\(reason)"
+            if diskBackedFixtureStoreRoot != nil { return }
         }
         if usesFixtureDependencies && AppLaunchConfiguration.usesLargeFixture {
             do {
-                try await AppFixtureLargeData.seed(into: store)
+                if diskBackedFixtureStoreRoot != nil {
+                    let existing = await store.snapshot()
+                    if existing.readErrorMessage != nil {
+                        throw LatticeLensError.persistenceUnavailable("disk-backed fixture store 读取失败；不会重建或覆盖")
+                    }
+                    if AppFixtureLargeData.isCompleteFixture(existing) {
+                        // A relaunch must preserve real local mutations made
+                        // by the preceding fixture process rather than
+                        // reseeding the baseline over the user's test action.
+                    } else if AppFixtureLargeData.isPristineStore(existing) {
+                        try await AppFixtureLargeData.seed(into: store)
+                        let seeded = await store.snapshot()
+                        guard AppFixtureLargeData.isCompleteFixture(seeded) else {
+                            throw LatticeLensError.persistenceUnavailable("disk-backed large fixture 未达到完整基线；保留现有数据供诊断")
+                        }
+                    } else {
+                        throw LatticeLensError.persistenceUnavailable("disk-backed fixture store 含有未知或部分数据；拒绝自动清空或覆盖")
+                    }
+                } else {
+                    try await AppFixtureLargeData.seed(into: store)
+                }
+                if ProcessInfo.processInfo.environment["LATTICELENS_FIXTURE_FORMULA_JOB_RELAUNCH"] == "1" {
+                    guard diskBackedFixtureStoreRoot != nil,
+                          let formulaStore = store as? any FormulaJobStoring else {
+                        throw LatticeLensError.persistenceUnavailable(
+                            "公式作业 relaunch 夹具只允许使用隔离磁盘 store")
+                    }
+                    let jobID = AppFixtureLargeData.formulaRelaunchJobID
+                    if try await formulaStore.formulaJob(id: jobID) == nil {
+                        try await formulaStore.saveFormulaJob(
+                            AppFixtureLargeData.formulaRelaunchCheckpoint())
+                    }
+                    guard let checkpoint = try await formulaStore.formulaJob(id: jobID),
+                          checkpoint.job.state == .retryable,
+                          checkpoint.job.completedEquationIDs == ["fixture-equation-1"],
+                          checkpoint.job.pendingEquationIDs == ["fixture-equation-2"] else {
+                        throw LatticeLensError.persistenceUnavailable(
+                            "公式作业 relaunch 夹具未恢复预期的已完成／待继续批次")
+                    }
+                    fixtureFormulaRelaunchReceipt = "\(jobID)|state=retryable|completed=fixture-equation-1|pending=fixture-equation-2|automaticResume=disabled"
+                }
                 await reloadAuthors()
                 await refreshWorkbench()
                 selectedAuthorID = ProductContract.selfAuthorRecid
                 await loadPapers(for: ProductContract.selfAuthorRecid, syncIfNeeded: false)
                 syncStatus = SyncStatus(phase: .ready,
-                                        message: "large fixture 已从进程内存加载",
+                                        message: diskBackedFixtureStoreRoot == nil
+                                            ? "large fixture 已从进程内存加载"
+                                            : "large fixture 已从隔离磁盘加载",
                                         completedPages: 0,
                                         successfulRecords: papers.count,
                                         failedRecords: 0,
@@ -537,16 +831,125 @@ final class AppViewModel: ObservableObject {
     }
 
     func buildAuthorIndex(force: Bool = false) {
+        guard isCategoryProfileReady else {
+            errorMessage = categoryProfilePersistenceError.map { "分類設定無法載入；尚未啟動作者索引：\($0)" }
+                ?? "正在載入分類設定；分類設定就緒前不會啟動作者索引。"
+            return
+        }
+        guard !isCategoryProfileSavePending else {
+            errorMessage = "正在保存分類設定；保存完成前不會啟動作者索引。"
+            return
+        }
+        guard categoryProfilePersistenceError == nil else {
+            errorMessage = "分類設定尚未持久化；請先重試保存，再啟動作者索引。"
+            return
+        }
         authorIndexTask?.cancel()
         authorIndexStopIntent = .cancelled
         let session = UUID()
         authorIndexSessionID = session
-        authorIndexStatus = SyncStatus(phase: .syncingMetadata, message: "正在构建 hep-lat / hep-th 作者索引", completedPages: 0,
+        authorIndexStatus = SyncStatus(phase: .syncingMetadata, message: "正在构建 \(categoryProfile.rawValues.joined(separator: " / ")) 作者索引", completedPages: 0,
                                        successfulRecords: 0, failedRecords: 0, lastUpdatedAt: Date())
         authorIndexTask = Task { [weak self] in
             guard let self else { return }
             await self.runAuthorIndex(force: force, session: session)
         }
+    }
+
+    func setCategoryEnabled(_ category: SupportedArxivCategory, enabled: Bool) {
+        guard isCategoryProfileReady else {
+            errorMessage = "分類設定尚未載入；請稍後再修改。"
+            return
+        }
+        guard !isCategoryProfileSavePending else {
+            errorMessage = "分類設定正在保存；請等待完成後再修改。"
+            return
+        }
+        var categories = categoryProfile.categories
+        if enabled { categories.insert(category) } else { categories.remove(category) }
+        guard categories != categoryProfile.categories else { return }
+        guard !categories.isEmpty else {
+            errorMessage = "至少保留一个启用的 arXiv 分类。"
+            return
+        }
+        if isAuthorIndexRunning { cancelAuthorIndex() }
+        let updated = CategoryProfile(categories: categories, revision: max(categoryProfile.revision + 1, CategoryProfile.currentRevision))
+        applyCategoryProfile(updated)
+        persistCategoryProfile(updated)
+    }
+
+    func retryCategoryProfileLoad() {
+        guard !isCategoryProfileReady, let categoryProfileStore else { return }
+        categoryProfilePersistenceError = nil
+        categoryProfileLoadTask?.cancel()
+        categoryProfileLoadTask = Task { [weak self] in
+            await self?.loadCategoryProfile(categoryProfileStore)
+        }
+    }
+
+    func retryCategoryProfileSave() {
+        guard categoryProfileStore != nil, !isCategoryProfileSavePending,
+              categoryProfilePersistenceError != nil, isCategoryProfileReady else { return }
+        persistCategoryProfile(categoryProfile)
+    }
+
+    private func loadCategoryProfile(_ profileStore: any CategoryProfileStoring) async {
+        do {
+            if let profile = try await profileStore.loadCategoryProfile() {
+                applyCategoryProfile(profile)
+            } else {
+                // Persist first-run defaults before enabling the index action;
+                // an early refresh must not race profile creation.
+                try await profileStore.saveCategoryProfile(categoryProfile)
+            }
+            isCategoryProfileReady = true
+            categoryProfilePersistenceError = nil
+        } catch {
+            isCategoryProfileReady = false
+            categoryProfilePersistenceError = error.localizedDescription
+            errorMessage = "分類設定無法載入或初始化；作者索引保持停用。可重試分類設定載入：\(error.localizedDescription)"
+        }
+    }
+
+    private func persistCategoryProfile(_ profile: CategoryProfile) {
+        guard let categoryProfileStore else { return }
+        isCategoryProfileSavePending = true
+        categoryProfilePersistenceError = nil
+        let profileIdentity = profile.queryIdentity
+        categoryProfilePersistenceTask = Task { [weak self] in
+            do {
+                try await categoryProfileStore.saveCategoryProfile(profile)
+                guard let self, self.categoryProfile.queryIdentity == profileIdentity else { return }
+                self.isCategoryProfileSavePending = false
+                self.categoryProfilePersistenceError = nil
+            } catch {
+                guard let self, self.categoryProfile.queryIdentity == profileIdentity else { return }
+                self.isCategoryProfileSavePending = false
+                self.categoryProfilePersistenceError = error.localizedDescription
+                self.errorMessage = "分類設定未能保存；作者索引保持停用。可重試保存：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func applyCategoryProfile(_ profile: CategoryProfile) {
+        categoryProfile = profile
+        authorIndex = AuthorIndexService(client: inspireClient, store: store, categoryProfile: profile)
+        if !profile.categories.contains(where: { CategoryFacet(rawValue: $0.rawValue) == authorCategoryFacet }) {
+            authorCategoryFacet = .allEnabled
+        }
+    }
+
+    var canBuildAuthorIndex: Bool {
+        isCategoryProfileReady && !isCategoryProfileSavePending && categoryProfilePersistenceError == nil
+    }
+
+    var categoryProfileStatusMessage: String? {
+        if !isCategoryProfileReady {
+            return categoryProfilePersistenceError.map { "分類設定載入失敗：\($0)" } ?? "正在載入分類設定…"
+        }
+        if isCategoryProfileSavePending { return "正在保存分類設定；索引操作暫停。" }
+        if let categoryProfilePersistenceError { return "分類設定未保存：\(categoryProfilePersistenceError)" }
+        return nil
     }
 
     func pauseAuthorIndex() {
@@ -1299,15 +1702,12 @@ final class AppViewModel: ObservableObject {
             do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
             guard let self, !Task.isCancelled else { return }
             let results = await self.store.searchPapers(query, limit: 120)
+            let provenanceHits = V4LocalSearchIndex.bibliographicHits(query: query, papers: results)
             guard !Task.isCancelled,
                   self.globalSearchSessionID == session,
                   self.globalPaperSearch.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
             self.globalPaperResults = results
-            self.globalSearchHits = results.map { paper in
-                V4SearchHit(id: "local-index:\(paper.literatureID)", paperID: paper.literatureID,
-                            title: paper.displayTitle, source: "本地索引", field: "indexed",
-                            snippet: "", page: nil, quote: nil, score: 0)
-            }
+            self.globalSearchHits = provenanceHits
         }
     }
 
@@ -1591,8 +1991,12 @@ final class AppViewModel: ObservableObject {
 
     func generateSelectedEvidenceInsight() {
         guard let paper = selectedPaper else { return }
-        guard selectedFullTextDocument?.extractionState == .extracted else {
+        guard let document = selectedFullTextDocument, document.extractionState == .extracted else {
             errorMessage = "请先读取 ar5iv HTML（或使用 PDF 回退）并成功生成可回查的全文 anchors。"
+            return
+        }
+        guard document.sourceKind == .arxivHTML else {
+            errorMessage = "“编号公式推导（全覆盖）”只对结构化 ar5iv HTML 建立保证；PDF 文本回退不能可靠识别所有视觉编号公式。"
             return
         }
         guard settings.hasConsent(for: settings.activeProvider, sourceScope: PaperInsightV2Validator.sourceScope, sendsImagePixels: false) else {
@@ -1653,13 +2057,18 @@ final class AppViewModel: ObservableObject {
     }
 
     private func runAuthorIndex(force: Bool, session: UUID) async {
+        // Keep both phases and cancellation persistence bound to the exact
+        // profile that started this run. The UI may install a newer profile
+        // while cancellation is propagating through an in-flight page.
+        let runningAuthorIndex = authorIndex
         do {
             // The fixed self-author enrichment is useful, but it is not part
             // of the hep-lat/hep-th candidate definition. A 400 here must not
             // abort an otherwise independent partitioned author-index run.
             let pinnedSelfLoaded = await refreshPinnedSelfWithRetry(reportFailure: false)
+            try Task.checkCancellation()
             let pinnedSelfSuffix = pinnedSelfLoaded ? "" : "；我的作者记录本次未更新，已保留本地记录"
-            let candidateProgress = try await authorIndex.rebuildCandidateIndex(force: force) { [weak self] progress in
+            let candidateProgress = try await runningAuthorIndex.rebuildCandidateIndex(force: force) { [weak self] progress in
                 guard let self, !Task.isCancelled, self.authorIndexSessionID == session else { return }
                 self.authorIndexProgress = progress
                 self.authorIndexStatus = SyncStatus(
@@ -1689,7 +2098,9 @@ final class AppViewModel: ObservableObject {
                 authorIndexProgress = candidateProgress
                 authorIndexStatus = SyncStatus(
                     phase: .partial,
-                    message: "作者候选索引已部分完成；网络请求失败，已保留成功页面，可继续重试\(pinnedSelfSuffix)",
+                    message: candidateProgress.failureReason.map {
+                        "作者候选索引未完成：\($0)；已保留成功页面，可继续重试\(pinnedSelfSuffix)"
+                    } ?? "作者候选索引已部分完成；网络请求失败，已保留成功页面，可继续重试\(pinnedSelfSuffix)",
                     completedPages: candidateProgress.completedPages,
                     successfulRecords: candidateProgress.verified,
                     failedRecords: candidateProgress.failed,
@@ -1699,7 +2110,8 @@ final class AppViewModel: ObservableObject {
                 await reloadAuthors()
                 return
             }
-            let progress = try await authorIndex.refreshHIndices(force: force) { [weak self] progress in
+            try Task.checkCancellation()
+            let progress = try await runningAuthorIndex.refreshHIndices(force: force) { [weak self] progress in
                 guard let self, !Task.isCancelled, self.authorIndexSessionID == session else { return }
                 self.authorIndexProgress = progress
                 self.authorIndexStatus = SyncStatus(
@@ -1725,7 +2137,7 @@ final class AppViewModel: ObservableObject {
             await reloadAuthors()
         } catch is CancellationError {
             let stopState = authorIndexStopIntent
-            await persistAuthorIndexStopState(stopState)
+            await persistAuthorIndexStopState(stopState, service: runningAuthorIndex)
             authorIndexStatus = SyncStatus(phase: stopState == .paused ? .partial : .cancelled,
                                            message: stopState == .paused ? "作者索引已暂停；可从 checkpoint 继续" : "作者索引已取消；已保存完成页", completedPages: 0,
                                            successfulRecords: 0, failedRecords: 0, lastUpdatedAt: Date())
@@ -2063,6 +2475,12 @@ final class AppViewModel: ObservableObject {
             current.receivedBytes = bytes
             current.idleDeadline = Date().addingTimeInterval(V4AnalysisTimeouts.default.idle)
             current.phase = .receiving
+        case .formulaProgress(let completed, _, let bytes, let characters):
+            current.requestIndex = min(current.requestTotal, max(current.requestIndex, completed))
+            current.receivedCharacters = characters
+            current.receivedBytes = bytes
+            current.idleDeadline = Date().addingTimeInterval(V4AnalysisTimeouts.default.idle)
+            current.phase = .receiving
         case .validating: current.phase = .validating
         case .completed: current.phase = .completed
         case .cancelled: current.phase = .cancelled
@@ -2087,6 +2505,30 @@ final class AppViewModel: ObservableObject {
                 if self.evidenceInsightSessionID == session {
                     self.evidenceInsightTask = nil
                     if !self.isEvidenceInsightRunning { self.evidenceInsightStartedAt = nil }
+                }
+            }
+            // Prior releases cached the same verified HTML bytes but did not
+            // persist separate labelled-equation chunks. Rebuild that index
+            // locally before any Keychain access or provider request.
+            if let document = self.selectedFullTextDocument,
+               document.sourceKind == .arxivHTML,
+               (document.numberedEquationIndexVersion != FullTextService.numberedEquationIndexVersion ||
+                document.numberedEquationIndexComplete == nil) {
+                self.numberedEquationIndexStatusMessage = "正在从已缓存的 ar5iv HTML 建立编号公式索引；不访问网络。"
+                do {
+                    let reindexed = try await self.fullTextService.reindexNumberedEquations(document: document)
+                    guard self.evidenceInsightSessionID == session, self.selectedPaperID == paper.literatureID else { return }
+                    if reindexed.numberedEquationIndexComplete == true {
+                        self.fullTextStatusMessage = "已从本地 ar5iv HTML 建立 \(reindexed.numberedEquationCount ?? 0) 条编号公式索引；未访问网络。"
+                    } else {
+                        self.fullTextStatusMessage = reindexed.numberedEquationIndexFailure ?? "本地 ar5iv HTML 的编号公式索引不完整；未发送模型请求。"
+                    }
+                    self.numberedEquationIndexStatusMessage = nil
+                    await self.reloadSelectedPaperContext(for: paper.literatureID)
+                } catch {
+                    guard self.evidenceInsightSessionID == session else { return }
+                    self.evidenceInsightState = .failed("无法从本地 ar5iv HTML 建立编号公式索引；未发送模型请求：\(error.localizedDescription)")
+                    return
                 }
             }
             let apiKey: String
@@ -2209,8 +2651,9 @@ final class AppViewModel: ObservableObject {
         selectedCollectionIDs = context.selectedCollectionIDs
     }
 
-    private func persistAuthorIndexStopState(_ stopState: SyncCheckpointState) async {
-        for jobID in [AuthorIndexService.candidateJobID, AuthorIndexService.hIndexJobID] {
+    private func persistAuthorIndexStopState(_ stopState: SyncCheckpointState,
+                                             service: AuthorIndexService) async {
+        for jobID in [service.configuredCandidateJobID, service.configuredHIndexJobID] {
             guard var checkpoint = try? await store.checkpoint(jobID: jobID) else { continue }
             checkpoint.state = stopState
             checkpoint.updatedAt = Date()
@@ -2223,6 +2666,9 @@ final class AppViewModel: ObservableObject {
         // sidebar applies its own synchronous search predicate so typing never
         // races an actor reload or changes the selected author/paper state.
         let projection = await store.authorSidebarProjection()
+        // Keep historical qualified rows in the local projection. The facet
+        // is applied by the sidebar and can therefore reveal a legacy hep-th
+        // row without mutating or deleting it.
         authors = projection.visibleAuthors(search: "")
         // Match the progress denominator to the completed generation. The
         // self author remains visible but is not part of the h-index queue;
@@ -2264,7 +2710,7 @@ final class AppViewModel: ObservableObject {
 }
 
 enum PaperFilter: String, CaseIterable, Identifiable {
-    case all, updates, favorites, needsReview, hepLat, published, unread, figures
+    case all, updates, favorites, needsReview, hepLat, hepPh, hepTh, multiCategory, published, unread, figures
     var id: String { rawValue }
     var displayName: String {
         switch self {
@@ -2273,6 +2719,9 @@ enum PaperFilter: String, CaseIterable, Identifiable {
         case .favorites: "收藏"
         case .needsReview: "待复核"
         case .hepLat: "hep-lat"
+        case .hepPh: "hep-ph"
+        case .hepTh: "hep-th"
+        case .multiCategory: "多分类"
         case .published: "已发表"
         case .unread: "新增（未读）"
         case .figures: "有图像"

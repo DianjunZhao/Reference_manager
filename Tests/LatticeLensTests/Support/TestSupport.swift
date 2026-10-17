@@ -29,12 +29,12 @@ enum ProjectLocalTestScratchError: LocalizedError {
         case .sourceRootUnavailable(let path):
             "无法从测试源码路径确定项目根目录：\(path)"
         case .untrustedEnvironmentRoot(let path):
-            "LATTICELENS_TEST_STORE_ROOT 必须位于当前项目目录内：\(path)"
+            "任务测试根目录必须是当前项目内未占用的规范路径：\(path)"
         }
     }
 }
 
-func makeProjectLocalTestDirectory(prefix: String) throws -> URL {
+func makeProjectLocalTestDirectory(prefix: String, explicitRoot: String? = nil) throws -> URL {
     let fileManager = FileManager.default
     let sourceURL = URL(fileURLWithPath: #filePath).standardizedFileURL.resolvingSymlinksInPath()
     var cursor = sourceURL.deletingLastPathComponent()
@@ -46,6 +46,20 @@ func makeProjectLocalTestDirectory(prefix: String) throws -> URL {
         cursor = parent
     }
     let projectRoot = cursor.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
+
+    if let explicitRoot {
+        let requested = URL(fileURLWithPath: explicitRoot, isDirectory: true).standardizedFileURL
+        let canonical = requested.resolvingSymlinksInPath().standardizedFileURL
+        guard requested.path.hasPrefix(projectRoot.path + "/"), canonical.path == requested.path else {
+            throw ProjectLocalTestScratchError.untrustedEnvironmentRoot(requested.path)
+        }
+        guard !fileManager.fileExists(atPath: requested.path) else {
+            throw ProjectLocalTestScratchError.untrustedEnvironmentRoot(
+                "refusing to reuse explicit test root: \(requested.path)")
+        }
+        try fileManager.createDirectory(at: requested, withIntermediateDirectories: true)
+        return requested
+    }
 
     let base: URL
     if let rawRoot = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"], !rawRoot.isEmpty {

@@ -71,9 +71,9 @@ enum LLMTransportState: String, Equatable, Sendable {
     case connected
     /// The request is waiting for the first response-body byte.
     case waitingFirstContent
-    /// At least one response-body byte arrived.  This is distinct from a
-    /// decoded delta, particularly for non-streaming JSON responses.
-    case receivedFirstContent
+    /// A response-body byte or transport heartbeat arrived. This does not
+    /// imply decoded model content and must not reset content-idle deadlines.
+    case receivedTransportActivity
 }
 
 /// The workflow owns provenance and schema validation; the provider client is
@@ -92,10 +92,8 @@ protocol LLMCompleting: Sendable {
     ) async throws -> String
 }
 
-/// Optional transport capability used by the interactive Evidence workflow.
-/// The regular protocol remains source-compatible with fixture clients, while
-/// the production client can opt out of URLSession's finite request deadline
-/// when the workflow itself intentionally has no total hard timeout.
+/// Optional transport capability used to apply each workflow's finite
+/// resource deadline to the URL request as well as its phase monitor.
 protocol LLMRequestTimeoutConfiguring: Sendable {
     func complete(
         system: String,
@@ -304,13 +302,56 @@ private enum OpenAICompatiblePayloadDecoder {
     }
 }
 
+/// The exact JSON body shared by request execution and formula-job planning.
+/// Hashing this value binds a durable batch to the same model, mode and message
+/// bytes that `URLSession` will send, without ever persisting an API key.
+struct OpenAICompatibleCompletionRequestBody: Encodable, Sendable {
+    /// Bump when request-body byte encoding changes so durable formula jobs
+    /// cannot collide with checkpoints created under a different contract.
+    static let serializationContractVersion = "openai-json-sorted-keys-v1"
+
+    struct Message: Encodable, Sendable {
+        let role: String
+        let content: String
+    }
+
+    struct ResponseFormat: Encodable, Sendable {
+        let type: String
+    }
+
+    let model: String
+    let messages: [Message]
+    let stream: Bool
+    let responseFormat: ResponseFormat?
+
+    enum CodingKeys: String, CodingKey {
+        case model, messages, stream
+        case responseFormat = "response_format"
+    }
+
+    init(system: String, userPayload: String, profile: ProviderProfile) {
+        model = profile.effectiveModel
+        messages = [Message(role: "system", content: system), Message(role: "user", content: userPayload)]
+        stream = profile.usesStreaming
+        // Keep this in sync with the provider-specific JSON-mode contract used
+        // by OpenAICompatibleClient.complete.
+        responseFormat = profile.provider == .deepSeek ? ResponseFormat(type: "json_object") : nil
+    }
+
+    func encoded() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(self)
+    }
+}
+
 struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfiguring, VisionCompleting, ModelDiscovering, ProviderConnectionTesting {
     private let session: URLSession
     private static let modelCache = ModelDiscoveryCache()
     /// Used only when a caller explicitly requests an unbounded completion.
     /// Phase deadlines and user cancellation still bound the interactive
     /// workflow; this avoids URLSession cutting off a healthy long stream.
-    private static let unboundedRequestTimeout: TimeInterval = 24 * 60 * 60
+    private static let defaultRequestTimeout = V4AnalysisTimeouts.default.hard
 
     init(session: URLSession? = nil) { self.session = session ?? Self.makeSafeSession() }
 
@@ -382,36 +423,15 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         guard !profile.effectiveModel.isEmpty else { throw LatticeLensError.missingCredential }
         guard !profile.provider.apiKeyIsRequired || !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw LatticeLensError.missingCredential }
         let url = try APIEndpointBuilder.endpoint(baseURL: profile.baseURL, path: "chat/completions", provider: profile.provider)
-        struct Message: Codable { let role: String; let content: String }
-        struct ResponseFormat: Codable { let type: String }
-        struct RequestBody: Codable {
-            let model: String
-            let messages: [Message]
-            let stream: Bool
-            let responseFormat: ResponseFormat?
-
-            enum CodingKeys: String, CodingKey {
-                case model, messages, stream
-                case responseFormat = "response_format"
-            }
-        }
-        let body = RequestBody(model: profile.effectiveModel,
-                               messages: [Message(role: "system", content: system), Message(role: "user", content: userPayload)],
-                               stream: profile.usesStreaming,
-                               // DeepSeek's documented OpenAI-compatible JSON
-                               // mode asks the provider to emit an object, not
-                               // a prose/fenced completion.  The app still
-                               // runs its exact-root, duplicate-key, source
-                               // scope, figure and numeric-anchor validators;
-                               // JSON mode never turns an invalid claim into a
-                               // successful artifact.  Custom/local providers
-                               // keep their existing compatibility contract.
-                               responseFormat: profile.provider == .deepSeek ? ResponseFormat(type: "json_object") : nil)
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: profile.provider)
         request.httpMethod = "POST"
-        request.timeoutInterval = requestTimeout ?? Self.unboundedRequestTimeout
+        let boundedRequestTimeout = requestTimeout.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            ?? Self.defaultRequestTimeout
+        request.timeoutInterval = boundedRequestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
+        request.httpBody = try OpenAICompatibleCompletionRequestBody(
+            system: system, userPayload: userPayload, profile: profile
+        ).encoded()
         do {
         if profile.usesStreaming {
             let (bytes, response) = try await session.bytes(for: request)
@@ -429,14 +449,14 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
             for try await byte in bytes {
                 if !receivedFirstByte {
                     receivedFirstByte = true
-                    await onTransportState(.receivedFirstContent)
+                    await onTransportState(.receivedTransportActivity)
                     lastActivityNotification = Date()
                 } else if Date().timeIntervalSince(lastActivityNotification) >= 1 {
                     // SSE keep-alives/comments are transport activity even
                     // when they do not yield a decoded delta.  Feed a bounded
                     // heartbeat to the deadline monitor so a healthy stream
                     // is not misclassified as idle during long generations.
-                    await onTransportState(.receivedFirstContent)
+                    await onTransportState(.receivedTransportActivity)
                     lastActivityNotification = Date()
                 }
                 inputBuffer.append(byte)
@@ -486,10 +506,10 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
             for try await byte in bytes {
                 if !receivedFirstByte {
                     receivedFirstByte = true
-                    await onTransportState(.receivedFirstContent)
+                    await onTransportState(.receivedTransportActivity)
                     lastActivityNotification = Date()
                 } else if Date().timeIntervalSince(lastActivityNotification) >= 1 {
-                    await onTransportState(.receivedFirstContent)
+                    await onTransportState(.receivedTransportActivity)
                     lastActivityNotification = Date()
                 }
                 data.append(byte)
@@ -582,8 +602,8 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
 
     private static func makeSafeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = Self.unboundedRequestTimeout
-        configuration.timeoutIntervalForResource = Self.unboundedRequestTimeout + 60
+        configuration.timeoutIntervalForRequest = Self.defaultRequestTimeout
+        configuration.timeoutIntervalForResource = Self.defaultRequestTimeout + 60
         configuration.httpShouldSetCookies = false
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration, delegate: RedirectBlockingDelegate(), delegateQueue: nil)

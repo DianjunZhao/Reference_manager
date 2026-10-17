@@ -124,6 +124,435 @@ final class V4BenchmarkTests: XCTestCase {
         XCTAssertEqual(activeV9.warmResultCount, 100)
     }
 
+    /// Opt-in final performance gate. This deliberately runs in its own
+    /// XCTest process from the legacy V4/V9 benchmark so its RSS high-water
+    /// mark is not contaminated by the separate in-memory compatibility
+    /// fixture. All stores and clones are synthetic and project-local.
+    @MainActor
+    func testActualSwiftDataV12FormulaStoreBenchmark() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["LATTICELENS_RUN_V12_FORMULA_BENCHMARK"] == "1" else {
+            throw XCTSkip("set LATTICELENS_RUN_V12_FORMULA_BENCHMARK=1 to run the V12 final performance gate")
+        }
+
+        let manager = FileManager.default
+        let benchmarkRoot: URL
+        if let configured = environment["LATTICELENS_V12_FORMULA_BENCHMARK_ROOT"], !configured.isEmpty {
+            guard let storeRoot = environment["LATTICELENS_TEST_STORE_ROOT"], !storeRoot.isEmpty else {
+                throw BenchmarkFailure.untrustedBenchmarkRoot(configured)
+            }
+            let allowedRoot = URL(fileURLWithPath: storeRoot, isDirectory: true)
+                .standardizedFileURL.resolvingSymlinksInPath()
+            let requestedRoot = URL(fileURLWithPath: configured, isDirectory: true).standardizedFileURL
+            guard requestedRoot.deletingLastPathComponent().resolvingSymlinksInPath() == allowedRoot,
+                  !manager.fileExists(atPath: requestedRoot.path) else {
+                throw BenchmarkFailure.untrustedBenchmarkRoot(requestedRoot.path)
+            }
+            try manager.createDirectory(at: requestedRoot, withIntermediateDirectories: true)
+            benchmarkRoot = requestedRoot
+        } else {
+            benchmarkRoot = try makeProjectLocalTestDirectory(prefix: "v12-formula-benchmark")
+        }
+        defer { try? manager.removeItem(at: benchmarkRoot) }
+
+        let result = try await Self.benchmarkV12FormulaStore(
+            root: benchmarkRoot,
+            inputManifestSHA256: environment["LATTICELENS_BENCHMARK_INPUT_MANIFEST_SHA256"]
+        )
+
+        if let outputPath = environment["LATTICELENS_V12_FORMULA_BENCHMARK_OUTPUT"], !outputPath.isEmpty {
+            let projectRoot = URL(fileURLWithPath: manager.currentDirectoryPath, isDirectory: true).standardizedFileURL
+            let outputURL = URL(fileURLWithPath: outputPath).standardizedFileURL
+            guard outputURL.path.hasPrefix(projectRoot.path + "/") else {
+                throw BenchmarkFailure.untrustedBenchmarkOutput(outputURL.path)
+            }
+            let data = try JSONSerialization.data(withJSONObject: result.jsonObject, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: outputURL, options: .atomic)
+        }
+
+        XCTAssertEqual(result.authors, 2_000)
+        XCTAssertEqual(result.papers, 20_000)
+        XCTAssertEqual(result.links, 100_000)
+        XCTAssertEqual(result.chunks, 10_000)
+        XCTAssertEqual(result.radarEvents, 500)
+        XCTAssertEqual(result.formulaInventoryCount, 20)
+        XCTAssertEqual(result.formulaCount, 5_000)
+        XCTAssertTrue(result.backupVerified)
+        XCTAssertEqual(result.coldReopenSamplesMs.count, 20)
+        XCTAssertEqual(result.warmSearchSamplesMs.count, 100)
+        XCTAssertEqual(result.readMutationSamplesMs.count, 100)
+        XCTAssertEqual(result.favoriteMutationSamplesMs.count, 100)
+        XCTAssertEqual(result.noteMutationSamplesMs.count, 100)
+        XCTAssertEqual(result.formulaInventoryReadSamplesMs.count, 100)
+        XCTAssertEqual(result.formulaJobReadSamplesMs.count, 100)
+        XCTAssertEqual(result.formulaJobCommitSamplesMs.count, 100)
+        XCTAssertEqual(result.formulaJobRows, 1)
+        XCTAssertEqual(result.formulaClaimRows, 8)
+        XCTAssertEqual(result.formulaStructuredStepRows, 8)
+        XCTAssertEqual(result.formulaSegmentRows, 8)
+        XCTAssertEqual(result.formulaSegmentStepRows, 8)
+    }
+
+    func testV10FormulaBenchmarkFixtureUsesCurrentParserAndBatchPlanner() throws {
+        let fixture = try Self.makeV10FormulaFixture(
+            paperID: 42,
+            now: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        XCTAssertTrue(fixture.inventory.isComplete)
+        XCTAssertEqual(fixture.inventory.items.count, 250)
+        XCTAssertTrue(fixture.inventory.items.allSatisfy { $0.evidenceID != nil && $0.sourceByteEnd > $0.sourceByteStart })
+        XCTAssertEqual(fixture.batches.count, 32)
+        XCTAssertTrue(fixture.batches.allSatisfy { $0.equationIDs.count <= 8 })
+    }
+
+    @MainActor
+    private static func benchmarkV12FormulaStore(root: URL, inputManifestSHA256: String?) async throws -> V12FormulaDiskBenchmark {
+        let fileManager = FileManager.default
+        let totalStart = ContinuousClock.Instant.now
+        let sourceURL = root.appendingPathComponent("benchmark-v12-v7-source.store")
+        let activeURL = root.appendingPathComponent("benchmark-v12-active.store")
+        let seedStart = ContinuousClock.Instant.now
+        try seedV7ActiveDomainStore(at: sourceURL)
+        let v7SeedMilliseconds = measurementMilliseconds(from: seedStart)
+
+        let v8MigrationStart = ContinuousClock.Instant.now
+        let migration = try V8MigrationCoordinator.migrateV7ToV8(
+            sourceURL: sourceURL,
+            activeV8URL: activeURL,
+            backupRoot: root.appendingPathComponent("v12-v8-backups", isDirectory: true)
+        )
+        let v7ToV8Milliseconds = measurementMilliseconds(from: v8MigrationStart)
+        guard migration.journal.phase == .activated,
+              migration.journal.preSummary == migration.journal.postSummary else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture("V7-to-V8 staged migration did not preserve the synthetic source summary")
+        }
+
+        let schema = Schema(versionedSchema: LatticeLensSchemaV12.self)
+        let configuration = ModelConfiguration(schema: schema, url: activeURL)
+        let schemaOpenStart = ContinuousClock.Instant.now
+        let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV12.self,
+                                           configurations: configuration)
+        let v8ToV12OpenMilliseconds = measurementMilliseconds(from: schemaOpenStart)
+        let indexStart = ContinuousClock.Instant.now
+        if try !V9TypedSearchIndex.isCurrent(in: container.mainContext) {
+            try V9TypedSearchIndex.rebuild(in: container.mainContext)
+        }
+        let indexBuildMilliseconds = measurementMilliseconds(from: indexStart)
+        guard try V9TypedSearchIndex.isCurrent(in: container.mainContext) else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture("The production V9 search projection is not current in the V12 store")
+        }
+        let semanticSummary = try V8TypedStoreCodec.verifyMigrationSemanticIntegrity(from: container.mainContext)
+        let authors = semanticSummary.counts["authors"] ?? 0
+        let papers = semanticSummary.counts["papers"] ?? 0
+        let links = semanticSummary.counts["paperAuthorLinks"] ?? 0
+        let chunks = semanticSummary.counts["chunks"] ?? 0
+        let radarEvents = semanticSummary.counts["radarEvents"] ?? 0
+        guard authors == 2_000, papers == 20_000, links == 100_000, chunks == 10_000, radarEvents == 500 else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture("V12 semantic counts do not match the declared 20k/100k/10k/500 dataset")
+        }
+
+        let library = V8TypedLibraryStore(modelContainer: container)
+        var fixtures = [V10FormulaDocumentFixture]()
+        for paperIndex in 0..<20 {
+            // Coverage anchors are paper-scoped and reject non-positive IDs.
+            // Reuse this benchmark's synthetic V7 paper range so every
+            // formula proof is valid against the same persisted library.
+            let paperID = 10_000 + paperIndex
+            fixtures.append(try makeV10FormulaFixture(paperID: paperID, now: Date(timeIntervalSince1970: 1_700_000_000)))
+        }
+        let rssBeforeFormulaWork = benchmarkMaximumResidentSetSizeBytes()
+        var inventoryWriteSamples = [Int]()
+        let inventoryWriteTotalStart = ContinuousClock.Instant.now
+        for fixture in fixtures {
+            let writeStart = ContinuousClock.Instant.now
+            try await library.saveFormulaInventory(fixture.inventory, paperID: fixture.paperID)
+            inventoryWriteSamples.append(measurementMilliseconds(from: writeStart))
+        }
+        let inventoryWriteTotalMilliseconds = measurementMilliseconds(from: inventoryWriteTotalStart)
+        let rssAfterFormulaSeed = benchmarkMaximumResidentSetSizeBytes()
+
+        let storedInventoryCount = try container.mainContext.fetch(FetchDescriptor<StoredV10FormulaInventory>()).count
+        let storedFormulaRows = try container.mainContext.fetch(FetchDescriptor<StoredV10FormulaInventoryItem>())
+        let formulaCount = storedFormulaRows.count
+        let inventoryPayloadBytes = try container.mainContext.fetch(FetchDescriptor<StoredV10FormulaInventory>())
+            .reduce(0) { $0 + $1.payload.count }
+        let itemPayloadBytes = storedFormulaRows.reduce(0) { $0 + $1.payload.count }
+        guard storedInventoryCount == 20, formulaCount == 5_000 else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture("V12 disk store does not contain exactly 20 inventories and 5,000 formula rows")
+        }
+
+        let backupRoot = root.appendingPathComponent("v12-verified-backups", isDirectory: true)
+        let backup = try V4StoreBackupCoordinator.createBackup(source: activeURL, destinationRoot: backupRoot, schemaVersion: 12)
+        let backupVerified = try V4StoreBackupCoordinator.verify(backup, in: backupRoot)
+        var coldReopenSamples = [Int]()
+        for sample in 0..<20 {
+            let cloneRoot = root.appendingPathComponent("v12-cold-reopen-\(sample)", isDirectory: true)
+            try V4StoreBackupCoordinator.restore(backup, from: backupRoot, to: cloneRoot)
+            let cloneURL = cloneRoot.appendingPathComponent(activeURL.lastPathComponent)
+            coldReopenSamples.append(try await measureV12ColdReopen(at: cloneURL, paperID: fixtures[0].paperID,
+                                                                     documentHash: fixtures[0].inventory.documentHash))
+        }
+
+        _ = await library.searchPapers("local", limit: 100)
+        var warmSearchSamples = [Int]()
+        var warmSearchResultCount = 0
+        var searchBreakdowns = [V9SearchPerformanceBreakdown]()
+        for _ in 0..<100 {
+            let searchStart = ContinuousClock.Instant.now
+            let measured = await library.searchPapersWithMetrics("local", limit: 100)
+            warmSearchSamples.append(measurementMilliseconds(from: searchStart))
+            guard measured.usedV9Projection else {
+                throw BenchmarkFailure.invalidSyntheticFormulaFixture("Warm search fell back from the persisted V9 index")
+            }
+            warmSearchResultCount = measured.papers.count
+            searchBreakdowns.append(measured.breakdown)
+        }
+
+        var readMutationSamples = [Int]()
+        var favoriteMutationSamples = [Int]()
+        var noteMutationSamples = [Int]()
+        for index in 0..<100 {
+            let at = Date(timeIntervalSince1970: 1_700_000_100 + Double(index))
+            let readStart = ContinuousClock.Instant.now
+            try await library.markRead(index.isMultiple(of: 2), paperID: 10_001, at: at)
+            readMutationSamples.append(measurementMilliseconds(from: readStart))
+
+            let favoriteStart = ContinuousClock.Instant.now
+            try await library.applyReferenceMutation(.setFavorite(paperID: 10_001, isFavorite: index.isMultiple(of: 2), at: at))
+            favoriteMutationSamples.append(measurementMilliseconds(from: favoriteStart))
+
+            let note = UserNote(id: UUID(uuidString: "00000000-0000-0000-0000-000000000010")!, paperID: 10_001,
+                                body: "synthetic benchmark note revision \(index)",
+                                createdAt: Date(timeIntervalSince1970: 1_700_000_000), updatedAt: at)
+            let noteStart = ContinuousClock.Instant.now
+            try await library.applyReferenceMutation(.upsertNote(note))
+            noteMutationSamples.append(measurementMilliseconds(from: noteStart))
+        }
+
+        var formulaInventoryReadSamples = [Int]()
+        var formulaInventoryReadCount = 0
+        for index in 0..<100 {
+            let fixture = fixtures[index % fixtures.count]
+            let readStart = ContinuousClock.Instant.now
+            guard let inventory = try await library.formulaInventory(paperID: fixture.paperID,
+                                                                      documentHash: fixture.inventory.documentHash) else {
+                throw BenchmarkFailure.invalidSyntheticFormulaFixture("Production formula repository lost a seeded inventory in V12")
+            }
+            formulaInventoryReadSamples.append(measurementMilliseconds(from: readStart))
+            formulaInventoryReadCount = inventory.items.count
+            guard inventory.isComplete, inventory.items.count == 250 else {
+                throw BenchmarkFailure.invalidSyntheticFormulaFixture("A persisted formula inventory failed its full 250-item readback check")
+            }
+        }
+
+        let first = fixtures[0]
+        let jobID = "benchmark-v12-formula-job"
+        let baseDate = Date(timeIntervalSince1970: 1_700_001_000)
+        let firstBatchFixtures = try first.inventory.items.prefix(8).map { item -> (EvidenceClaim, FormulaDerivationSegmentCheckpoint) in
+            guard let anchorID = item.evidenceID else {
+                throw BenchmarkFailure.invalidSyntheticFormulaFixture("V12 benchmark claim is missing its source anchor")
+            }
+            let step = FormulaDerivationStep(stepID: "\(item.equationID):step:1", ordinal: 1,
+                textZH: "保留合成來源公式 \(item.label)。", beforeTeX: item.sourceTeX,
+                afterTeX: item.sourceTeX, ruleOrAssumption: "source-preserving benchmark fixture",
+                evidenceAnchorIDs: [anchorID], sourceDocumentHashes: [first.inventory.documentHash],
+                epistemicStatus: .inference)
+            var segment = FormulaDerivationSegmentCheckpoint(equationID: item.equationID, sourceTeX: item.sourceTeX)
+            try segment.appendSegment(index: 0, steps: [step], isFinal: true,
+                continuationSummary: nil, conclusionZH: "僅保留合成 benchmark 原式。",
+                requestID: "benchmark-v12-\(item.equationID)",
+                requestPayloadHash: String(repeating: "a", count: 64),
+                responseHash: String(repeating: "b", count: 64), receivedBytes: 64, receivedCharacters: 32,
+                firstContentAt: baseDate, lastContentAt: baseDate.addingTimeInterval(1))
+            let claim = EvidenceClaim(textZH: "合成來源公式 \(item.label)。", epistemicStatus: .direct,
+                evidenceIDs: [anchorID], formulaTeX: item.sourceTeX, equationID: item.equationID,
+                formulaDerivationSteps: [step], conclusionZH: "僅保留合成 benchmark 原式。",
+                derivationSegmentProvenanceHash: try segment.provenanceHash())
+            return (claim, segment)
+        }
+        let firstBatchClaims = firstBatchFixtures.map(\.0)
+        let segmentStatesByEquation = Dictionary(uniqueKeysWithValues: firstBatchFixtures.map {
+            ($0.1.equationID, $0.1)
+        })
+        let batchCheckpoints = first.batches.map { batch in
+            FormulaBatchCheckpoint(jobID: jobID, batchIndex: batch.index, batchTotal: batch.total,
+                                   equationIDs: batch.equationIDs, payloadHash: batch.payloadHash,
+                                   status: batch.index == 0 ? .completed : .prepared, updatedAt: baseDate)
+        }
+        var checkpoint = FormulaDerivationCheckpoint(
+            job: FormulaDerivationJob(jobID: jobID, paperID: first.paperID,
+                                      documentHash: first.inventory.documentHash,
+                                      inventoryHash: first.inventory.inventoryHash,
+                                      equationIDs: first.inventory.equationIDs, batchSize: 8,
+                                      state: .running, batches: batchCheckpoints, startedAt: baseDate, updatedAt: baseDate),
+            completedClaimsByBatch: [0: firstBatchClaims],
+            derivationSegmentsByEquation: segmentStatesByEquation,
+            promptVersion: FormulaDerivationPrompt.version,
+            schemaVersion: PaperInsightV2Validator.schemaVersion,
+            contextFingerprint: "synthetic-benchmark-context", updatedAt: baseDate
+        )
+        try await library.saveFormulaJob(checkpoint)
+        var formulaJobReadSamples = [Int]()
+        for _ in 0..<100 {
+            let readStart = ContinuousClock.Instant.now
+            guard let saved = try await library.formulaJob(id: jobID),
+                  saved.job.batches.count == first.batches.count,
+                  saved.completedClaimsByBatch[0]?.count == 8,
+                  saved.derivationSegmentsByEquation?.count == 8,
+                  saved.derivationSegmentsByEquation?.values.allSatisfy({ $0.completedSteps.count == 1 }) == true else {
+                throw BenchmarkFailure.invalidSyntheticFormulaFixture("V12 formula job/claim/step/segment rows did not survive repository readback")
+            }
+            formulaJobReadSamples.append(measurementMilliseconds(from: readStart))
+        }
+
+        var formulaJobCommitSamples = [Int]()
+        for index in 0..<100 {
+            let at = baseDate.addingTimeInterval(Double(index + 1))
+            checkpoint.updatedAt = at
+            checkpoint.job.updatedAt = at
+            let batchIndex = 1 + index % max(1, checkpoint.job.batches.count - 1)
+            checkpoint.job.batches[batchIndex].attemptCount += 1
+            checkpoint.job.batches[batchIndex].updatedAt = at
+            let commitStart = ContinuousClock.Instant.now
+            try await library.saveFormulaJob(checkpoint)
+            formulaJobCommitSamples.append(measurementMilliseconds(from: commitStart))
+        }
+        guard let savedCheckpoint = try await library.formulaJob(id: jobID),
+              savedCheckpoint.job.batches.reduce(0, { $0 + $1.attemptCount }) == 100 else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture("Formula checkpoint mutation samples did not persist all 100 attempt updates")
+        }
+
+        let searchTokens = try container.mainContext.fetch(FetchDescriptor<StoredV9SearchToken>())
+        let searchIndexPayloadBytes = searchTokens.reduce(0) { $0 + $1.token.utf8.count + $1.paperIDsData.count }
+        let storeBytes = try benchmarkStoreFamilyByteCount(activeURL, fileManager: fileManager)
+        let formulaJobRows = try container.mainContext.fetch(FetchDescriptor<StoredV11FormulaDerivationJob>()).count
+        let formulaClaimRows = try container.mainContext.fetch(FetchDescriptor<StoredV11FormulaClaim>()).count
+        let formulaStructuredStepRows = try container.mainContext.fetch(
+            FetchDescriptor<StoredV11FormulaDerivationStep>()).count
+        let formulaSegmentRows = try container.mainContext.fetch(
+            FetchDescriptor<StoredV12FormulaDerivationSegment>()).count
+        let formulaSegmentStepRows = try container.mainContext.fetch(
+            FetchDescriptor<StoredV12FormulaDerivationSegmentStep>()).count
+        let batchCheckpointRows = try container.mainContext.fetch(FetchDescriptor<StoredV10FormulaBatchCheckpoint>()).count
+        let formulaRowsAfterWork = try container.mainContext.fetch(FetchDescriptor<StoredV10FormulaInventoryItem>()).count
+        let result = V12FormulaDiskBenchmark(
+            inputManifestSHA256: inputManifestSHA256 ?? "unbound-direct-run",
+            authors: authors, papers: papers, links: links, chunks: chunks, radarEvents: radarEvents,
+            formulaInventoryCount: storedInventoryCount, formulaCount: formulaCount,
+            inventoryWriteSamplesMs: inventoryWriteSamples, inventoryWriteTotalMs: inventoryWriteTotalMilliseconds,
+            formulaParseSamplesMs: fixtures.map(\.parseMilliseconds),
+            batchPlanSamplesMs: fixtures.map(\.batchPlanMilliseconds),
+            batchPlansPerInventory: fixtures.map { $0.batches.count },
+            mergeValidationSamplesMs: fixtures.map(\.mergeValidationMilliseconds),
+            coldReopenSamplesMs: coldReopenSamples, warmSearchSamplesMs: warmSearchSamples,
+            warmSearchResultCount: warmSearchResultCount, searchBreakdowns: searchBreakdowns,
+            readMutationSamplesMs: readMutationSamples, favoriteMutationSamplesMs: favoriteMutationSamples,
+            noteMutationSamplesMs: noteMutationSamples,
+            formulaInventoryReadSamplesMs: formulaInventoryReadSamples, formulaInventoryReadCount: formulaInventoryReadCount,
+            formulaJobReadSamplesMs: formulaJobReadSamples, formulaJobCommitSamplesMs: formulaJobCommitSamples,
+            formulaBatchCount: first.batches.count, backupVerified: backupVerified,
+            v7SeedMilliseconds: v7SeedMilliseconds, v7ToV8Milliseconds: v7ToV8Milliseconds,
+            v8ToV12OpenMilliseconds: v8ToV12OpenMilliseconds, indexBuildMilliseconds: indexBuildMilliseconds,
+            storeBytes: storeBytes, searchIndexTokenRows: searchTokens.count,
+            searchIndexPayloadBytes: searchIndexPayloadBytes,
+            formulaInventoryPayloadBytes: inventoryPayloadBytes, formulaItemPayloadBytes: itemPayloadBytes,
+            formulaJobRows: formulaJobRows, formulaClaimRows: formulaClaimRows,
+            formulaStructuredStepRows: formulaStructuredStepRows,
+            formulaSegmentRows: formulaSegmentRows, formulaSegmentStepRows: formulaSegmentStepRows,
+            batchCheckpointRows: batchCheckpointRows,
+            formulaRowsAfterWork: formulaRowsAfterWork,
+            rssBeforeFormulaWorkBytes: rssBeforeFormulaWork, rssAfterFormulaSeedBytes: rssAfterFormulaSeed,
+            rssPeakBytes: benchmarkMaximumResidentSetSizeBytes(),
+            totalWallMilliseconds: measurementMilliseconds(from: totalStart)
+        )
+        return result
+    }
+
+    @MainActor
+    private static func measureV12ColdReopen(at storeURL: URL, paperID: Int, documentHash: String) async throws -> Int {
+        let schema = Schema(versionedSchema: LatticeLensSchemaV12.self)
+        let start = ContinuousClock.Instant.now
+        let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV12.self,
+                                           configurations: ModelConfiguration(schema: schema, url: storeURL))
+        let elapsed = measurementMilliseconds(from: start)
+        guard try V9TypedSearchIndex.isCurrent(in: container.mainContext),
+              let inventory = try await V10FormulaInventoryStore(modelContainer: container)
+                .formulaInventory(paperID: paperID, documentHash: documentHash),
+              inventory.items.count == 250 else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture("A fresh V12 container did not reopen the indexed 250-formula inventory")
+        }
+        return elapsed
+    }
+
+    private static func makeV10FormulaFixture(paperID: Int, now: Date) throws -> V10FormulaDocumentFixture {
+        let documentHash = StableHash.sha256("latticelens-v10-formula-benchmark-document-\(paperID)")
+        let html = (1...250).map { index in
+            #"<div class="ltx_equation"><math alttext="x_\#(index)=y_\#(index)"></math><span class="ltx_tag_equation">(\#(index))</span></div>"#
+        }.joined(separator: "\n")
+        let parseStart = ContinuousClock.Instant.now
+        let inventory = FormulaInventoryParser.parse(html: html, documentHash: documentHash)
+        let parseMilliseconds = measurementMilliseconds(from: parseStart)
+        guard inventory.isComplete, inventory.items.count == 250 else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture("The generated 250-equation HTML did not parse as a complete source inventory")
+        }
+        let paper = makeV7BenchmarkPaper(paperID, now: now)
+        let document = FullTextDocument(
+            paperID: paperID, sourceURL: URL(string: "https://ar5iv.labs.arxiv.org/html/benchmark-\(paperID)")!,
+            sourceKind: .arxivHTML, sha256: documentHash, byteCount: html.utf8.count,
+            localFilename: nil, pageCount: nil, extractionState: .extracted, downloadedAt: now,
+            lastErrorCategory: nil, numberedEquationIndexVersion: FullTextService.numberedEquationIndexVersion,
+            numberedEquationCount: inventory.items.count, numberedEquationIndexComplete: true,
+            numberedEquationInventoryHash: inventory.inventoryHash
+        )
+        let chunks = inventory.items.map { item in
+            let quote = "编号公式 \(item.label)\n$$\(item.sourceTeX)$$"
+            let anchorID = item.evidenceID!
+            return EvidenceChunk(id: anchorID, paperID: paperID, documentHash: documentHash, page: 1,
+                                 section: "synthetic-benchmark", characterRangeStart: 0,
+                                 characterRangeEnd: quote.count, text: quote, textHash: StableHash.sha256(quote),
+                                 equationID: item.equationID, equationLabel: item.label,
+                                 equationTeX: item.sourceTeX, equationOrdinal: item.ordinal)
+        }
+        let anchors = Dictionary(uniqueKeysWithValues: chunks.map { chunk in
+            (chunk.id, EvidenceAnchor(id: chunk.id, paperID: paperID, sourceKind: .pdf, page: nil,
+                                      section: chunk.section, quote: chunk.text, quoteHash: chunk.textHash,
+                                      figureKey: nil))
+        })
+        let payload = EvidenceInputPayload(paper: paper, document: document, chunks: chunks,
+                                           anchors: Array(anchors.values))
+        guard payload.numberedEquationCoverageComplete else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture(payload.numberedEquationCoverageFailure ?? "Evidence payload rejected complete synthetic formulas")
+        }
+
+        let planStart = ContinuousClock.Instant.now
+        let benchmarkProfile = ProviderProfile(provider: .localOpenAICompatible,
+            baseURL: "http://127.0.0.1:11434/v1", manualModel: "synthetic-benchmark", usesStreaming: false)
+        let batches = try FormulaBatchPlanner.plan(source: payload, jobID: "benchmark-formula-\(paperID)",
+                                                   batchSize: 8, profile: benchmarkProfile)
+        let batchPlanMilliseconds = measurementMilliseconds(from: planStart)
+        let claims = inventory.items.map { item in
+            let anchorID = item.evidenceID!
+            let step = FormulaDerivationStep(stepID: "\(item.equationID):step:1", ordinal: 1,
+                textZH: "合成基准步骤，不代表物理论证。", beforeTeX: item.sourceTeX,
+                afterTeX: item.sourceTeX, ruleOrAssumption: "synthetic benchmark fixture",
+                evidenceAnchorIDs: [anchorID], sourceDocumentHashes: [documentHash],
+                epistemicStatus: .inference)
+            return EvidenceClaim(textZH: "合成來源公式 \(item.label)。", epistemicStatus: .direct,
+                evidenceIDs: [anchorID], formulaTeX: item.sourceTeX, equationID: item.equationID,
+                formulaDerivationSteps: [step], conclusionZH: "仅保留合成 benchmark 的原式；不表示物理推导结论。")
+        }
+        let mergeStart = ContinuousClock.Instant.now
+        let coverage = try FormulaCoverageValidator.validate(inventory: inventory, claims: claims, anchors: anchors)
+        let mergeValidationMilliseconds = measurementMilliseconds(from: mergeStart)
+        guard coverage.isComplete, batches.count == 32 else {
+            throw BenchmarkFailure.invalidSyntheticFormulaFixture("Formula batch plan or source-coverage merge is incomplete")
+        }
+        return V10FormulaDocumentFixture(paperID: paperID, inventory: inventory, batches: batches,
+                                         parseMilliseconds: parseMilliseconds,
+                                         batchPlanMilliseconds: batchPlanMilliseconds,
+                                         mergeValidationMilliseconds: mergeValidationMilliseconds)
+    }
+
     private func benchmarkDiskBackedStore(root: URL) async throws -> DiskBenchmark {
         let manager = FileManager.default
         let storeURL = root.appendingPathComponent("benchmark-v6.store")
@@ -858,7 +1287,250 @@ private struct MigrationBenchmark {
     let migratedPaperCount: Int
 }
 
-private enum BenchmarkFailure: Error {
+private struct V10FormulaDocumentFixture {
+    let paperID: Int
+    let inventory: FormulaInventory
+    let batches: [NumberedEquationBatch]
+    let parseMilliseconds: Int
+    let batchPlanMilliseconds: Int
+    let mergeValidationMilliseconds: Int
+}
+
+private struct V12FormulaDiskBenchmark {
+    let inputManifestSHA256: String
+    let authors: Int
+    let papers: Int
+    let links: Int
+    let chunks: Int
+    let radarEvents: Int
+    let formulaInventoryCount: Int
+    let formulaCount: Int
+    let inventoryWriteSamplesMs: [Int]
+    let inventoryWriteTotalMs: Int
+    let formulaParseSamplesMs: [Int]
+    let batchPlanSamplesMs: [Int]
+    let batchPlansPerInventory: [Int]
+    let mergeValidationSamplesMs: [Int]
+    let coldReopenSamplesMs: [Int]
+    let warmSearchSamplesMs: [Int]
+    let warmSearchResultCount: Int
+    let searchBreakdowns: [V9SearchPerformanceBreakdown]
+    let readMutationSamplesMs: [Int]
+    let favoriteMutationSamplesMs: [Int]
+    let noteMutationSamplesMs: [Int]
+    let formulaInventoryReadSamplesMs: [Int]
+    let formulaInventoryReadCount: Int
+    let formulaJobReadSamplesMs: [Int]
+    let formulaJobCommitSamplesMs: [Int]
+    let formulaBatchCount: Int
+    let backupVerified: Bool
+    let v7SeedMilliseconds: Int
+    let v7ToV8Milliseconds: Int
+    let v8ToV12OpenMilliseconds: Int
+    let indexBuildMilliseconds: Int
+    let storeBytes: Int64
+    let searchIndexTokenRows: Int
+    let searchIndexPayloadBytes: Int
+    let formulaInventoryPayloadBytes: Int
+    let formulaItemPayloadBytes: Int
+    let formulaJobRows: Int
+    let formulaClaimRows: Int
+    let formulaStructuredStepRows: Int
+    let formulaSegmentRows: Int
+    let formulaSegmentStepRows: Int
+    let batchCheckpointRows: Int
+    let formulaRowsAfterWork: Int
+    let rssBeforeFormulaWorkBytes: Int64
+    let rssAfterFormulaSeedBytes: Int64
+    let rssPeakBytes: Int64
+    let totalWallMilliseconds: Int
+
+    private var coldReopenP50: Int { benchmarkPercentile(coldReopenSamplesMs, percentile: 0.50) }
+    private var coldReopenP95: Int { benchmarkPercentile(coldReopenSamplesMs, percentile: 0.95) }
+    private var warmSearchP50: Int { benchmarkPercentile(warmSearchSamplesMs, percentile: 0.50) }
+    private var warmSearchP95: Int { benchmarkPercentile(warmSearchSamplesMs, percentile: 0.95) }
+    private var readMutationP95: Int { benchmarkPercentile(readMutationSamplesMs, percentile: 0.95) }
+    private var favoriteMutationP95: Int { benchmarkPercentile(favoriteMutationSamplesMs, percentile: 0.95) }
+    private var noteMutationP95: Int { benchmarkPercentile(noteMutationSamplesMs, percentile: 0.95) }
+
+    var jsonObject: [String: Any] {
+        [
+            "schema_version": "latticelens-benchmark-v12-formula",
+            "persistence_schema_version": 12,
+            "input_manifest_sha256": inputManifestSHA256,
+            "build": ["configuration": "SwiftPM-debug-XCTest", "product_version": "2.0.0", "build_number": 201],
+            "machine": [
+                "architecture": benchmarkArchitectureName(),
+                "operating_system": ProcessInfo.processInfo.operatingSystemVersionString,
+                "logical_cpu_count": ProcessInfo.processInfo.processorCount,
+                "active_cpu_count": ProcessInfo.processInfo.activeProcessorCount,
+                "physical_memory_bytes": ProcessInfo.processInfo.physicalMemory
+            ],
+            "dataset": [
+                "authors": authors, "papers": papers, "paper_author_links": links,
+                "evidence_chunks": chunks, "radar_events": radarEvents,
+                "formula_inventories": formulaInventoryCount, "formulas": formulaCount,
+                "formulas_per_inventory": 250
+            ],
+            "thresholds_ms": [
+                "cold_reopen_p95": 5_000, "warm_search_p95": 250,
+                "read_mutation_p95": 100, "favorite_mutation_p95": 100,
+                "note_mutation_p95": 100
+            ],
+            "measurements": [
+                "cold_reopen": ["sample_count": coldReopenSamplesMs.count,
+                                 "samples_ms": coldReopenSamplesMs, "p50_ms": coldReopenP50,
+                                 "p95_ms": coldReopenP95,
+                                 "method": "20 separately restored byte-verified store-family clones; time covers new V12 ModelContainer construction and excludes clone restore and post-open integrity read; OS page cache was not flushed."],
+                "warm_search": ["sample_count": warmSearchSamplesMs.count,
+                                "samples_ms": warmSearchSamplesMs, "p50_ms": warmSearchP50,
+                                "p95_ms": warmSearchP95, "result_count": warmSearchResultCount,
+                                "v9_index_breakdown": V9SearchBenchmarkBreakdownSummary(samples: searchBreakdowns).jsonObject],
+                "read_mutation": ["sample_count": readMutationSamplesMs.count,
+                                  "samples_ms": readMutationSamplesMs,
+                                  "p95_ms": readMutationP95, "operation": "V8TypedLibraryStore.markRead"],
+                "favorite_mutation": ["sample_count": favoriteMutationSamplesMs.count,
+                                      "samples_ms": favoriteMutationSamplesMs,
+                                      "p95_ms": favoriteMutationP95, "operation": "V8TypedLibraryStore.applyReferenceMutation(setFavorite)"],
+                "note_mutation": ["sample_count": noteMutationSamplesMs.count,
+                                  "samples_ms": noteMutationSamplesMs,
+                                  "p95_ms": noteMutationP95, "operation": "V8TypedLibraryStore.applyReferenceMutation(upsertNote)"],
+                "formula_inventory_read": ["sample_count": formulaInventoryReadSamplesMs.count,
+                                           "samples_ms": formulaInventoryReadSamplesMs,
+                                           "p95_ms": benchmarkPercentile(formulaInventoryReadSamplesMs, percentile: 0.95),
+                                           "items_per_result": formulaInventoryReadCount],
+                "formula_job_read": ["sample_count": formulaJobReadSamplesMs.count,
+                                     "samples_ms": formulaJobReadSamplesMs,
+                                     "p95_ms": benchmarkPercentile(formulaJobReadSamplesMs, percentile: 0.95),
+                                     "claims_per_result": formulaClaimRows,
+                                     "structured_steps_per_result": formulaStructuredStepRows,
+                                     "segments_per_result": formulaSegmentRows,
+                                     "segment_steps_per_result": formulaSegmentStepRows],
+                "formula_job_checkpoint_commit": ["sample_count": formulaJobCommitSamplesMs.count,
+                                                   "samples_ms": formulaJobCommitSamplesMs,
+                                                   "p50_ms": benchmarkPercentile(formulaJobCommitSamplesMs, percentile: 0.50),
+                                                   "p95_ms": benchmarkPercentile(formulaJobCommitSamplesMs, percentile: 0.95)]
+            ],
+            "formula_work": [
+                "html_parse_sample_count": formulaParseSamplesMs.count,
+                "html_parse_samples_ms": formulaParseSamplesMs,
+                "html_parse_p95_ms": benchmarkPercentile(formulaParseSamplesMs, percentile: 0.95),
+                "inventory_write_sample_count": inventoryWriteSamplesMs.count,
+                "inventory_write_samples_ms": inventoryWriteSamplesMs,
+                "inventory_write_p50_ms": benchmarkPercentile(inventoryWriteSamplesMs, percentile: 0.50),
+                "inventory_write_p95_ms": benchmarkPercentile(inventoryWriteSamplesMs, percentile: 0.95),
+                "inventory_write_total_ms": inventoryWriteTotalMs,
+                "batch_plan_sample_count": batchPlanSamplesMs.count,
+                "batch_plan_samples_ms": batchPlanSamplesMs,
+                "batch_plan_p95_ms": benchmarkPercentile(batchPlanSamplesMs, percentile: 0.95),
+                "batch_size": 8,
+                "batches_per_inventory": batchPlansPerInventory,
+                "total_batch_plans": batchPlansPerInventory.reduce(0, +),
+                "merge_validation_sample_count": mergeValidationSamplesMs.count,
+                "merge_validation_samples_ms": mergeValidationSamplesMs,
+                "merge_validation_p95_ms": benchmarkPercentile(mergeValidationSamplesMs, percentile: 0.95),
+                "formula_job_batch_count": formulaBatchCount,
+                "formula_inventory_limit_per_document": FormulaInventory.maximumItems,
+                "claim_fixture_scope": "Eight canonical claims, structured steps, and append-only V12 segment receipts exercise source-coverage persistence; this synthetic coverage is not mathematical or physical correctness evidence."
+            ],
+            "setup_ms": [
+                "v7_synthetic_seed": v7SeedMilliseconds,
+                "v7_to_v8_staged_migration": v7ToV8Milliseconds,
+                "v8_to_v12_schema_open_and_migration": v8ToV12OpenMilliseconds,
+                "v9_search_index_build": indexBuildMilliseconds
+            ],
+            "storage": [
+                "disk_backed": true,
+                "backup_verified": backupVerified,
+                "store_family_bytes": storeBytes,
+                "search_index_token_rows": searchIndexTokenRows,
+                "search_index_payload_bytes": searchIndexPayloadBytes,
+                "formula_inventory_payload_bytes": formulaInventoryPayloadBytes,
+                "formula_item_payload_bytes": formulaItemPayloadBytes,
+                "formula_inventory_rows": formulaInventoryCount,
+                "formula_item_rows": formulaRowsAfterWork,
+                "formula_job_rows": formulaJobRows,
+                "formula_claim_rows": formulaClaimRows,
+                "formula_structured_step_rows": formulaStructuredStepRows,
+                "formula_segment_rows": formulaSegmentRows,
+                "formula_segment_step_rows": formulaSegmentStepRows,
+                "batch_checkpoint_rows": batchCheckpointRows
+            ],
+            "row_commit_encode_work": [
+                "inventory_upsert": "One production repository save per inventory, one ModelContext save, inventory payload encoded once and each of 250 item payloads encoded separately.",
+                "formula_job_checkpoint_mutation": [
+                    "samples": formulaJobCommitSamplesMs.count,
+                    "job_rows_visited_per_commit": 1,
+                    "canonical_claim_rows_touched_per_commit": formulaClaimRows,
+                    "canonical_structured_step_rows_touched_per_commit": formulaStructuredStepRows,
+                    "batch_checkpoint_rows_visited_per_commit": formulaBatchCount,
+                    "context_save_calls_per_commit": 1,
+                    "canonical_segment_rows_visited_per_commit": formulaSegmentRows,
+                    "canonical_segment_step_rows_visited_per_commit": formulaSegmentStepRows,
+                    "measurement_basis": "Source-derived from the V12 FormulaJobStoring implementation; row-family counts describe repository reads/upserts, not SQLite statement instrumentation."
+                ],
+                "read_mutation": ["logical domain rows per commit": 2, "context save calls per mutation": 1,
+                                  "encoding": "typed scalar updates; no full Paper JSON re-encode"],
+                "favorite_and_note_mutations": "Production LibraryStoring applyReferenceMutation paths; timing includes search-index maintenance."
+            ],
+            "rss": [
+                "process_peak_bytes": rssPeakBytes,
+                "before_formula_inventory_persistence_peak_bytes": rssBeforeFormulaWorkBytes,
+                "after_formula_inventory_seed_peak_bytes": rssAfterFormulaSeedBytes,
+                "additional_high_water_during_inventory_seed_bytes": max(0, rssAfterFormulaSeedBytes - rssBeforeFormulaWorkBytes),
+                "scope": "Dedicated XCTest process high-water mark; includes synthetic V7 seed and schema/index setup, not a per-paper or per-formula isolated allocation measurement."
+            ],
+            "total_wall_ms": totalWallMilliseconds
+        ]
+    }
+}
+
+private func benchmarkPercentile(_ values: [Int], percentile: Double) -> Int {
+    guard !values.isEmpty else { return 0 }
+    let sorted = values.sorted()
+    return sorted[min(sorted.count - 1, Int((Double(sorted.count - 1) * percentile).rounded(.up)))]
+}
+
+private func benchmarkMaximumResidentSetSizeBytes() -> Int64 {
+    var usage = rusage()
+    guard getrusage(RUSAGE_SELF, &usage) == 0 else { return -1 }
+    return Int64(usage.ru_maxrss)
+}
+
+private func benchmarkStoreFamilyByteCount(_ storeURL: URL, fileManager: FileManager) throws -> Int64 {
+    var total: Int64 = 0
+    for url in [storeURL, URL(fileURLWithPath: storeURL.path + "-wal"), URL(fileURLWithPath: storeURL.path + "-shm")]
+    where fileManager.fileExists(atPath: url.path) {
+        guard let size = try fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber else { continue }
+        total += size.int64Value
+    }
+    return total
+}
+
+private func benchmarkArchitectureName() -> String {
+    #if arch(arm64)
+    return "arm64"
+    #elseif arch(x86_64)
+    return "x86_64"
+    #else
+    return "unknown"
+    #endif
+}
+
+private enum BenchmarkFailure: LocalizedError {
     case rootAlreadyExists(String)
     case insufficientColdOpenSamples
+    case untrustedBenchmarkRoot(String)
+    case untrustedBenchmarkOutput(String)
+    case invalidSyntheticFormulaFixture(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .rootAlreadyExists(let path): "Benchmark scratch already exists: \(path)"
+        case .insufficientColdOpenSamples: "The disk benchmark did not collect its required cold-open samples."
+        case .untrustedBenchmarkRoot(let path): "Benchmark root is outside the verifier-owned project scratch: \(path)"
+        case .untrustedBenchmarkOutput(let path): "Benchmark receipt output is outside the current project: \(path)"
+        case .invalidSyntheticFormulaFixture(let reason): reason
+        }
+    }
 }

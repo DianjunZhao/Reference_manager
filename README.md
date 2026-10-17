@@ -1,51 +1,21 @@
 # LatticeLens
 
-> 当前开发候选为 **LatticeLens 1.0.10 (110)**，仍是 same-Mac local candidate，尚非
-> notarized/final release。它在 `release-assets/Release-1.0.10-local/` 中带有独立的
-> `manifest-v1.0.10.json` 与 `SHA256SUMS.txt`；安装前必须核对其中的哈希及 Finder 的
-> 版本号和 executable SHA-256，而不能以旧 `/Applications` 二进制代替它。当前发布包的
-> executable SHA-256 以同目录的 `manifest-v1.0.10.json` 为准。
-> 当前 verifier 会执行 SwiftPM、actual SwiftData disk benchmark、Xcode build/analyze/unit、normal/
-> large fixture UI、synthetic disposable V7 migration、typed-store/physics/Radar/Compare/Notebook/
-> Bundle 与 same-Mac DMG smoke；其成功仍不替代下列人工 P0 gate。
->
-> 1.0.0 的历史自动化入口是 `zsh Scripts/verify_v5.sh --local-only`；只有 non-empty build-input manifest
-> 所绑定的 verifier 才可作为 candidate。它真实执行 fixture UI、SwiftData disk benchmark、synthetic
-> disposable V7 migration 和 same-Mac DMG smoke；不能用历史 `.xcresult`、单用例或静态 build 代替它。
-> 2026-08-28 起，UI gate 是一次性 selected UI delta：1 个 normal case（Sync Center 滚动）与 2 个 large
-> case（虚拟化作者选择、长 Settings 滚动），每个 case 均单独启动 fixture app 并生成一份可读 result。三种窗口
-> 尺寸观察保留为人工 P0 receipt。完整 26-case fixture suite 仍用于开发回归，不再是该同机 release 的非重复
-> 封存 gate；manifest 会记录该范围和确切计数。
-> 对当前 **1.0.10 (110)** 安装包，最终封存会校验两份 release DMG 的字节一致性、DMG image、当前
-> `/Applications/LatticeLens.app` 的版本/签名/executable hash，并要求 receipt 精确绑定
-> `manifest-v1.0.10.json`；它不把旧版本的自动化记录冒充为 1.0.10 的新测试。
-> 需要人工观察的最小清单与可直接回复的确认语句见
-> [MANUAL_1_0_10_ACCEPTANCE.md](MANUAL_1_0_10_ACCEPTANCE.md)。
->
-> 目前仍 fail-closed 的 1.0 边界是：真实 VoiceOver/Accessibility Inspector 与三种窗口尺寸观察、
-> 三篇 sanitized LQCD fixture rubric、用户选择下的 `/Applications` install/uninstall/app+data
-> rollback 演练。已审核的 207-path cleanup whitelist 已依
-> `CleanupApplyReceipt-v1.0-20260828T030918Z.json` 删除；未完成这些人工事实前，仍不得称为
-> `Reference_manager 1.0 final`。
->
-> 所有 migration drill 仅使用用户授权的 synthetic/disposable V7 store family（主 `.store` 及存在时
-> 的 `-wal`/`-shm`），绝不读取真实 active library。Developer ID、公证、Gatekeeper public release、
-> cross-Mac install、live INSPIRE 与 paid/live LLM 不属于 1.0 local-only mandatory scope。
->
-> [VALIDATION_V4.md]($PROJECT_ROOT/VALIDATION_V4.md) 与历史 v4
-> release 目录仅保留为历史 fixture evidence，不能代表当前源码或 1.0 release 通过。
+## Current status
 
-> v2 implementation status: the local evidence-reader and core reference
-> manager paths have completed their local contract gates. See
-> [VALIDATION_V2.md]($PROJECT_ROOT/VALIDATION_V2.md)
-> for the audited ledger; it is not a v2 public-release claim.
+The current target is **LatticeLens 2.0.0 (201)**. It remains a project-local development candidate, not a final release. The checked-in [VALIDATION_2.0_FINAL.md](VALIDATION_2.0_FINAL.md) and `evidence/Validation-2.0-final-local.json` are historical receipts until explicitly regenerated. Prefer the newest run-specific Markdown/JSON report and its matching `*-inputs.json`; treat any receipt as current only when its frozen input manifest matches the source snapshot being evaluated.
 
-LatticeLens 是一个原生 macOS SwiftUI 文献工作台，面向 INSPIRE 的 hep-lat / hep-th 作者与论文资料浏览。它实现了 `INSPIRE文献管理器_开工方案_v1.md` 冻结的 v1 约定：
+The final verifier places its managed SwiftPM/Xcode build products, test stores, fixture caches, temporary roots, logs, and result bundles under a unique project-local scratch. `TMPDIR` is provided to child tools, but Foundation/XCTest may resolve their system temporary directory independently; application/test data therefore uses explicit project-local roots and fails closed when an isolated store root is missing. This does not claim control over OS-managed XCTest state.
 
-- 作者候选仅指 `author.arxiv_categories` 含 `hep-lat` 或 `hep-th` 的 INSPIRE author record；完成 h-index 校验后仅展示 `h > 20`，不是历史 cross-list 合作者全集。
-- 固定 INSPIRE recid `2010363` 为“我的主页”，无论 h-index 都置顶。
-- 正式作者列表仅包含经验证的 `INSPIRE h(all, including self-citations) > 20`。`20` 不合格；请求失败保持 `failed/unknown`，绝不写成 `0` 或“不合格”。
-- Paper Lens 默认只使用标题、摘要和 INSPIRE figure captions；有 arXiv ID 时优先提供对应的 ar5iv HTML 直链。用户明确确认后才读取受限 HTML（不下载 INSPIRE PDF）并生成 bounded evidence anchors；PDF 仅作为明确标注的回退路径。全文来源、URL、SHA-256 和提取状态会保留；不声称模型看过图像像素。
+Fresh category profiles default to `hep-lat` + `hep-ph`. The legacy `hep-lat` + `hep-th` profile remains available for migrated or explicitly selected libraries; migration must not silently replace a saved profile. The author-recID partition table has an open-ended final range, so it has no fixed recid ceiling; a partition exceeding INSPIRE's 10,000-result window still pauses as incomplete, and live global coverage is not claimed without a completed network crawl.
+
+Historical 1.0 plans, validation, and release artifacts are retained for audit and rollback context. Their verifier receipts are not evidence for the current 2.0 source. The older `verify_v*` scripts remain historical tools; no 2.0 final-verifier PASS is claimed.
+
+LatticeLens is a native macOS SwiftUI reference and evidence workstation for INSPIRE literature. The current candidate preserves these product invariants:
+
+- Candidate authors are INSPIRE author records matching the configured arXiv category set; the enabled view is not a claim to enumerate every historical cross-listed collaborator.
+- INSPIRE author recid `2010363` is pinned independently of h-index qualification.
+- Ordinary qualification requires verified `h(all, including self-citations) > 20`; `20` does not qualify. Missing, failed, or stale values remain distinct from zero and rejection.
+- Paper Lens starts from title, abstract, and INSPIRE figure captions. ar5iv HTML is offered for explicit local reading; source URL, SHA-256, extraction state, and evidence anchors are retained. The app does not claim that a text-only workflow inspected image pixels.
 
 当记录存在 arXiv ID 时，Paper Lens 会提供明确标注的 ar5iv HTML 入口（`https://ar5iv.labs.arxiv.org/html/<arXiv-ID>`），无论 INSPIRE 是否提供 PDF。该链接可直接在浏览器打开；若要生成证据和公式推导，用户再确认一次受限 HTML 读取。ar5iv 是 LaTeX→HTML 的渲染服务，个别论文可能转换失败或缺少公式/结构；失败时应用保持原始 metadata 可用，不把失败伪装成全文成功。没有 arXiv ID 的记录仍只能使用其受信任的 INSPIRE 文档。
 
@@ -55,9 +25,19 @@ LatticeLens 是一个原生 macOS SwiftUI 文献工作台，面向 INSPIRE 的 h
 
 - `LatticeLens`：macOS application target；
 - `LatticeLensTests`：unit / integration fixture target；
-- `LatticeLens-Unit`：只包含 `LatticeLensTests` 的共享 Xcode unit scheme；它将 host-free XCTest 与 UI
-  bundle 分离，但仍必须由本轮可读 `.xcresult` 证明执行；
+- `LatticeLens-Unit`：只包含 `LatticeLensTests` 的共享 Xcode unit scheme，与 UI bundle 分离；目前该 XCTest target 以 `LatticeLens.app` 为 test host。无图形界面的 host-free 业务测试由 SwiftPM 提供；Xcode unit action 仍须由本轮可读 `.xcresult` 证明执行；
 - `LatticeLensUITests`：真实 `XCUIApplication` target，通过 `-LatticeLensUseFixtures YES` 显式注入内存 fixture，不读取个人资料库、不访问 INSPIRE、provider 或 Keychain。
+
+The large UI fixture remains in-memory by default. Quit/relaunch durability uses a
+separate opt-in (`LATTICELENS_DISK_BACKED_UI_FIXTURE=1`) and a unique store root
+strictly beneath the project-local `LATTICELENS_TEST_STORE_ROOT`. The app exposes
+that exact root as an accessibility receipt, refuses unknown or partially seeded
+stores without clearing them, and does not reseed a complete corpus on relaunch.
+In this mode, content-addressed full-text blobs live in the fixture root's
+`FullText/` child and survive process exit for offline reindexing; ordinary
+process-local fixtures retain PID-scoped disposable caches.
+This fixture mode is test-only; a disk-backed test definition is not an executed
+XCUITest result or a VoiceOver acceptance receipt.
 
 也可在终端中运行：
 
@@ -66,7 +46,7 @@ cd $PROJECT_ROOT
 swift run LatticeLens
 ```
 
-首启时会优先请求并缓存本人作者 record；点击“构建 hep-lat / hep-th 作者索引”后才会分页加载候选并以最多两个并发请求计算 h-index。选择作者时先显示本地论文，只有尚无本地数据才自动同步；分页每成功一页立即 upsert 与保存 checkpoint。已关注作者会在“置顶作者”区保持可见。无 abstract 的记录仅在用户同意后发送标题以生成严格的中文标题；不会生成物理解释或标题扩写的论文结论。
+On first launch, the app prefers the pinned author record. Building the author index uses the configured category profile and a bounded h-index queue. Local papers are shown before an INSPIRE sync; each committed page persists its rows and checkpoint. User-selected authors remain pinned. A title-only translation requires consent when an abstract is absent and is not represented as a physics conclusion.
 
 ## 项目结构
 
@@ -76,7 +56,7 @@ Sources/LatticeLens/
 ├── Core/
 │   ├── Models/              # 规范化 domain models 与筛选契约
 │   ├── Networking/          # INSPIRE DTO、受信分页与 HTTP client
-│   ├── Persistence/         # V1–V7→V8 core staged migration、V9 indexed active store 与 actor repository
+│   ├── Persistence/         # V1–V7→V8 staging, V9 search, V10 domain, V11 formula jobs, V12 derivation segments
 │   └── Support/             # 哈希、clock、错误分类、搜索归一化
     ├── Features/
     │   ├── Authors/             # 候选索引、HIndexQueue、A-Z/search
@@ -87,11 +67,13 @@ Sources/LatticeLens/
 └── LLM/
     ├── Provider/            # Keychain、endpoint 验证、OpenAI-compatible SSE
     ├── Prompt/              # versioned system/user JSON contracts
-    ├── Schema/              # paper-insight-v1 strict decoder/validator
+    ├── Schema/              # versioned insight/formula contracts and strict validators
     └── Workflow/            # cache、Fast/Deep、状态与取消
 ```
 
-当前 active library 是 V8 typed SwiftData domain core 加 V9 durable local-search projection：作者、论文、link、checkpoint、reading state、notes、tags、collections、PDF/blob/reference、evidence、Radar、Compare、Notebook、Bundle 和 migration/backup record 均以稳定 ID 的独立 row 持久化。V9 token/reverse-token rows 是可重建投影；日常更新只修改受影响 paper 的 posting，`searchPapers` 不再 materialize 整个 `LibrarySnapshot`。`LibrarySnapshot` 只保留为 fixture、export/compatibility import 和只读 UI projection，不是 active truth，也不会作为正常 mutation 前的全库 rewrite 输入。V1–V7 source 会先复制带 SHA-256 的完整 store family，写入外置 journal，再在独立 V8 core staging store 完成 semantic verification，继而开启 V9 index 后激活；失败时 UI 进入只读恢复状态，绝不以空 JSON library 或 silent fallback 覆盖旧资料。所有 store 均 actor 隔离，SwiftUI 只接收不可变 projection。
+The current code defines a V8 typed domain core, a rebuildable V9 local-search projection, V10 category/inventory/batch/checkpoint/analysis rows, V11 canonical formula-job/claim/structured-step rows, and V12 append-only derivation-segment/segment-step rows. The default factory stages V8/V9/V10/V11 stores toward V12 behind a verified backup, semantic checks, and an active descriptor; synthetic regressions cover source preservation, crash recovery, and a manifest-bound V10-to-V12 activation/restore/rollback drill. No real user library has been opened or migrated. Formula-job reads and writes reconstruct mutable job state, claims, structured steps, and segment provenance from typed rows; a V10 checkpoint payload is used only for one-time legacy backfill when the canonical job row is absent and is not refreshed on later writes. Bundle schema 7 exports and restores canonical V12 formula rows; schema 6 import and schema 5 typed import remain supported. `LibrarySnapshot` remains for fixtures, compatibility import/export, and bounded projections. Store ownership is actor-isolated, and views consume immutable projections.
+
+Fresh production installs open `Application Support/LatticeLens/Library-v12.store`, keeping new V12 tables away from the direct `Library-v8.store` path used by 1.0.11. When the V8 path, a V11/V12 active descriptor, or a V7 candidate already exists, the factory retains `Library-v8.store` as the migration base and publishes migrated data through its verified V12 staging descriptor. An already established V12 path or descriptor takes precedence over a later-created V8 file. Explicit project-local test roots keep their separate `swiftdata/LatticeLens-v8.store` layout and never fall through to Application Support. This path boundary reduces schema-downgrade exposure; it is not by itself an app-plus-data rollback receipt.
 
 ## LLM 与隐私
 
@@ -100,8 +82,8 @@ Sources/LatticeLens/
 - Release endpoint 必须是 HTTPS。Debug 仅允许 `localhost`、`127.0.0.1` 或 `::1` 使用 HTTP；拒绝 URL 中的 user/password、query 和 fragment。
 - Fast 模式发送一次请求。Deep 模式严格发送两次：先从原始标题/摘要取得严格 JSON 翻译，再携带冻结翻译和原始资料生成解释。SSE 失败不会静默回退成 non-streaming 或重发。
 - `paper-insight-v1` 会校验 JSON 大小、控制字符、重复 key、schema/source scope、figure key allowlist、caption-only 模式和数值陈述的摘要/caption token 锚点；不合格响应不会覆盖原始资料或既有成功 artifact。
-- Paper Lens 的“公式与证据”标签在全文提取后会生成**原文重要公式、逐步 LLM 推导、结论与可回查锚点**；它不会把没有 anchor 的内容标记为原文直接支持。公式推导阅读区使用随 app 打包的离线 KaTeX，统一行内/独立公式、TeX/MathML 与明确的无分隔符 TeX，不请求 CDN。右侧垂直滚动条常驻，超宽公式可横向滚动；“展开阅读”打开大阅读区。已有 artifact 直接重新排版，不重复 LLM 请求或修改原始文本/证据。
-- 长公式推导不设应用层自动超时：即使 provider 在长文预填充期间迟迟没有发回 response headers，Evidence 也会持续等待至完成、明确网络/服务端错误、触及本地响应字节上限或用户取消。状态栏显示累计字符/UTF-8 字节、已等待时间和平均字符/秒；流解析和 UI 更新分别按 16 KiB 或 100 ms、约 250 ms 合并，避免客户端逐 token 更新反压。模型实际 token/s 由所选 provider/model 决定，不能由客户端强行提高。OpenAI-compatible gateway 的未持久化根 metadata（或唯一 `data`/`result`/`output` envelope）会被剥离；缺少必需 schema 字段、非法 anchor 或未锚定数值仍会失败。
+- The ar5iv extractor builds a source-bound inventory of numbered equations and rejects missing or ambiguous source-TeX/evidence mappings. New numbered-equation results require a versioned typed step contract with stable step IDs, contiguous ordinals, source-document hashes, evidence anchors and equation dependencies; legacy string steps remain readable but do not satisfy this contract. The current `formula-coverage-v3-derivation-chain` contract requires the first step to start from the inventory source TeX (outer whitespace is ignored when comparing TeX), each following step to continue from the previous result, a nonempty rule/assumption and conclusion, and no more than 32 steps; over-limit results are rejected rather than silently truncated. Source coverage, derivation completeness, bounded TeX structural validation, and human physics review are separate dimensions. A complete local coverage report certifies exact source mapping, a complete bounded derivation chain and the supported structural checks only—not algebraic equivalence or physical correctness. Unsupported macros remain `needs_manual`, and physics stays `needs_manual_physics` without an independent receipt. Legacy `formula-coverage-v2` reports are marked stale and their formerly complete jobs become incomplete while claims remain readable. PDF fallback cannot claim complete numbered-equation coverage. The reader uses bundled offline KaTeX and supports wide formulas without a CDN.
+- Formula jobs have no aggregate wall-clock deadline, but each request has finite phase/resource limits. The current default is connect 30 s, first content 120 s, content idle 120 s, and hard resource/request limit 600 s. Failed requests preserve validated batches for explicit retry/resume; a transport heartbeat is not decoded content.
 
 ### LLM 实际使用检查
 
@@ -116,24 +98,98 @@ Sources/LatticeLens/
    有效 JSON 事件也会继续交给严格 schema validator。截断、空响应、错误对象或
    未锚定的数值声明仍会失败，不会静默重试或改发第二种请求。
 
-若 Evidence 长时间没有新字符，状态栏仍会显示已等待时间；可用 **取消** 结束本次单一
-请求。网络或服务端明确关闭/报错会照常显示失败，但客户端不会再把时间本身判成失败。
-应先确认本地 model 进程和 model ID；fixture/UI 测试只证明离线替身和 schema/workflow
-路径，不冒充真实 provider 成功。
+The Evidence status reports waiting/receiving state and supports cancellation. A request that exceeds its finite content-idle or resource deadline fails as retryable; the overall multi-batch formula job has no single aggregate deadline. Fixture tests verify only local substitutes and schema/workflow behavior, not a real provider's availability or scientific correctness.
 
 ## 本地验证
+
+The full LatticeLens 2.0 local verifier entry point is:
+
+```bash
+cd $PROJECT_ROOT
+zsh Scripts/verify_2_0_final.sh --local-only --run-specific-outputs
+```
+
+It freezes a source-input manifest and runs the full local stages: SwiftPM
+regressions, a manifest-bound synthetic V10-to-V12 migration drill, a
+warnings-as-errors SwiftPM Release build, Xcode Debug/Release/Analyze and
+Unit/UI build-and-test actions, the V12 disk benchmark, and static checks. The
+benchmark uses 20,000 papers, 100,000 paper-author links, 10,000 evidence
+chunks, 500 Radar events, and 5,000 formulas; it records 20 fresh-container
+reopen samples, 100-sample warm search/read/favorite/note/formula-job
+operations, storage bytes, and process RSS. Its JSON is bound to the frozen
+manifest. All verifier-owned test stores, DerivedData, and scratch remain inside
+the project and are removed when their owning stage exits. `--host-free-only`
+is diagnostic mode: it does not launch an app or GUI automation, marks Xcode
+and old-app rollback actions NOT_RUN, and cannot close UI gates. Run-specific
+reports preserve earlier receipts by default.
+
+When preparing a new candidate after changing the app binary, add
+`--pre-package-validation` to freeze current-source software evidence before
+the new DMG exists. This explicitly leaves G09 candidate acceptance as
+`NOT_RUN`; the verifier still checks the selected existing package's integrity
+and records G10 as partial when that package is stale. After packaging, rerun
+the verifier with `--candidate-manifest` set to the exact new manifest to audit
+the produced artifact. Do not edit a receipt's verdict by hand.
+Synthetic source-coverage checks are not mathematical or physical correctness
+reviews. XCUITest automation, manual VoiceOver and LQCD review, DMG creation,
+isolated installation and app/data rollback remain independent acceptance
+gates; a local receipt marked `PARTIAL_NOT_FINAL` is not a release claim.
+
+When a current receipt and its exact manifest-bound performance and migration
+receipts are available, the project-local packager can build a *candidate*.
+Set these variables to the verifier JSON and the exact paths recorded in its
+`input_manifest_path`, `performance_benchmark.report_path`, and
+`migration_drill.receipt_path` fields:
+
+```bash
+cd $PROJECT_ROOT
+VALIDATION_JSON=...
+INPUT_MANIFEST_JSON=...
+PERFORMANCE_JSON=...
+MIGRATION_JSON=...
+python3 -B Scripts/package_2_0_local_candidate.py \
+  "$VALIDATION_JSON" "$INPUT_MANIFEST_JSON" \
+  "$PERFORMANCE_JSON" "$MIGRATION_JSON"
+```
+
+The packager requires a `PARTIAL_NOT_FINAL` receipt, checks all supplied hashes,
+builds a universal ad-hoc Release app and dSYM, verifies and read-only mounts
+the DMG, then copies and launches it only under project-local fixture roots.
+It refuses to overwrite an existing output and never installs to
+`/Applications` or opens a user library. Its `release-assets/Release-2.0.0-local/`
+directory is therefore a local candidate only; it does not close the separate
+UI, VoiceOver, physics, interactive install or app/data rollback gates.
+If this host cannot focus the isolated fixture window, pass
+`--skip-fixture-ui-quit` to leave GUI quit explicitly `NOT_RUN`; the packager
+still stops only the PID-matched sandbox process group and records that cleanup.
+
+When preserving an existing canonical receipt, add `--run-specific-outputs` to
+write the new JSON and Markdown reports under `evidence/` with the generated run
+ID. The verifier refuses to replace an already-existing report or summary path
+unless `--replace-canonical` is explicitly selected (it cannot be combined with
+run-specific output).
 
 ```bash
 cd $PROJECT_ROOT
 ./Scripts/verify_v1.sh
 ```
 
-The current v2 local-only verifier is:
+历史 v2 verifier 仅供复现旧基线，不是 LatticeLens 2.0 final 验收入口：
 
 ```bash
 cd $PROJECT_ROOT
 zsh Scripts/verify_v2.sh
 ```
+
+LatticeLens 2.0 的唯一 local-only final verifier 为：
+
+```zsh
+cd $PROJECT_ROOT
+zsh Scripts/verify_2_0_final.sh --local-only --run-specific-outputs
+```
+
+该入口会为未通过的 mandatory gate 返回非零；最新证据边界见
+[VALIDATION_2.0_FINAL.md](VALIDATION_2.0_FINAL.md)。
 
 v3 的 credential-free verifier 仍可复现历史基线：
 

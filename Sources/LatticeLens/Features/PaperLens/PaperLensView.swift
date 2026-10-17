@@ -70,9 +70,14 @@ struct PaperLensView: View {
 
     private var tabPicker: some View {
         Picker("Paper Lens 标签", selection: $tab) {
-            ForEach(PaperLensTab.allCases) { Text($0.title).tag($0) }
+            ForEach(PaperLensTab.allCases) { option in
+                Text(option.title)
+                    .tag(option)
+                    .accessibilityIdentifier("paperLensTab-\(option.rawValue)")
+            }
         }
         .labelsHidden()
+        .accessibilityLabel("Paper Lens 标签")
         .accessibilityIdentifier("paperLensTabs")
     }
 
@@ -173,7 +178,7 @@ private struct PhysicsTab: View {
             VStack(alignment: .leading, spacing: 16) {
                 if let insight = evidenceArtifact?.insight {
                     EvidenceScopeBadge(fullText: true)
-                    GroupBox("重要公式推导（LLM）") {
+                    GroupBox("编号公式推导（ar5iv 全覆盖）") {
                         FormulaDerivationSection(
                             claims: insight.physics.importantFormulaDerivations,
                             anchors: Dictionary(uniqueKeysWithValues: viewModel.selectedEvidenceAnchors.map { ($0.id, $0) })
@@ -592,7 +597,7 @@ private struct EvidenceTab: View {
                 EvidenceScopeBadge(fullText: viewModel.selectedFullTextDocument?.extractionState == .extracted)
                 Spacer()
                 if let document = viewModel.selectedFullTextDocument, document.extractionState == .extracted {
-                    Button("生成重要公式推导") { viewModel.generateSelectedEvidenceInsight() }
+                    Button("生成编号公式推导（全覆盖）") { viewModel.generateSelectedEvidenceInsight() }
                         .disabled(viewModel.isEvidenceInsightRunning)
                         .accessibilityIdentifier("generateEvidenceInsight")
                     Button("删除本地全文", role: .destructive) { viewModel.deleteSelectedFullText() }
@@ -613,7 +618,10 @@ private struct EvidenceTab: View {
             GroupBox {
                 if let claims = displayedClaims {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("原文公式与 LLM 推断分开显示；请核对来源与推导。右侧滚动条可浏览全部内容，超宽公式可横向滚动。")
+                        if let artifact = viewModel.evidenceInsightArtifact {
+                            NumberedEquationCoverageNotice(artifact: artifact)
+                        }
+                        Text("原文公式与 LLM 推导分开显示；完整结果逐条绑定 ar5iv 编号公式、原始 TeX 和同一全文 anchor。右侧滚动条可浏览全部内容，超宽公式可横向滚动。")
                             .font(.caption).foregroundStyle(.secondary)
                         FormulaDerivationSection(
                             claims: claims,
@@ -622,7 +630,7 @@ private struct EvidenceTab: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("本标签专门展示论文重要公式及其逐步推导。请先读取 ar5iv HTML（或使用 PDF 回退）并提取全文，再点击“生成重要公式推导”；LLM 会把原文公式与自己的推导明确区分，并保留来源 anchor。")
+                        Text("本标签逐条展示当前 ar5iv HTML 中所有结构化编号公式及其推导。请先读取 ar5iv HTML 并提取全文，再点击“生成编号公式推导（全覆盖）”；任何遗漏、公式改写或无效 anchor 都不会保存为成功结果。")
                             .font(.caption).foregroundStyle(.secondary)
                         if viewModel.selectedFullTextDocument?.extractionState == .extracted {
                             Text("全文已就绪，点击上方按钮生成公式推导。")
@@ -632,7 +640,7 @@ private struct EvidenceTab: View {
                 }
             } label: {
                 HStack {
-                    Text("重要公式推导（LLM）")
+                    Text("编号公式推导（ar5iv 全覆盖）")
                     Spacer()
                     if displayedClaims != nil {
                         Button("展开阅读") { readerExpanded = true }
@@ -680,7 +688,7 @@ private struct EvidenceTab: View {
         .sheet(isPresented: $readerExpanded) {
             VStack(spacing: 12) {
                 HStack {
-                    Text("重要公式推导").font(.headline)
+                    Text("编号公式推导（ar5iv 全覆盖）").font(.headline)
                     Spacer()
                     Button("关闭") { readerExpanded = false }.keyboardShortcut(.cancelAction)
                 }
@@ -840,17 +848,22 @@ private struct EvidenceInsightStatusBar: View {
     @ObservedObject var viewModel: AppViewModel
 
     private var text: String {
+        if let indexing = viewModel.numberedEquationIndexStatusMessage {
+            return indexing
+        }
         switch viewModel.evidenceInsightState {
         case .idle:
-            return "尚未生成公式推导 · 不设自动超时，可随时取消"
+            return "尚未生成编号公式推导 · 整项作业无总时限，可随时取消"
         case .connecting:
-            return "正在向模型发送受限证据片段 · 不设自动超时"
+            return "正在向模型发送受限证据片段 · 单次请求有有限期限"
         case .waitingFirstContent:
-            return "已连接 · 正在等待首段内容 · 不设自动超时"
+            return "已连接 · 正在等待首段内容 · 单次请求有有限期限"
         case .receiving(let characters, let bytes):
-            return "正在接收 · \(characters) 字符 / \(bytes) 字节 · 不设自动超时"
+            return "正在接收 · \(characters) 字符 / \(bytes) 字节 · 单次请求有有限期限"
+        case .formulaProgress(let completed, let total, let bytes, let characters):
+            return "公式批次 \(completed)/\(total) · 已接收 \(characters) 字符 / \(bytes) 字节 · 单批可恢复"
         case .validating:
-            return "正在验证公式、数值与证据锚点"
+            return "正在验证编号公式覆盖、原始 TeX、数值与证据锚点"
         case .completed(let cacheHit, let requestCount):
             return cacheHit ? "已从本地缓存显示 · 0 次请求" : "已完成 · \(requestCount) 次请求"
         case .cancelled:
@@ -921,14 +934,50 @@ private struct EvidenceArtifactSummary: View {
     let artifact: EvidenceInsightArtifact
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("已验证公式推导（paper-insight-v2）").font(.headline)
+            Text("已验证证据分析（paper-insight-v2）").font(.headline)
             Text("检索片段：\(artifact.chunkIDs.count) · 生成于 \(artifact.createdAt.formatted(date: .abbreviated, time: .shortened))")
                 .font(.caption).foregroundStyle(.secondary)
+            NumberedEquationCoverageNotice(artifact: artifact)
             HStack(spacing: 8) {
                 StatusCount(label: "原文直接支持", claims: [artifact.insight.physics.researchQuestion] + artifact.insight.physics.methodAndDataFlow + artifact.insight.physics.mainResults)
                 StatusCount(label: "基于原文推断", claims: artifact.insight.physics.reasonableInferences)
                 StatusCount(label: "原文未提供", claims: artifact.insight.physics.missingInformation)
             }
+        }
+    }
+}
+
+private struct NumberedEquationCoverageNotice: View {
+    let artifact: EvidenceInsightArtifact
+
+    private var isCurrentCompleteResult: Bool {
+        let expectedPromptPrefix = "\(EvidenceInsightPrompt.version)|\(FormulaDerivationPrompt.version)|"
+        let formulaClaims = artifact.insight.physics.importantFormulaDerivations
+        return artifact.numberedEquationCoverageComplete &&
+            artifact.promptVersion.hasPrefix(expectedPromptPrefix) &&
+            artifact.numberedEquationIDs.count == formulaClaims.count &&
+            artifact.numberedEquationIDs == formulaClaims.compactMap(\.equationID) &&
+            formulaClaims.allSatisfy { claim in
+                !claim.formulaDerivationSteps.isEmpty &&
+                    claim.derivationSteps == claim.formulaDerivationSteps.map(\.textZH) &&
+                    claim.formulaTeX.map {
+                        FormulaDerivationChainValidator.failure(for: claim, sourceTeX: $0) == nil
+                    } == true &&
+                    claim.formulaDerivationSteps.allSatisfy {
+                        $0.sourceDocumentHashes == [artifact.documentHash] && $0.structuralStatus != .rejected
+                    }
+            }
+    }
+
+    var body: some View {
+        if isCurrentCompleteResult {
+            Label("当前 HTML 编号公式原文覆盖 \(artifact.numberedEquationIDs.count)/\(artifact.numberedEquationIDs.count)，推导链齐备；结构检查与物理核验见各步骤", systemImage: "checkmark.seal.fill")
+                .font(.caption).foregroundStyle(.green)
+                .accessibilityIdentifier("numberedEquationCoverageComplete")
+        } else {
+            Label("此结果来自旧版“重要公式”规则，未证明覆盖全部编号公式；请重新生成。", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption).foregroundStyle(.orange)
+                .accessibilityIdentifier("numberedEquationCoverageLegacy")
         }
     }
 }
@@ -1432,6 +1481,7 @@ private struct InsightStatusBar: View {
         case .connecting: "正在连接 · 本次将发送 \(viewModel.settings.mode == .fast ? 1 : 2) 次请求"
         case .waitingFirstContent: "已连接 · 正在等待首段内容"
         case .receiving(let characters, let bytes): "正在接收 · \(characters) 字符 / \(bytes) bytes"
+        case .formulaProgress(let completed, let total, let bytes, let characters): "公式批次 \(completed)/\(total) · \(characters) 字符 / \(bytes) bytes"
         case .validating: "正在验证结构化资料边界"
         case .completed(let cacheHit, let requestCount): cacheHit ? "已从本地缓存显示 · 0 次请求" : "已完成 · \(requestCount) 次请求"
         case .cancelled: viewModel.insightArtifact == nil ? "已取消；本次没有保存结果" : "已取消；已保留先前成功结果"

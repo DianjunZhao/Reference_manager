@@ -5,6 +5,7 @@ enum InsightWorkflowState: Equatable, Sendable {
     case connecting
     case waitingFirstContent
     case receiving(characters: Int, bytes: Int)
+    case formulaProgress(completedBatches: Int, totalBatches: Int, bytes: Int, characters: Int)
     case validating
     case completed(cacheHit: Bool, requestCount: Int)
     case cancelled

@@ -53,11 +53,23 @@ struct Author: Codable, Hashable, Identifiable, Sendable {
     var id: Int { recid }
     var isSelf: Bool { recid == ProductContract.selfAuthorRecid }
     var isHepLatCandidate: Bool { arxivCategories.contains("hep-lat") }
+    var isHepPhCandidate: Bool { arxivCategories.contains("hep-ph") }
     var isHepThCandidate: Bool { arxivCategories.contains("hep-th") }
-    /// Author-index eligibility is the union of the two supported INSPIRE
-    /// arXiv categories.  Keep this as one derived predicate so filtering,
-    /// progress counters and generation membership cannot silently diverge.
-    var isHIndexCandidate: Bool { isHepLatCandidate || isHepThCandidate }
+    /// Author-index eligibility is the union of the supported INSPIRE arXiv
+    /// categories. hep-ph is a first-class 2.0 category; hep-th remains in
+    /// the union for backward compatibility with 1.0 data and profiles. Keep
+    /// this as one derived predicate so filtering, progress counters and
+    /// generation membership cannot silently diverge.
+    var isHIndexCandidate: Bool { isHepLatCandidate || isHepPhCandidate || isHepThCandidate }
+    /// Raw INSPIRE categories stay lossless; this projection is the only
+    /// place where the supported 2.0 category enum is derived.
+    var supportedCategoryMemberships: Set<SupportedArxivCategory> {
+        Set(arxivCategories.compactMap(SupportedArxivCategory.init(rawValue:)))
+    }
+
+    func isCandidate(in categories: Set<SupportedArxivCategory>) -> Bool {
+        !supportedCategoryMemberships.isDisjoint(with: categories)
+    }
     var isVisibleInQualifiedList: Bool { isSelf || hIndexState == .qualified }
 
     var sectionKey: String {

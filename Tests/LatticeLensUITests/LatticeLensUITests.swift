@@ -5,15 +5,16 @@
 // its runner owns the automation session while the AUT's main actor remains
 // available to service it.
 @preconcurrency import XCTest
+import CryptoKit
 
 /// Real macOS UI-test target.  It launches the app with an explicit in-memory
 /// fixture environment; therefore this test neither reads a user's library nor
 /// contacts INSPIRE, a provider, or Keychain.
 final class LatticeLensUITests: XCTestCase {
-    // Do not reuse the historical v5 fixture identifier: macOS LaunchServices
+    // Do not reuse a historical fixture identifier: macOS LaunchServices
     // may retain every prior derived-data product and choose one of those
     // stale apps for an identifier-only XCTest launch.
-    private let fixtureBundleIdentifier = "org.latticelens.app.uitestfixture.v5"
+    private let fixtureBundleIdentifier = "org.latticelens.app.uitestfixture.v2"
 
     override func tearDownWithError() throws {
         // XCTest does not reliably retire a prior macOS UI-test AUT before
@@ -29,10 +30,17 @@ final class LatticeLensUITests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    /// Xcode's UI-test runner currently uses `/` as its working directory.
-    /// Derive the checkout from this compiled test source instead of relying
-    /// on that directory or writing a fixture PDF to the system temp area.
-    private func fixtureCacheProjectRoot() -> String {
+    func testXCUITestOutputRootsAreExplicitlyProjectLocal() {
+        for key in ["LATTICELENS_TEST_STORE_ROOT", "LATTICELENS_TEST_TMP_ROOT",
+                    "LATTICELENS_FIXTURE_CACHE_ROOT"] {
+            _ = projectLocalTestPath(environmentKey: key)
+        }
+    }
+
+    /// UI-test data must stay under the user-authorized workspace. The scheme
+    /// points both roots into this run's DerivedData; reject accidental use of
+    /// Xcode's global DerivedData or any real application-data directory.
+    private func projectWorkspaceRoot() -> URL {
         let sourceURL = URL(fileURLWithPath: #filePath).standardizedFileURL.resolvingSymlinksInPath()
         var cursor = sourceURL.deletingLastPathComponent()
         while cursor.lastPathComponent != "Tests" {
@@ -40,7 +48,27 @@ final class LatticeLensUITests: XCTestCase {
             precondition(parent.path != cursor.path, "无法从 UI test 源码路径确定项目根目录")
             cursor = parent
         }
-        return cursor.deletingLastPathComponent().path
+        return cursor.deletingLastPathComponent().deletingLastPathComponent()
+            .standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    private func projectLocalTestPath(environmentKey: String) -> String {
+        let workspace = projectWorkspaceRoot()
+        let safeFallback = workspace
+            .appendingPathComponent(".codex-ui-test-invalid-root", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(environmentKey, isDirectory: true)
+        guard let rawPath = ProcessInfo.processInfo.environment[environmentKey],
+              rawPath.hasPrefix("/") else {
+            XCTFail("UI-test scheme must provide an absolute project-local \(environmentKey)")
+            return safeFallback.path
+        }
+        let path = URL(fileURLWithPath: rawPath).standardizedFileURL.resolvingSymlinksInPath()
+        guard path.path.hasPrefix(workspace.path + "/") else {
+            XCTFail("Refusing UI-test output outside Reference_manager: \(environmentKey) -> \(path.path)")
+            return safeFallback.path
+        }
+        return path.path
     }
 
     private func launchFixtureApp(automaticAnalysis: Bool = false, initialPaperLensTab: String? = nil,
@@ -50,6 +78,8 @@ final class LatticeLensUITests: XCTestCase {
                                   initialTagManagerSearch: String? = nil,
                                   initialCollectionManagerSearch: String? = nil,
                                   initialNotebookEntryTitle: String? = nil,
+                                  diskBackedFixtureStoreRoot: URL? = nil,
+                                  seedFormulaRelaunchJob: Bool = false,
                                   legacyResearchQuestionString: Bool = false,
                                   unanchoredEvidenceClaims: Bool = false) -> XCUIApplication {
         // The Xcode `UIFixture` scheme builds the app with a deliberately
@@ -60,7 +90,28 @@ final class LatticeLensUITests: XCTestCase {
         var arguments = ["-LatticeLensUseFixtures", "YES"]
         app.launchEnvironment["LATTICELENS_USE_FIXTURES"] = "1"
         app.launchEnvironment["LATTICELENS_UI_TEST"] = "1"
-        app.launchEnvironment["LATTICELENS_FIXTURE_CACHE_ROOT"] = fixtureCacheProjectRoot()
+        app.launchEnvironment["LATTICELENS_FIXTURE_CACHE_ROOT"] =
+            projectLocalTestPath(environmentKey: "LATTICELENS_FIXTURE_CACHE_ROOT")
+        app.launchEnvironment["LATTICELENS_TEST_STORE_ROOT"] =
+            projectLocalTestPath(environmentKey: "LATTICELENS_TEST_STORE_ROOT")
+        let appTemporaryDirectory = projectLocalTestPath(environmentKey: "LATTICELENS_TEST_TMP_ROOT")
+        var isDirectory: ObjCBool = false
+        if !FileManager.default.fileExists(atPath: appTemporaryDirectory, isDirectory: &isDirectory) ||
+            !isDirectory.boolValue {
+            do {
+                try FileManager.default.createDirectory(atPath: appTemporaryDirectory,
+                                                        withIntermediateDirectories: true)
+            } catch {
+                NSLog("Could not create project-local UI-test TMPDIR at %@: %@",
+                      appTemporaryDirectory, String(describing: error))
+                preconditionFailure("Could not create the project-local UI-test TMPDIR: \(error)")
+            }
+        }
+        app.launchEnvironment["TMPDIR"] = appTemporaryDirectory
+        app.launchEnvironment["HOME"] = appTemporaryDirectory
+        app.launchEnvironment["CFFIXED_USER_HOME"] = appTemporaryDirectory
+        app.launchEnvironment["LATTICELENS_TEST_TMP_ROOT"] = appTemporaryDirectory
+        app.launchEnvironment["LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"] = "1"
         if automaticAnalysis {
             app.launchEnvironment["LATTICELENS_FIXTURE_AUTOMATIC_ANALYSIS"] = "1"
             arguments += ["-LatticeLensFixtureAutomaticAnalysis", "YES"]
@@ -84,6 +135,25 @@ final class LatticeLensUITests: XCTestCase {
             // also present above.
             app.launchEnvironment["LATTICELENS_LARGE_UI_FIXTURE"] = "1"
             arguments += ["-LatticeLensLargeUIFixture", "YES"]
+        }
+        if let diskBackedFixtureStoreRoot {
+            precondition(largeFixture,
+                         "disk-backed mode is permitted only for the isolated large fixture")
+            let testRoot = URL(fileURLWithPath:
+                projectLocalTestPath(environmentKey: "LATTICELENS_TEST_STORE_ROOT"),
+                isDirectory: true)
+            let fixtureRoot = diskBackedFixtureStoreRoot.standardizedFileURL.resolvingSymlinksInPath()
+            precondition(fixtureRoot.path.hasPrefix(testRoot.path + "/"),
+                         "disk-backed fixture root must be a distinct child of the project-local test root")
+            app.launchEnvironment["LATTICELENS_DISK_BACKED_UI_FIXTURE"] = "1"
+            app.launchEnvironment["LATTICELENS_DISK_UI_FIXTURE_STORE_ROOT"] = fixtureRoot.path
+            arguments += ["-LatticeLensDiskBackedUIFixture", "YES",
+                          "-LatticeLensDiskUIFixtureStoreRoot", fixtureRoot.path]
+        }
+        if seedFormulaRelaunchJob {
+            precondition(diskBackedFixtureStoreRoot != nil,
+                         "formula checkpoint relaunch acceptance requires the isolated disk-backed fixture")
+            app.launchEnvironment["LATTICELENS_FIXTURE_FORMULA_JOB_RELAUNCH"] = "1"
         }
         if let initialAuthorSearch {
             precondition(largeFixture,
@@ -114,7 +184,7 @@ final class LatticeLensUITests: XCTestCase {
             app.launchEnvironment["LATTICELENS_FIXTURE_UNANCHORED_EVIDENCE_CLAIMS"] = "1"
         }
         if let fixtureWindowSize {
-            precondition(["820x640", "1120x700", "1440x900"].contains(fixtureWindowSize),
+            precondition(["820x640", "1280x820", "1440x900"].contains(fixtureWindowSize),
                          "fixture window size must be a v5 acceptance size")
             app.launchEnvironment["LATTICELENS_FIXTURE_WINDOW_SIZE"] = fixtureWindowSize
             arguments += ["-LatticeLensFixtureWindowSize", fixtureWindowSize]
@@ -244,19 +314,227 @@ final class LatticeLensUITests: XCTestCase {
         #endif
     }
 
+    func testLargeFixtureCategoryFacetsSeparateHepPhMultiAndDisabledHepTh() throws {
+        #if SWIFT_PACKAGE
+        throw XCTSkip("XCUIApplication tests run only through the LatticeLens.xcodeproj UI-test target.")
+        #else
+        let cases: [(search: String, recid: String, facet: String, initiallyVisible: Bool)] = [
+            ("Zuthor, Fixture 026", "2100026", "hep-ph", true),
+            ("Aauthor, Fixture 027", "2100027", "multi-category", true),
+            ("Buthor, Fixture 028", "2100028", "hep-th", false),
+        ]
+
+        for item in cases {
+            let app = launchFixtureApp(largeFixture: true, initialAuthorSearch: item.search)
+            assertLargeFixtureReady(in: app)
+            let row = app.descendants(matching: .any)["authorRow-\(item.recid)"].firstMatch
+            if item.initiallyVisible {
+                XCTAssertTrue(row.waitForExistence(timeout: 5),
+                              "the default enabled-category projection must retain \(item.facet)")
+            } else {
+                XCTAssertFalse(row.exists,
+                               "a qualified hep-th-only author must not leak into the enabled-category union")
+            }
+
+            let picker = app.descendants(matching: .any)["authorCategoryFacet"].firstMatch
+            XCTAssertTrue(picker.waitForExistence(timeout: 5))
+            picker.click()
+            let option = app.descendants(matching: .any)["authorCategoryFacetOption-\(item.facet)"].firstMatch
+            XCTAssertTrue(option.waitForExistence(timeout: 5),
+                          "the \(item.facet) facet must be exposed as a stable accessible option")
+            option.click()
+            XCTAssertTrue(row.waitForExistence(timeout: 5),
+                          "the explicit \(item.facet) facet must expose its matching author")
+            app.terminate()
+        }
+        #endif
+    }
+
     func testLargeFixtureLaunchesAtAllThreeResponsiveAcceptanceSizes() throws {
         #if SWIFT_PACKAGE
         throw XCTSkip("XCUIApplication 测试仅通过 LatticeLens.xcodeproj 的 UI-test target 运行。")
         #else
-        for size in ["820x640", "1120x700", "1440x900"] {
+        for size in ["820x640", "1280x820", "1440x900"] {
             let app = launchFixtureApp(largeFixture: true, fixtureWindowSize: size)
             assertLargeFixtureReady(in: app)
             XCTAssertTrue(app.buttons["settingsButton"].waitForExistence(timeout: 5),
-                          "\(size) 下设置动作不能被硬编码的 1120pt 最小宽度推到屏幕外")
+                          "\(size) 下设置动作不能被硬编码的最小宽度推到屏幕外")
             XCTAssertTrue(app.buttons["workbenchButton"].waitForExistence(timeout: 5),
                           "\(size) 下 Workbench 动作必须可访问")
             app.terminate()
         }
+        #endif
+    }
+
+    func testDiskBackedLargeFixturePreservesSavedNoteAcrossQuitAndRelaunch() throws {
+        #if SWIFT_PACKAGE
+        throw XCTSkip("XCUIApplication tests run only through the LatticeLens.xcodeproj UI-test target.")
+        #else
+        let testRoot = URL(fileURLWithPath:
+            projectLocalTestPath(environmentKey: "LATTICELENS_TEST_STORE_ROOT"),
+            isDirectory: true)
+        let fixtureRoot = testRoot.appending(path: "disk-relaunch-\(UUID().uuidString)",
+                                             directoryHint: .isDirectory)
+
+        let app = launchFixtureApp(initialPaperLensTab: "source",
+                                   largeFixture: true,
+                                   diskBackedFixtureStoreRoot: fixtureRoot)
+        defer { if app.state != .notRunning { app.terminate() } }
+        assertDiskBackedLargeFixtureReady(in: app, expectedRoot: fixtureRoot)
+
+        let paper = app.staticTexts["paperRow-9100000"].firstMatch
+        XCTAssertTrue(paper.waitForExistence(timeout: 8), "disk fixture must expose the first baseline paper")
+        paper.click()
+        let note = app.textFields["readingNote"]
+        XCTAssertTrue(note.waitForExistence(timeout: 8))
+        note.click()
+        note.typeText("disk-relaunch-note")
+        let save = app.buttons["saveReadingNote"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertTrue(save.isEnabled)
+        save.click()
+        let savedState = app.staticTexts["noteState-9100000-1"]
+        XCTAssertTrue(savedState.waitForExistence(timeout: 8))
+        XCTAssertTrue(savedState.label.contains("disk-relaunch-note"))
+
+        app.terminate()
+        let relaunched = launchFixtureApp(initialPaperLensTab: "source",
+                                          largeFixture: true,
+                                          diskBackedFixtureStoreRoot: fixtureRoot)
+        defer { if relaunched.state != .notRunning { relaunched.terminate() } }
+        assertDiskBackedLargeFixtureReady(in: relaunched, expectedRoot: fixtureRoot)
+        let relaunchedPaper = relaunched.staticTexts["paperRow-9100000"].firstMatch
+        XCTAssertTrue(relaunchedPaper.waitForExistence(timeout: 8))
+        relaunchedPaper.click()
+        let relaunchedNote = relaunched.staticTexts["noteState-9100000-1"]
+        XCTAssertTrue(relaunchedNote.waitForExistence(timeout: 8),
+                      "relaunch must read the previously committed note from the same disk-backed store")
+        XCTAssertTrue(relaunchedNote.label.contains("disk-relaunch-note"),
+                      "relaunch must preserve user mutation rather than reseeding the baseline")
+        #endif
+    }
+
+    func testDiskBackedFormulaJobResumesFromTypedCheckpointAfterQuitAndRelaunch() throws {
+        #if SWIFT_PACKAGE
+        throw XCTSkip("XCUIApplication tests run only through the LatticeLens.xcodeproj UI-test target.")
+        #else
+        let testRoot = URL(fileURLWithPath:
+            projectLocalTestPath(environmentKey: "LATTICELENS_TEST_STORE_ROOT"),
+            isDirectory: true)
+        let fixtureRoot = testRoot.appending(path: "formula-job-relaunch-\(UUID().uuidString)",
+                                             directoryHint: .isDirectory)
+        let expectedReceipt = "fixture-disk-relaunch-formula-job-v1|state=retryable|completed=fixture-equation-1|pending=fixture-equation-2|automaticResume=disabled"
+
+        let app = launchFixtureApp(initialPaperLensTab: "source",
+                                   largeFixture: true,
+                                   diskBackedFixtureStoreRoot: fixtureRoot,
+                                   seedFormulaRelaunchJob: true)
+        assertDiskBackedLargeFixtureReady(in: app, expectedRoot: fixtureRoot)
+        let initialReceipt = app.descendants(matching: .any)["formulaJobRelaunchReceipt"].firstMatch
+        XCTAssertTrue(initialReceipt.waitForExistence(timeout: 8),
+                      "the app must read the typed formula job from the isolated store")
+        XCTAssertEqual(initialReceipt.value as? String, expectedReceipt,
+                       "the durable receipt must distinguish the validated batch from the pending batch")
+        app.terminate()
+
+        let relaunched = launchFixtureApp(initialPaperLensTab: "source",
+                                          largeFixture: true,
+                                          diskBackedFixtureStoreRoot: fixtureRoot,
+                                          seedFormulaRelaunchJob: true)
+        defer { if relaunched.state != .notRunning { relaunched.terminate() } }
+        assertDiskBackedLargeFixtureReady(in: relaunched, expectedRoot: fixtureRoot)
+        let restoredReceipt = relaunched.descendants(matching: .any)["formulaJobRelaunchReceipt"].firstMatch
+        XCTAssertTrue(restoredReceipt.waitForExistence(timeout: 8),
+                      "quit/relaunch must restore the typed formula checkpoint")
+        XCTAssertEqual(restoredReceipt.value as? String, expectedReceipt,
+                       "relaunch must reuse the successful batch and leave only the failed batch pending")
+        #endif
+    }
+
+    func testDiskBackedArxivFormulaArtifactIsReadableFromLocalCacheAfterRelaunch() throws {
+        #if SWIFT_PACKAGE
+        throw XCTSkip("XCUIApplication tests run only through the LatticeLens.xcodeproj UI-test target.")
+        #else
+        let testRoot = URL(fileURLWithPath:
+            projectLocalTestPath(environmentKey: "LATTICELENS_TEST_STORE_ROOT"),
+            isDirectory: true)
+        let fixtureRoot = testRoot.appending(path: "offline-formula-relaunch-\(UUID().uuidString)",
+                                             directoryHint: .isDirectory)
+
+        let app = launchFixtureApp(initialPaperLensTab: "evidence",
+                                   largeFixture: true,
+                                   diskBackedFixtureStoreRoot: fixtureRoot)
+        defer { if app.state != .notRunning { app.terminate() } }
+        assertDiskBackedLargeFixtureReady(in: app, expectedRoot: fixtureRoot)
+
+        let paper = app.staticTexts["paperRow-9100000"].firstMatch
+        XCTAssertTrue(paper.waitForExistence(timeout: 8), "the offline HTML fixture must be attached to paper 9100000")
+        paper.click()
+        selectPaperLensTab("evidence", in: app)
+
+        let readHTML = app.buttons["downloadArxivHTML-9100000"]
+        XCTAssertTrue(readHTML.waitForExistence(timeout: 5),
+                      "the exact allowlisted synthetic arXiv ID must resolve to the local HTML substitute")
+        readHTML.click()
+        XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
+        app.buttons["confirmFullTextDownload"].click()
+        XCTAssertEqual(waitForValue(of: app.staticTexts["fullTextStatus"],
+                                    expected: "ar5iv HTML 已提取为 bounded evidence anchors。", timeout: 10), .completed)
+        let (initialHTMLURL, initialHTMLBytes) = try assertDiskBackedArxivHTMLCache(in: fixtureRoot)
+
+        let generate = app.buttons["generateEvidenceInsight"]
+        XCTAssertTrue(generate.waitForExistence(timeout: 5))
+        generate.click()
+        let disclosure = app.buttons["acceptEvidenceDisclosure"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5),
+                      "the first local fixture analysis must follow the ordinary explicit disclosure path")
+        disclosure.click()
+        XCTAssertEqual(waitForValue(of: app.staticTexts["evidenceInsightStatus"],
+                                    expected: "已完成 · 1 次请求", timeout: 20), .completed,
+                       "one local fixture response must produce the complete three-equation artifact")
+        let initialCoverage = app.descendants(matching: .any)["numberedEquationCoverageComplete"].firstMatch
+        XCTAssertTrue(initialCoverage.waitForExistence(timeout: 5))
+        XCTAssertTrue(initialCoverage.label.contains("3/3"), "the result must cover every parsed HTML inventory row")
+        XCTAssertTrue(app.staticTexts["需人工物理核验"].firstMatch.exists,
+                      "the synthetic derivation must not imply that physics review happened")
+
+        app.terminate()
+        let (persistedHTMLURL, persistedHTMLBytes) = try assertDiskBackedArxivHTMLCache(in: fixtureRoot)
+        XCTAssertEqual(persistedHTMLURL, initialHTMLURL,
+                       "quitting the fixture app must not move or retire its disk-backed content-addressed HTML")
+        XCTAssertEqual(persistedHTMLBytes, initialHTMLBytes,
+                       "the exact downloaded HTML bytes must remain available after process exit")
+        let relaunched = launchFixtureApp(initialPaperLensTab: "evidence",
+                                          largeFixture: true,
+                                          diskBackedFixtureStoreRoot: fixtureRoot)
+        defer { if relaunched.state != .notRunning { relaunched.terminate() } }
+        assertDiskBackedLargeFixtureReady(in: relaunched, expectedRoot: fixtureRoot)
+        let (relaunchedHTMLURL, relaunchedHTMLBytes) = try assertDiskBackedArxivHTMLCache(in: fixtureRoot)
+        XCTAssertEqual(relaunchedHTMLURL, initialHTMLURL)
+        XCTAssertEqual(relaunchedHTMLBytes, initialHTMLBytes,
+                       "relaunch must leave the verified source bytes available for offline reindexing")
+        let relaunchedPaper = relaunched.staticTexts["paperRow-9100000"].firstMatch
+        XCTAssertTrue(relaunchedPaper.waitForExistence(timeout: 8))
+        relaunchedPaper.click()
+        selectPaperLensTab("evidence", in: relaunched)
+
+        XCTAssertTrue(relaunched.staticTexts["已验证证据分析（paper-insight-v2）"].waitForExistence(timeout: 8),
+                      "the cached Chinese evidence artifact must be read from the same isolated store")
+        let restoredCoverage = relaunched.descendants(matching: .any)["numberedEquationCoverageComplete"].firstMatch
+        XCTAssertTrue(restoredCoverage.waitForExistence(timeout: 5))
+        XCTAssertTrue(restoredCoverage.label.contains("3/3"))
+        XCTAssertTrue(relaunched.staticTexts["需人工物理核验"].firstMatch.exists,
+                      "relaunch must preserve the explicit boundary between structural checks and physics review")
+
+        let reuse = relaunched.buttons["generateEvidenceInsight"]
+        XCTAssertTrue(reuse.waitForExistence(timeout: 5))
+        reuse.click()
+        let reuseDisclosure = relaunched.buttons["acceptEvidenceDisclosure"]
+        XCTAssertTrue(reuseDisclosure.waitForExistence(timeout: 5))
+        reuseDisclosure.click()
+        XCTAssertEqual(waitForValue(of: relaunched.staticTexts["evidenceInsightStatus"],
+                                    expected: "已从本地缓存显示 · 0 次请求", timeout: 8), .completed,
+                       "after quit/relaunch an unchanged input must reuse the durable artifact without another request")
         #endif
     }
 
@@ -389,9 +667,7 @@ final class LatticeLensUITests: XCTestCase {
         let paper = app.staticTexts["paperRow-9100000"].firstMatch
         XCTAssertTrue(paper.waitForExistence(timeout: 8))
         paper.click()
-        let source = app.radioButtons["原始资料"]
-        XCTAssertTrue(source.waitForExistence(timeout: 5))
-        source.click()
+        selectPaperLensTab("source", in: app)
 
         let manageTags = app.buttons["manageTags"]
         XCTAssertTrue(manageTags.waitForExistence(timeout: 5))
@@ -543,15 +819,13 @@ final class LatticeLensUITests: XCTestCase {
         let tabs = app.descendants(matching: .any)["paperLensTabs"].firstMatch
         let tabsExist = tabs.waitForExistence(timeout: 5)
         XCTAssertTrue(tabsExist, "选择论文后必须显示 Paper Lens tabs")
-        let evidenceTab = app.radioButtons["证据"]
-        let sourceTab = app.radioButtons["原始资料"]
-        let evidenceExists = evidenceTab.exists
-        let sourceExists = sourceTab.exists
-        XCTAssertTrue(evidenceExists && sourceExists, "v2 必须提供 Evidence 和 source tabs")
-        evidenceTab.click()
+        selectPaperLensTab("evidence", in: app)
         let metadataAnchorNotice = app.staticTexts["尚未下载全文：当前只可浏览 abstract/caption anchors。"]
         let evidenceFallback = metadataAnchorNotice.waitForExistence(timeout: 3)
         XCTAssertTrue(evidenceFallback, "无全文时 Evidence 必须可靠降级")
+        selectPaperLensTab("source", in: app)
+        XCTAssertTrue(app.links["openInspireWeb"].waitForExistence(timeout: 3),
+                      "原始资料 tab 必须可达并显示 source-backed INSPIRE 操作")
         #endif
     }
 
@@ -575,26 +849,26 @@ final class LatticeLensUITests: XCTestCase {
         app.activate()
         disclosure.tap()
 
-        let cancel = app.buttons["cancelInsight"]
-        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "fixture LLM 必须进入可见且可取消的中间状态")
+        XCTAssertEqual(waitForInsightStatus("已完成 · 1 次请求", in: app, timeout: 10), .completed,
+                       "取消回归必须先建立一个真实成功并缓存的旧结果")
         app.activate()
-        app.typeKey(.escape, modifierFlags: [])
+        regenerate.click()
+
+        let cancel = app.buttons["cancelInsight"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "第二次 fixture LLM 请求必须进入可见且可取消的中间状态")
+        app.activate()
+        cancel.click()
         XCTAssertEqual(waitForInsightStatus("已取消；已保留先前成功结果", in: app, timeout: 5), .completed,
                        "取消必须成为明确状态，而非失败或静默重试")
 
-        app.activate()
-        app.typeKey("r", modifierFlags: [.command, .shift])
-        XCTAssertEqual(waitForInsightStatus("已完成 · 1 次请求", in: app, timeout: 5), .completed,
-                       "fixture mock LLM 必须只完成一次本地请求")
-        app.activate()
-        app.typeKey("r", modifierFlags: [.command, .shift])
+        let nextPaper = app.staticTexts["paperRow-1234568"].firstMatch
+        XCTAssertTrue(nextPaper.waitForExistence(timeout: 5), "缓存边界检查需要切换到另一篇 fixture paper 后再返回")
+        nextPaper.click()
+        paper.click()
         XCTAssertEqual(waitForInsightStatus("已从本地缓存显示 · 0 次请求", in: app, timeout: 5), .completed,
-                       "重生成命中 cache 时不得再次调用 mock completion")
+                       "重新选择已成功分析的论文必须读取本地缓存，而不再调用 mock completion")
 
-        let figures = app.radioButtons["重要图像"]
-        XCTAssertTrue(figures.waitForExistence(timeout: 3))
-        app.activate()
-        figures.tap()
+        selectPaperLensTab("figures", in: app)
         let unavailableFigure = app.buttons["figureRow-fig-missing-url"]
         XCTAssertTrue(unavailableFigure.waitForExistence(timeout: 3), "fixture 应列出没有 URL 的 figure")
         app.activate()
@@ -612,9 +886,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let paper = selectFixturePaper(in: app)
         paper.click()
-        let source = app.radioButtons["原始资料"]
-        XCTAssertTrue(source.waitForExistence(timeout: 5))
-        source.click()
+        selectPaperLensTab("source", in: app)
 
         XCTAssertTrue(app.buttons["toggleFavorite"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["newTagName"].exists)
@@ -636,9 +908,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let paper = selectFixturePaper(in: app)
         paper.click()
-        let evidence = app.radioButtons["证据"]
-        XCTAssertTrue(evidence.waitForExistence(timeout: 5))
-        evidence.click()
+        selectPaperLensTab("evidence", in: app)
         let scope = app.staticTexts["尚未下载全文：当前只可浏览 abstract/caption anchors。"]
         XCTAssertTrue(scope.waitForExistence(timeout: 3))
         let download = app.buttons["downloadFullText-fixture-fulltext"]
@@ -716,8 +986,7 @@ final class LatticeLensUITests: XCTestCase {
                       "必须先确认 fixture sentinel，再触碰 Research Home")
         let paper = selectFixturePaper(in: app)
         paper.click()
-        XCTAssertTrue(app.radioButtons["原始资料"].waitForExistence(timeout: 5))
-        app.radioButtons["原始资料"].click()
+        selectPaperLensTab("source", in: app)
         let favorite = app.buttons["toggleFavorite"]
         XCTAssertTrue(favorite.waitForExistence(timeout: 5))
         favorite.click()
@@ -759,9 +1028,34 @@ final class LatticeLensUITests: XCTestCase {
         // accessibility role.
         let workbenchSheet = app.sheets.firstMatch
         XCTAssertTrue(workbenchSheet.waitForExistence(timeout: 5))
-        XCTAssertTrue(workbenchSheet.staticTexts["Evidence Workbench"].waitForExistence(timeout: 5))
-        XCTAssertTrue(workbenchSheet.staticTexts["Preview: no edge ingestion yet · 仅显示当前本地 snapshot 已有的 source-backed edge；不会伪造缺失关系。"].waitForExistence(timeout: 3),
+        XCTAssertTrue(workbenchSheet.staticTexts["证据工作台"].waitForExistence(timeout: 5))
+        XCTAssertTrue(workbenchSheet.staticTexts["预览：尚未摄取新的边 · 仅显示当前本地快照中已有来源支持的关系；不会伪造缺失关系。"].waitForExistence(timeout: 3),
                       "未实现 edge ingestion 时必须在实际 UI 中保持 preview disclosure")
+        #endif
+    }
+
+    func testFixtureResearchBundleWorkbenchExposesTypedImportAndExportControls() throws {
+        #if SWIFT_PACKAGE
+        throw XCTSkip("XCUIApplication 測試僅通過 LatticeLens.xcodeproj 的 UI-test target 運行。")
+        #else
+        let testRoot = URL(fileURLWithPath:
+            projectLocalTestPath(environmentKey: "LATTICELENS_TEST_STORE_ROOT"), isDirectory: true)
+        let fixtureRoot = testRoot.appendingPathComponent("bundle-workbench-\(UUID().uuidString)", isDirectory: true)
+        let app = launchFixtureApp(initialWorkbenchTab: "bundle", largeFixture: true,
+                                  diskBackedFixtureStoreRoot: fixtureRoot)
+        defer { if app.state == .runningForeground || app.state == .runningBackground { app.terminate() } }
+        XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8),
+                      "先確認本地 synthetic fixture sentinel")
+        XCTAssertTrue(largeFixtureModeIndicator(in: app).waitForExistence(timeout: 8),
+                      "Bundle 操作只在 project-local disk-backed fixture store 上執行")
+        app.buttons["workbenchButton"].click()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        XCTAssertTrue(sheet.staticTexts["Research Bundle 2.0"].waitForExistence(timeout: 5))
+        XCTAssertTrue(sheet.buttons["researchBundleExport"].exists)
+        XCTAssertTrue(sheet.buttons["researchBundleImport"].exists)
+        XCTAssertTrue(sheet.descendants(matching: .any)["researchBundleIncludePDF"].exists,
+                      "PDF bytes must be an explicit export choice")
         #endif
     }
 
@@ -817,9 +1111,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let paper = selectFixturePaper(in: app)
         paper.click()
-        let source = app.radioButtons["原始资料"]
-        XCTAssertTrue(source.waitForExistence(timeout: 5))
-        source.click()
+        selectPaperLensTab("source", in: app)
         let detailStatus = app.staticTexts["paperDetailStatus"]
         XCTAssertTrue(detailStatus.waitForExistence(timeout: 5))
         XCTAssertEqual(waitForValue(of: detailStatus, expected: "INSPIRE 单篇详情已更新。", timeout: 5), .completed,
@@ -860,9 +1152,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let paper = selectFixturePaper(in: app)
         paper.click()
-        let source = app.radioButtons["原始资料"]
-        XCTAssertTrue(source.waitForExistence(timeout: 5))
-        source.click()
+        selectPaperLensTab("source", in: app)
         let detailStatus = app.staticTexts["paperDetailStatus"]
         XCTAssertTrue(detailStatus.waitForExistence(timeout: 5))
         XCTAssertEqual(waitForValue(of: detailStatus, expected: "INSPIRE 单篇详情已更新。", timeout: 5), .completed,
@@ -882,8 +1172,9 @@ final class LatticeLensUITests: XCTestCase {
         app.activate()
         let addTag = app.buttons["addTag"]
         XCTAssertTrue(addTag.waitForExistence(timeout: 5))
-        XCTAssertTrue(addTag.isEnabled,
-                      "tag 文本编辑提交后，保存动作必须在同一 fixture 论文上下文中启用")
+        let tagEnabled = NSPredicate(format: "isEnabled == YES")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: tagEnabled, object: addTag)], timeout: 5), .completed,
+                       "tag 文本编辑提交后，保存动作必须在同一 fixture 论文上下文中启用")
         addTag.click()
         let availableTags = app.descendants(matching: .any)["availableTagsState-1234567-1"]
         XCTAssertTrue(availableTags.waitForExistence(timeout: 5),
@@ -939,7 +1230,7 @@ final class LatticeLensUITests: XCTestCase {
         let state = sheet.descendants(matching: .any)["radarQueryState-\(ownerID)"]
         XCTAssertTrue(state.waitForExistence(timeout: 5),
                       "暂停后同一 durable query owner 必须仍显示本地状态")
-        let pausedState = NSPredicate(format: "value == %@", "paused")
+        let pausedState = NSPredicate(format: "value == %@", "已暂停")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: pausedState, object: state)], timeout: 5), .completed,
                        "暂停必须取消同一 query owner 并发布可恢复的 durable state")
         #endif
@@ -953,7 +1244,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let paper = selectFixturePaper(in: app)
         paper.click()
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         XCTAssertTrue(app.buttons["downloadFullText-fixture-fulltext"].waitForExistence(timeout: 5))
         app.buttons["downloadFullText-fixture-fulltext"].click()
         XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
@@ -1001,7 +1292,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let paper = selectFixturePaper(in: app)
         paper.click()
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         XCTAssertTrue(app.buttons["downloadFullText-fixture-fulltext"].waitForExistence(timeout: 5))
         app.buttons["downloadFullText-fixture-fulltext"].click()
         XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
@@ -1090,7 +1381,10 @@ final class LatticeLensUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "notebookAnchor-"))
             .allElementsBoundByIndex
             .prefix(2)
-            .map(\.identifier)
+            // XCUIElement.identifier is MainActor-isolated in the current
+            // XCTest SDK and cannot be referenced through a key path from
+            // this synchronous legacy test method.
+            .map { element in element.identifier }
         guard anchorIDs.count == 2 else {
             XCTFail("PDF annotation 与同 paper evidence 必须同时出现在可选 multi-anchor 列表中")
             return
@@ -1144,7 +1438,7 @@ final class LatticeLensUITests: XCTestCase {
                       "UI test 必须先确认 process-local fixture 依赖；不得读取用户资料库")
         let first = selectFixturePaper(in: app)
         first.click()
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         app.buttons["downloadFullText-fixture-fulltext"].click()
         XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
         app.buttons["confirmFullTextDownload"].click()
@@ -1153,7 +1447,7 @@ final class LatticeLensUITests: XCTestCase {
         let second = app.staticTexts["paperRow-1234568"].firstMatch
         XCTAssertTrue(second.waitForExistence(timeout: 5))
         second.click()
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         XCTAssertTrue(app.buttons["downloadFullText-fixture-fulltext-1234568"].waitForExistence(timeout: 5))
         app.buttons["downloadFullText-fixture-fulltext-1234568"].click()
         XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
@@ -1161,8 +1455,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertEqual(waitForValue(of: app.staticTexts["fullTextStatus"], expected: "全文已提取为页级 evidence anchors。", timeout: 8), .completed)
 
         first.click()
-        XCTAssertTrue(app.radioButtons["证据"].waitForExistence(timeout: 5))
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         let delete = app.buttons["deleteSelectedFullText"]
         XCTAssertTrue(delete.waitForExistence(timeout: 5))
         delete.click()
@@ -1170,7 +1463,7 @@ final class LatticeLensUITests: XCTestCase {
                        "删除第一篇 document reference 后，该论文的全文控制必须消失")
 
         second.click()
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         let remainingPDFAnchor = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'evidenceAnchor-pdf:'")).firstMatch
         XCTAssertTrue(remainingPDFAnchor.waitForExistence(timeout: 8),
                       "shared blob 删除第一篇引用后，第二篇仍必须保留自己的 evidence anchor")
@@ -1192,7 +1485,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let paper = selectFixturePaper(in: app)
         paper.click()
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         app.buttons["downloadFullText-fixture-fulltext"].click()
         XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
         app.buttons["confirmFullTextDownload"].click()
@@ -1219,16 +1512,7 @@ final class LatticeLensUITests: XCTestCase {
         let paper = app.staticTexts["paperRow-1234567"].firstMatch
         XCTAssertTrue(paper.waitForExistence(timeout: 8))
         paper.click()
-        let formulaTab = app.radioButtons["公式推导"]
-        if formulaTab.waitForExistence(timeout: 5) {
-            formulaTab.click()
-        } else {
-            // AppKit has exposed this same segmented Picker as either a radio
-            // button group or ordinary buttons across Xcode/macOS releases.
-            let formulaButton = app.buttons["公式推导"]
-            XCTAssertTrue(formulaButton.waitForExistence(timeout: 5))
-            formulaButton.click()
-        }
+        selectPaperLensTab("evidence", in: app)
         app.buttons["downloadFullText-fixture-fulltext"].click()
         XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
         app.buttons["confirmFullTextDownload"].click()
@@ -1261,14 +1545,7 @@ final class LatticeLensUITests: XCTestCase {
         let paper = app.staticTexts["paperRow-1234567"].firstMatch
         XCTAssertTrue(paper.waitForExistence(timeout: 8))
         paper.click()
-        let formulaTab = app.radioButtons["公式推导"]
-        if formulaTab.waitForExistence(timeout: 5) {
-            formulaTab.click()
-        } else {
-            let formulaButton = app.buttons["公式推导"]
-            XCTAssertTrue(formulaButton.waitForExistence(timeout: 5))
-            formulaButton.click()
-        }
+        selectPaperLensTab("evidence", in: app)
 
         let readHTML = app.buttons["downloadArxivHTML-1234567"]
         XCTAssertTrue(readHTML.waitForExistence(timeout: 5), "含 arXiv ID 的论文必须提供优先的 ar5iv HTML 动作")
@@ -1298,7 +1575,7 @@ final class LatticeLensUITests: XCTestCase {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8))
         let firstPaper = selectFixturePaper(in: app)
         firstPaper.click()
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         app.buttons["downloadFullText-fixture-fulltext"].click()
         XCTAssertTrue(app.buttons["confirmFullTextDownload"].waitForExistence(timeout: 5))
         app.buttons["confirmFullTextDownload"].click()
@@ -1307,8 +1584,7 @@ final class LatticeLensUITests: XCTestCase {
         let secondPaper = app.staticTexts["paperRow-1234568"].firstMatch
         XCTAssertTrue(secondPaper.waitForExistence(timeout: 5))
         secondPaper.click()
-        XCTAssertTrue(app.radioButtons["证据"].waitForExistence(timeout: 5))
-        app.radioButtons["证据"].click()
+        selectPaperLensTab("evidence", in: app)
         let secondDownload = app.buttons["downloadFullText-fixture-fulltext-1234568"]
         XCTAssertTrue(secondDownload.waitForExistence(timeout: 5),
                       "第二篇 fixture paper 必须显式提供同一 content-addressed PDF 的本地下载动作")
@@ -1428,11 +1704,81 @@ final class LatticeLensUITests: XCTestCase {
         app.descendants(matching: .any)["largeFixtureModeIndicator"].firstMatch
     }
 
+    private func diskBackedFixtureModeIndicator(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)["diskBackedFixtureModeIndicator"].firstMatch
+    }
+
+    private func assertDiskBackedArxivHTMLCache(in fixtureRoot: URL) throws -> (URL, Data) {
+        let cacheDirectory = fixtureRoot.appending(path: "FullText", directoryHint: .isDirectory)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheDirectory.path),
+                      "disk-backed full-text cache must be rooted beside its isolated store")
+        let htmlFiles = try FileManager.default.contentsOfDirectory(at: cacheDirectory,
+                                                                    includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "html" }
+        let htmlFile = try XCTUnwrap(htmlFiles.first,
+                                     "the local ar5iv substitute must leave a content-addressed HTML file")
+        XCTAssertEqual(htmlFiles.count, 1, "this isolated paper should own exactly one HTML source blob")
+        let data = try Data(contentsOf: htmlFile, options: [.mappedIfSafe])
+        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(htmlFile.deletingPathExtension().lastPathComponent, digest,
+                       "the cache filename must remain bound to the exact HTML bytes")
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("ltx_tag_equation"),
+                      "the persisted source should still contain the numbered-equation fixture markup")
+        return (htmlFile, data)
+    }
+
+    private func assertDiskBackedLargeFixtureReady(in app: XCUIApplication, expectedRoot: URL) {
+        XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8),
+                      "disk-backed UI must first confirm the isolated fixture dependency graph")
+        XCTAssertTrue(largeFixtureModeIndicator(in: app).waitForExistence(timeout: 90),
+                      "disk-backed UI must finish seeding or reopening all baseline rows")
+        let indicator = diskBackedFixtureModeIndicator(in: app)
+        XCTAssertTrue(indicator.waitForExistence(timeout: 5),
+                      "disk-backed fixture must publish its isolated root before UI interaction")
+        let canonicalExpectedRoot = expectedRoot.standardizedFileURL.resolvingSymlinksInPath().path
+        XCTAssertEqual(indicator.value as? String, canonicalExpectedRoot,
+                       "the app's visible fixture receipt must identify the exact disk root")
+        let testRoot = projectLocalTestPath(environmentKey: "LATTICELENS_TEST_STORE_ROOT")
+        XCTAssertTrue(canonicalExpectedRoot.hasPrefix(testRoot + "/"),
+                      "the exact fixture store must remain under Reference_manager's test root")
+    }
+
     private func assertLargeFixtureReady(in app: XCUIApplication) {
         XCTAssertTrue(fixtureModeIndicator(in: app).waitForExistence(timeout: 8),
                       "large UI case 必须先确认隔离的 fixture dependency graph")
         XCTAssertTrue(largeFixtureModeIndicator(in: app).waitForExistence(timeout: 12),
                       "large UI case 必须等待所有 process-local rows 及首个本地 projection 完成")
+    }
+
+    private func selectPaperLensTab(_ rawValue: String, in app: XCUIApplication) {
+        let titles = ["overview": "概览", "physics": "物理解释", "figures": "重要图像",
+                      "evidence": "公式推导", "source": "原始资料"]
+        guard let title = titles[rawValue] else {
+            XCTFail("未知 Paper Lens tab: \(rawValue)")
+            return
+        }
+        let identifier = "paperLensTab-\(rawValue)"
+        let visibleOption = app.descendants(matching: .any)[identifier].firstMatch
+        if visibleOption.waitForExistence(timeout: 2), visibleOption.isHittable {
+            visibleOption.click()
+            return
+        }
+
+        // At compact widths ViewThatFits selects the native menu Picker;
+        // open it before looking for its option. At wider widths the stable
+        // per-option identifier above reaches the segmented control directly.
+        let picker = app.descendants(matching: .any)["paperLensTabs"].firstMatch
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), "Paper Lens picker 必须可访问")
+        picker.click()
+        let menuOption = app.descendants(matching: .any)[identifier].firstMatch
+        if menuOption.waitForExistence(timeout: 3), menuOption.isHittable {
+            menuOption.click()
+            return
+        }
+        let titledOption = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", title)).firstMatch
+        XCTAssertTrue(titledOption.waitForExistence(timeout: 3), "Paper Lens 的 \(title) 选项必须可达")
+        titledOption.click()
     }
 
     private func selectWorkbenchTab(_ title: String, in sheet: XCUIElement) {

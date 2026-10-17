@@ -90,13 +90,30 @@ enum FormulaReaderDocument {
 
     static func html(claims: [EvidenceClaim], anchors: [String: EvidenceAnchor]) -> String {
         let cards = claims.enumerated().map { index, claim in
+            let title = equationTitle(for: claim, index: index, anchors: anchors)
             let formula = claim.formulaTeX.map {
-                "<section><h3>公式 · \(escape(claim.epistemicStatus.displayNameZH))</h3>" +
+                "<section><h3>\(escape(title)) · \(escape(claim.epistemicStatus.displayNameZH))</h3>" +
                 math(LocalMarkdownTeX.formulaRawSource($0), display: true) + "</section>"
             } ?? ""
-            let steps = claim.derivationSteps.isEmpty ? "" :
-                "<section><h3>逐步推导 <small>LLM 推断，需独立核对</small></h3><ol>" +
-                claim.derivationSteps.map { "<li><div>\(prose($0))</div></li>" }.joined() + "</ol></section>"
+            let steps: String
+            if !claim.formulaDerivationSteps.isEmpty {
+                let rows = claim.formulaDerivationSteps.map { step in
+                    let before = step.beforeTeX.map { "<p>起始表达式</p>\(math(LocalMarkdownTeX.formulaRawSource($0), display: true))" } ?? ""
+                    let after = step.afterTeX.map { "<p>变换后表达式</p>\(math(LocalMarkdownTeX.formulaRawSource($0), display: true))" } ?? ""
+                    let equationReferences = step.referencedEquationIDs.map { "<code>\(escape($0))</code>" }.joined(separator: " · ")
+                    let anchorReferences = step.evidenceAnchorIDs.map { "<code>\(escape($0))</code>" }.joined(separator: " · ")
+                    return "<li><h4>步骤 \(step.ordinal) · \(escape(step.epistemicStatus.displayNameZH))</h4>" +
+                        "<p>结构：\(escape(structuralStatusLabel(step.structuralStatus)))；物理核验：\(escape(physicsStatusLabel(step.physicsReview)))。</p>" +
+                        "<div>\(prose(step.textZH))</div><p>规则 / 假设：\(prose(step.ruleOrAssumption))</p>" + before + after +
+                        "<p>公式依赖：\(equationReferences.isEmpty ? "无" : equationReferences)<br>Evidence anchor：\(anchorReferences.isEmpty ? "无" : anchorReferences)<br>Document SHA-256：<code>\(escape(step.sourceDocumentHashes.joined(separator: ", ")))</code></p></li>"
+                }.joined()
+                steps = "<section><h3>结构化推导步骤 <small>结构检查与物理核验分开显示</small></h3><ol>\(rows)</ol></section>"
+            } else if !claim.derivationSteps.isEmpty {
+                steps = "<section><h3>旧版文字步骤 <small>未升级为结构化推导 contract</small></h3><ol>" +
+                    claim.derivationSteps.map { "<li><div>\(prose($0))</div></li>" }.joined() + "</ol></section>"
+            } else {
+                steps = ""
+            }
             let conclusion = claim.conclusionZH.map { "<section class=\"conclusion\"><h3>结论</h3>\(prose($0))</section>" } ?? ""
             let sources = claim.evidenceIDs.map { id in
                 guard let anchor = anchors[id] else { return "<li>回查锚点缺失：\(escape(id))</li>" }
@@ -104,10 +121,13 @@ enum FormulaReaderDocument {
                 let section = anchor.section.map { " · " + $0 } ?? ""
                 return "<li>\(escape(location + section)) <code>\(escape(id))</code></li>"
             }.joined()
-            let raw = ([claim.textZH] + [claim.formulaTeX].compactMap { $0 } + claim.derivationSteps + [claim.conclusionZH].compactMap { $0 }).joined(separator: "\n\n")
+            let typedRaw = claim.formulaDerivationSteps.flatMap { step in
+                [step.textZH, step.beforeTeX, step.afterTeX, step.ruleOrAssumption].compactMap { $0 }
+            }
+            let raw = ([claim.textZH] + [claim.formulaTeX].compactMap { $0 } + claim.derivationSteps + typedRaw + [claim.conclusionZH].compactMap { $0 }).joined(separator: "\n\n")
             return """
-            <article aria-label="公式 \(index + 1)">
-            <header><h2>公式 \(index + 1)</h2><span class="status">\(escape(claim.epistemicStatus.displayNameZH))</span></header>
+            <article aria-label="\(escape(title))">
+            <header><h2>\(escape(title))</h2><span class="status">\(escape(claim.epistemicStatus.displayNameZH))</span></header>
             <div class="description">\(prose(claim.textZH))</div>
             \(formula)\(steps)\(conclusion)
             <footer><h3>来源回查</h3>\(sources.isEmpty ? "无全文锚点；不能作为原文直接支持的公式结论。" : "<ul>\(sources)</ul>")</footer>
@@ -121,10 +141,41 @@ enum FormulaReaderDocument {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src \(origin); style-src \(origin) 'unsafe-inline'; font-src \(origin); connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
         <link rel="stylesheet" href="\(origin)/katex.min.css"><link rel="stylesheet" href="\(origin)/reader.css">
         <script defer src="\(origin)/katex.min.js"></script><script defer src="\(origin)/reader.js"></script>
-        <title>重要公式推导</title></head><body tabindex="0"><main>
-        \(cards.isEmpty ? "<p>未找到可回查的论文重要公式。</p>" : cards)
+        <title>编号公式推导</title></head><body tabindex="0"><main>
+        \(cards.isEmpty ? "<p>当前 ar5iv HTML 未发现结构化编号公式。</p>" : cards)
         <p class="end-marker">— 推导结束 —</p></main></body></html>
         """
+    }
+
+    private static func equationTitle(for claim: EvidenceClaim, index: Int, anchors: [String: EvidenceAnchor]) -> String {
+        for evidenceID in claim.evidenceIDs {
+            guard let quote = anchors[evidenceID]?.quote,
+                  let range = quote.range(of: "编号公式 ") else { continue }
+            let suffix = quote[range.upperBound...]
+            let label = suffix.prefix { $0 != "\n" }.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !label.isEmpty { return "公式 \(label)" }
+        }
+        // Legacy cached claims may contain a formula without an evidence
+        // anchor.  Do not invent a numbered equation label for that claim:
+        // numbering is provenance owned by the ar5iv inventory.  A plain
+        // formula card is therefore titled simply “公式”, while an ordinary
+        // non-formula claim keeps its deterministic ordinal for accessibility.
+        return claim.formulaTeX == nil ? "公式 \(index + 1)" : "公式"
+    }
+
+    private static func structuralStatusLabel(_ status: FormulaStructuralStatus) -> String {
+        switch status {
+        case .verifiedStructural: "受限 TeX 结构检查通过（不代表数学等价）"
+        case .needsManual: "结构待人工检查"
+        case .rejected: "结构检查拒绝"
+        }
+    }
+
+    private static func physicsStatusLabel(_ status: FormulaPhysicsReviewStatus) -> String {
+        switch status {
+        case .needsManualPhysics: "需人工物理核验"
+        case .reviewedWithReceipt: "已附人工核验回执"
+        }
     }
 }
 

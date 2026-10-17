@@ -51,9 +51,18 @@ common_xcode=(
   SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
   SWIFT_STRICT_CONCURRENCY=complete
 )
+unit_xcode=(
+  -project LatticeLens.xcodeproj
+  -scheme LatticeLens-Unit
+  -destination 'platform=macOS,arch=arm64'
+  -derivedDataPath "$scratch/derived-data"
+  CODE_SIGNING_ALLOWED=NO
+  SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+  SWIFT_STRICT_CONCURRENCY=complete
+)
 
 run_gate xcode_debug xcodebuild "${common_xcode[@]}" -configuration Debug build -quiet && xcode_debug=0 || true
-run_gate xcode_unit xcodebuild "${common_xcode[@]}" -configuration Debug -only-testing:LatticeLensTests test -quiet && xcode_unit=0 || true
+run_gate xcode_unit xcodebuild "${unit_xcode[@]}" -configuration Debug -only-testing:LatticeLensTests -parallel-testing-enabled NO test -quiet && xcode_unit=0 || true
 run_gate xcode_release xcodebuild "${common_xcode[@]}" -configuration Release build -quiet && xcode_release=0 || true
 run_gate xcode_analyze xcodebuild "${common_xcode[@]}" -configuration Debug analyze -quiet && xcode_analyze=0 || true
 

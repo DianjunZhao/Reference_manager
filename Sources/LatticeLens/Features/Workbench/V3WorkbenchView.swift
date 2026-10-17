@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 
 private struct WorkbenchTextDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.plainText, .json] }
@@ -30,6 +31,7 @@ struct V3WorkbenchView: View {
         case "compare": initialTab = 1
         case "notebook": initialTab = 2
         case "graph": initialTab = 3
+        case "bundle": initialTab = 4
         default: initialTab = 0
         }
         _tab = State(initialValue: initialTab)
@@ -59,6 +61,7 @@ struct V3WorkbenchView: View {
                 Text("对照").tag(1)
                 Text("笔记本与导出").tag(2)
                 Text("关系图").tag(3)
+                Text("Research Bundle").tag(4)
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("workbenchTabPicker")
@@ -69,6 +72,7 @@ struct V3WorkbenchView: View {
                 case 0: RadarWorkbenchTab(viewModel: viewModel)
                 case 1: CompareWorkbenchTab(viewModel: viewModel, dismissWorkbench: { dismiss() })
                 case 2: NotebookWorkbenchTab(viewModel: viewModel)
+                case 4: ResearchBundleWorkbenchTab(viewModel: viewModel)
                 default: GraphWorkbenchTab(viewModel: viewModel)
                 }
             }
@@ -80,8 +84,183 @@ struct V3WorkbenchView: View {
         .frame(minWidth: 820, minHeight: 640)
         .task {
             await viewModel.refreshWorkbench()
+            viewModel.refreshResearchBundleStatus()
             viewModel.runDueRadarQueries()
         }
+    }
+}
+
+private struct ResearchBundleWorkbenchTab: View {
+    @ObservedObject var viewModel: AppViewModel
+    @State private var includePDFBytes = false
+    @State private var importingBundle = false
+    @State private var preview: V4ResearchBundleImportPreview?
+    @State private var stagingReady = false
+    @State private var isStaging = false
+    @State private var confirmActivation = false
+    @State private var confirmRollback = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Research Bundle 2.0").font(.headline)
+            Text("Bundle 是本機目錄 package。匯出前可選擇是否攜帶快取 PDF；預設不帶。匯入會建立另一個 typed V12 store，逐檔驗 hash 並做 semantic comparison；確認前不改 active library。")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                Toggle("包含 PDF bytes（明確選擇）", isOn: $includePDFBytes)
+                    .toggleStyle(.checkbox)
+                    .accessibilityIdentifier("researchBundleIncludePDF")
+                Spacer()
+                Button("匯出 Bundle…", action: chooseExportDestination)
+                    .accessibilityIdentifier("researchBundleExport")
+                Button("預演匯入…") { importingBundle = true }
+                    .accessibilityIdentifier("researchBundleImport")
+            }
+            .disabled(!viewModel.supportsResearchBundle || isStaging || stagingReady)
+
+            if let currentPreview = preview {
+                Divider()
+                ResearchBundleImportPreviewCard(
+                    preview: currentPreview, stagingReady: stagingReady, isStaging: isStaging,
+                    stage: stageImport, activate: { confirmActivation = true },
+                    cancel: cancelImport, close: { preview = nil })
+            }
+
+            if viewModel.researchBundleCanRollback {
+                Button("安排回復此前的 active library（重新啟動後生效）", role: .destructive) {
+                    confirmRollback = true
+                }
+                .accessibilityIdentifier("researchBundleRollback")
+                .disabled(stagingReady || isStaging)
+            }
+
+            if let message = viewModel.researchBundleStatusMessage {
+                Label(message, systemImage: message.contains("失敗") ? "exclamationmark.triangle" : "info.circle")
+                    .font(.caption).foregroundStyle(message.contains("失敗") ? .orange : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("researchBundleStatus")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding()
+        .fileImporter(isPresented: $importingBundle, allowedContentTypes: [.package, .folder],
+                      allowsMultipleSelection: false) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            Task {
+                do { preview = try await viewModel.previewResearchBundle(at: url) }
+                catch { viewModel.reportResearchBundleError(error) }
+            }
+        }
+        .alert("將 Bundle 設為下次啟動的 active library？", isPresented: $confirmActivation) {
+            Button("取消", role: .cancel) {}
+            Button("確認切換", role: .destructive) {
+                do {
+                    try viewModel.activateStagedResearchBundleForNextLaunch()
+                    preview = nil
+                    stagingReady = false
+                } catch {
+                    viewModel.reportResearchBundleError(error)
+                }
+            }
+        } message: {
+            Text("目前執行中的 library 不會即時切換。將以同一資料目錄內的相對 store 檔名原子更新 descriptor；舊 store 保留。退出並重新啟動後才會開啟新 library。")
+        }
+        .alert("安排回復此前 library？", isPresented: $confirmRollback) {
+            Button("取消", role: .cancel) {}
+            Button("安排回復", role: .destructive) {
+                do { try viewModel.rollbackResearchBundleActivationForNextLaunch() }
+                catch { viewModel.reportResearchBundleError(error) }
+            }
+        } message: {
+            Text("只切換同一資料目錄內的 relative active-store descriptor；不刪除目前或此前的 store。重新啟動後才會生效。")
+        }
+    }
+
+    @MainActor
+    private func chooseExportDestination() {
+        let panel = NSSavePanel()
+        panel.title = "匯出 Research Bundle"
+        panel.nameFieldStringValue = "LatticeLens-Research.latticelensbundle"
+        panel.allowedContentTypes = [.package]
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let selectedURL = panel.url else { return }
+            let destination = selectedURL.pathExtension.lowercased() == "latticelensbundle"
+                ? selectedURL : selectedURL.appendingPathExtension("latticelensbundle")
+            Task {
+                do { _ = try await viewModel.exportResearchBundle(to: destination, includePDFBytes: includePDFBytes) }
+                catch { viewModel.reportResearchBundleError(error) }
+            }
+        }
+    }
+
+    private func stageImport() {
+        guard let preview else { return }
+        isStaging = true
+        Task {
+            defer { isStaging = false }
+            do {
+                try await viewModel.stageResearchBundleImport(preview)
+                stagingReady = true
+            } catch { viewModel.reportResearchBundleError(error) }
+        }
+    }
+
+    private func cancelImport() {
+        viewModel.cancelStagedResearchBundleImport()
+        preview = nil
+        stagingReady = false
+    }
+}
+
+private struct ResearchBundleImportPreviewCard: View {
+    let preview: V4ResearchBundleImportPreview
+    let stagingReady: Bool
+    let isStaging: Bool
+    let stage: () -> Void
+    let activate: () -> Void
+    let cancel: () -> Void
+    let close: () -> Void
+
+    private var countSummary: String {
+        preview.manifest.recordCounts.keys.sorted().map { key in
+            "\(key): \(preview.manifest.recordCounts[key] ?? 0)"
+        }.joined(separator: " · ")
+    }
+
+    private var conflictSummary: String {
+        let ids = preview.dryRun.conflictPaperIDs.prefix(20).map { String($0) }.joined(separator: ", ")
+        return "與目前 library 的 ID 衝突共 \(preview.dryRun.conflictPaperIDs.count) 筆；匯入採整庫切換，不會 merge 或覆寫原 store。前 20 個：\(ids)"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("匯入預演 · schema \(preview.manifest.schemaVersion)").font(.subheadline.weight(.semibold))
+            Text("\(preview.dryRun.paperCount) papers · \(preview.dryRun.noteCount) notes · \(preview.dryRun.annotationCount) annotations · \(preview.includedPDFCount) PDFs · file hash \(preview.manifest.manifestHash.prefix(16))…")
+                .font(.caption.monospaced()).foregroundStyle(.secondary)
+            Text(countSummary).font(.caption).foregroundStyle(.secondary)
+            if preview.dryRun.conflictPaperIDs.isEmpty {
+                Text("與目前 library 沒有 paper-ID 重疊。")
+            } else {
+                Text(conflictSummary).font(.caption).foregroundStyle(.orange)
+            }
+            HStack {
+                if stagingReady {
+                    Button("確認切換（重新啟動後生效）", action: activate)
+                        .accessibilityIdentifier("researchBundleActivate")
+                    Button("取消並清除 staging", role: .cancel, action: cancel)
+                        .accessibilityIdentifier("researchBundleCancel")
+                } else {
+                    Button(isStaging ? "建立 V12 staging 中…" : "驗證並建立獨立 staging store", action: stage)
+                        .disabled(isStaging)
+                        .accessibilityIdentifier("researchBundleStage")
+                    Button("關閉預演", role: .cancel, action: close)
+                }
+            }
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

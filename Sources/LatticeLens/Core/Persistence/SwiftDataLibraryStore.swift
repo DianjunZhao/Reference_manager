@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import SwiftData
 
 /// A versioned local document. The encoded value is a normalized LibrarySnapshot
@@ -98,6 +99,10 @@ final class StoredBibTeXRecordV2 {
     }
 }
 
+// These models are frozen members of the released V2 schema (and therefore
+// every cumulative V3–V7 schema). New formula metadata belongs in the V8+
+// typed store; adding fields here changes old model hashes and makes existing
+// V7 stores unrecognizable to SwiftData's staged migration planner.
 @Model
 final class StoredFullTextDocumentV2 {
     @Attribute(.unique) var documentID: String
@@ -1077,80 +1082,327 @@ enum SwiftDataV1Rollback {
 }
 
 enum LibraryStoreFactory {
+    @MainActor private static var retainedOwnerLeases: [String: V10StoreOwnerLease] = [:]
+
+    /// Selects a V12 direct-open path for new production libraries while
+    /// retaining the V8 path as the migration base whenever legacy state is
+    /// present. The selector only probes the caller-supplied root.
+    static func productionDefaultStoreURL(
+        applicationSupportRoot: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
+        let currentStoreURL = applicationSupportRoot.appending(path: "LatticeLens/Library-v12.store")
+        let legacyStoreURL = applicationSupportRoot.appending(path: "LatticeLens/Library-v8.store")
+        return selectProductionStoreURL(
+            currentStoreURL: currentStoreURL,
+            legacyStoreURL: legacyStoreURL,
+            legacyV7Candidates: legacyV7StoreCandidates(applicationSupportRoot: applicationSupportRoot),
+            fileManager: fileManager
+        )
+    }
+
+    /// The explicitly isolated production smoke uses its own historical path
+    /// layout, but follows the same V12-versus-legacy selection rule.
+    static func productionIsolationDefaultStoreURL(
+        isolationRoot: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
+        let root = isolationRoot.appending(path: "swiftdata")
+        return selectProductionStoreURL(
+            currentStoreURL: root.appending(path: "LatticeLens-v12.store"),
+            legacyStoreURL: root.appending(path: "LatticeLens-v8.store"),
+            legacyV7Candidates: [root.appending(path: "LatticeLens-v7.store")],
+            fileManager: fileManager
+        )
+    }
+
+    private static func selectProductionStoreURL(
+        currentStoreURL: URL,
+        legacyStoreURL: URL,
+        legacyV7Candidates: [URL],
+        fileManager: FileManager
+    ) -> URL {
+        let currentDescriptors = [11, 12].map {
+            V10StoreMigrationCoordinator.descriptorURL(for: currentStoreURL, targetSchemaVersion: $0)
+        }
+        if fileManager.fileExists(atPath: currentStoreURL.path) ||
+            currentDescriptors.contains(where: { fileManager.fileExists(atPath: $0.path) }) {
+            return currentStoreURL
+        }
+
+        let legacyDescriptors = [11, 12].map {
+            V10StoreMigrationCoordinator.descriptorURL(for: legacyStoreURL, targetSchemaVersion: $0)
+        }
+        if fileManager.fileExists(atPath: legacyStoreURL.path) ||
+            legacyDescriptors.contains(where: { fileManager.fileExists(atPath: $0.path) }) ||
+            legacyV7Candidates.contains(where: { fileManager.fileExists(atPath: $0.path) }) {
+            return legacyStoreURL
+        }
+        return currentStoreURL
+    }
+
+    /// A V12 file left at the retired V8 direct-open path by an earlier 2.0
+    /// build must be copied through the verified staging/descriptor flow.
+    /// Explicit test roots remain closed worlds and keep their existing layout.
+    static func shouldMigrateDirectV12StoreFromLegacyPath(
+        at storeURL: URL,
+        storeURLOverride: URL? = nil,
+        environment: [String: String],
+        applicationSupportRoot: URL? = nil
+    ) -> Bool {
+        guard storeURLOverride == nil else { return false }
+
+        let legacyStoreURL: URL
+        if let isolationRoot = AppLaunchConfiguration.productionIsolationStoreRoot(environment: environment) {
+            legacyStoreURL = URL(fileURLWithPath: isolationRoot, isDirectory: true)
+                .appending(path: "swiftdata/LatticeLens-v8.store")
+        } else if environment["LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"] == "1" ||
+                    environment["LATTICELENS_TEST_STORE_ROOT"]?.isEmpty == false {
+            return false
+        } else {
+            let root = applicationSupportRoot ??
+                FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
+                FileManager.default.temporaryDirectory
+            legacyStoreURL = root.appending(path: "LatticeLens/Library-v8.store")
+        }
+        return storeURL.standardizedFileURL == legacyStoreURL.standardizedFileURL
+    }
+
     @MainActor
-    static func makeDefault() -> any LibraryStoring {
-        let schema = Schema(versionedSchema: LatticeLensSchemaV9.self)
-        let storeURL = defaultStoreURL()
+    static func makeDefault(storeURLOverride: URL? = nil) -> any LibraryStoring {
+        makeDefault(storeURLOverride: storeURLOverride,
+                    environment: ProcessInfo.processInfo.environment)
+    }
+
+    /// Environment-injected construction is used by isolated persistence
+    /// regressions; production callers use the process-environment wrapper.
+    @MainActor
+    static func makeDefault(
+        storeURLOverride: URL? = nil,
+        environment: [String: String]
+    ) -> any LibraryStoring {
+        let targetSchemaVersion = 12
+        let schema = Schema(versionedSchema: LatticeLensSchemaV12.self)
+        let requestedStoreURL = storeURLOverride ?? defaultStoreURL(environment: environment)
         do {
-            // `ModelConfiguration(url:)` will not reliably create a nested
-            // parent such as `Application Support/LatticeLens` (or the
-            // explicitly isolated `swiftdata` directory) on a first launch.
-            // Without this, a brand-new installation can fall into a
-            // read-only bootstrap failure before the pinned author or its
-            // first literature page has anywhere durable to be written.
-            try ensureActiveStoreDirectory(for: storeURL)
-            // Final V8-core/V9-search activation is a distinct target, not
-            // an in-place V7 schema open.  The coordinator copies and hashes
-            // the complete V7 SQLite family, materializes a staging V8 typed
-            // store, checks counts/IDs/link hashes, then V9 opens the
-            // rebuildable local-search projection at that verified target.
-            // A failed migration returns a read-only recovery store below;
-            // it must never create a blank JSON library over user data.
-            // Older local releases stored the V4/V7 SQLite family directly as
-            // `Application Support/LatticeLens.store`, while the staged V8
-            // coordinator uses `LatticeLens/Library-v7.store`.  If we only
-            // probe the latter, a first launch after upgrading creates a new
-            // empty V8 container and the UI appears to have lost every
-            // author/paper.  Keep the current nested path preferred, but
-            // explicitly discover the historical root family when the active
-            // target does not yet exist.  The coordinator backs up and reads
-            // the selected source before activating the new target; no source
-            // family is overwritten or deleted by this discovery.
-            try recoverLegacyStoreIfNeeded(storeURL: storeURL)
-            do {
-                let configuration = ModelConfiguration(schema: schema, url: storeURL)
-                let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV9.self,
-                                                   configurations: configuration)
-                let context = ModelContext(container)
-                if try context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty {
-                    // No V7 source means this is a genuinely new V8-core/V9
-                    // library.  It is initialized from empty typed rows only;
-                    // V7 generic rows are never introduced into a new active
-                    // store.
-                    try V8TypedStoreCodec.materialize(LibrarySnapshot(schemaVersion: 8, v3SchemaVersion: 3), in: context, sourceSchemaVersion: 8)
+            let bundleActivationURL = V4BundleActivationCoordinator.descriptorURL(for: requestedStoreURL)
+            let hasBundleActivation = FileManager.default.fileExists(atPath: bundleActivationURL.path)
+            let baseStoreURL = try V4BundleActivationCoordinator.resolveActiveStoreURL(
+                for: requestedStoreURL) ?? requestedStoreURL
+            let descriptorURL = V10StoreMigrationCoordinator.descriptorURL(
+                for: baseStoreURL, targetSchemaVersion: targetSchemaVersion)
+            let v11DescriptorURL = V10StoreMigrationCoordinator.descriptorURL(for: baseStoreURL)
+            try ensureActiveStoreDirectory(for: baseStoreURL)
+            // Bundle-ID process checks protect the implicit user library only.
+            // Explicit test/isolated roots use the per-directory flock lease;
+            // another app instance with the same bundle ID does not own them.
+            let usesExplicitStoreRoot = storeURLOverride != nil ||
+                AppLaunchConfiguration.productionIsolationStoreRoot(environment: environment) != nil ||
+                environment["LATTICELENS_TEST_STORE_ROOT"]?.isEmpty == false
+            let lease = try ownerLease(for: baseStoreURL,
+                                       checkForOtherApplicationInstance: !usesExplicitStoreRoot)
+            let backupRoot = baseStoreURL.deletingLastPathComponent()
+                .appendingPathComponent("LatticeLens-StoreBackups", isDirectory: true)
+            try recoverPendingMigrations(near: baseStoreURL, backupRoot: backupRoot)
+
+            let activeStoreURL: URL
+            let isNewStore: Bool
+            if let resolved = try V10StoreMigrationCoordinator.resolveActiveStoreURL(
+                for: baseStoreURL, targetSchemaVersion: targetSchemaVersion) {
+                _ = try V10StoreMigrationCoordinator.validateActiveDescriptorEvidence(
+                    descriptorURL: descriptorURL, backupRoot: backupRoot,
+                    targetSchemaVersion: targetSchemaVersion)
+                try verifyActiveV12StoreCanOpen(at: resolved)
+                activeStoreURL = resolved
+                isNewStore = false
+            } else {
+                // Legacy V7 discovery is kept on the production path so its
+                // proven V7→V8 importer can feed the same staged V8–V12
+                // activation path. Explicit test/diagnostic URLs are closed
+                // worlds: they must never probe Application Support.
+                if storeURLOverride == nil && !hasBundleActivation &&
+                    !FileManager.default.fileExists(atPath: v11DescriptorURL.path) {
+                    try recoverLegacyStoreIfNeeded(storeURL: baseStoreURL,
+                                                   environment: environment)
                 }
-                // V9 adds only a rebuildable token/reverse-token projection over
-                // the active V8 rows.  Do this after a successful lightweight
-                // schema migration, never by decoding a legacy store in place.
-                if try !V9TypedSearchIndex.isCurrent(in: context) {
-                    try V9TypedSearchIndex.rebuild(in: context)
+                let sourceURL: URL?
+                var directActiveURL: URL?
+                if FileManager.default.fileExists(atPath: v11DescriptorURL.path) {
+                    guard let legacyActiveURL = try V10StoreMigrationCoordinator.resolveActiveStoreURL(
+                        for: baseStoreURL, targetSchemaVersion: 11) else {
+                        throw V10StoreMigrationError.invalidDescriptor
+                    }
+                    _ = try V10StoreMigrationCoordinator.validateActiveDescriptorEvidence(
+                        descriptorURL: v11DescriptorURL, backupRoot: backupRoot)
+                    sourceURL = legacyActiveURL
+                } else if FileManager.default.fileExists(atPath: baseStoreURL.path) {
+                    let detectedVersion = try V10StoreSQLiteSchemaProbe.schemaVersion(at: baseStoreURL)
+                    if detectedVersion == targetSchemaVersion &&
+                        !shouldMigrateDirectV12StoreFromLegacyPath(
+                            at: baseStoreURL,
+                            storeURLOverride: storeURLOverride,
+                            environment: environment
+                        ) {
+                        try verifyActiveV12StoreCanOpen(at: baseStoreURL)
+                        directActiveURL = baseStoreURL
+                        sourceURL = nil
+                    } else {
+                        sourceURL = baseStoreURL
+                    }
+                } else {
+                    sourceURL = nil
                 }
-                return V8TypedLibraryStore(modelContainer: container)
-            } catch {
-                // A V8 store written by an earlier release may be perfectly
-                // readable while the V8→V9 lightweight migration is rejected
-                // by the installed SwiftData runtime (notably after adding
-                // unique token rows).  V9 is only a rebuildable search
-                // projection, so retain the verified V8 domain store and use
-                // its bounded compatibility search until a later repair can
-                // rebuild V9.  Never turn this recoverable case into a blank
-                // read-only workspace.
-                let compatibilitySchema = Schema(versionedSchema: LatticeLensSchemaV8.self)
-                let compatibilityConfiguration = ModelConfiguration(schema: compatibilitySchema, url: storeURL)
-                let compatibilityContainer = try ModelContainer(for: compatibilitySchema,
-                                                                  configurations: compatibilityConfiguration)
-                guard try !compatibilityContainer.mainContext.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty else {
-                    throw error
+
+                if let directActiveURL {
+                    activeStoreURL = directActiveURL
+                    isNewStore = false
+                } else if let sourceURL {
+                    var sourceSummary: V10StoreSemanticSummary?
+                    var sourceSchemaVersion: Int?
+                    let outcome = try V10StoreMigrationCoordinator.migrate(
+                        sourceURL: sourceURL,
+                        descriptorURL: descriptorURL,
+                        backupRoot: backupRoot,
+                        ownerLease: lease,
+                        targetSchemaVersion: targetSchemaVersion,
+                        inspectBackupCopy: { probeURL, detectedSchemaVersion in
+                            let inspected = try inspectExistingStore(at: probeURL,
+                                schemaVersion: detectedSchemaVersion)
+                            sourceSchemaVersion = inspected.schemaVersion
+                            sourceSummary = inspected.summary
+                            return inspected.summary
+                        },
+                        migrateAndVerify: { stagingURL, reportProgress in
+                            let stagedConfiguration = ModelConfiguration(schema: schema, url: stagingURL)
+                            let staged = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV12.self,
+                                                            configurations: stagedConfiguration)
+                            let context = ModelContext(staged)
+                            guard try !context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty,
+                                  let expected = sourceSummary,
+                                  let sourceVersion = sourceSchemaVersion else {
+                                throw V10StoreMigrationError.semanticMismatch
+                            }
+                            try V10CategoryProfileBootstrap.migrateOrCreate(in: context)
+                            try reportProgress(.categoryMigrated)
+                            if try !V9TypedSearchIndex.isCurrent(in: context) {
+                                try V9TypedSearchIndex.rebuild(in: context)
+                            }
+                            try reportProgress(.searchIndexReady)
+                            let result = try V10StoreSemanticSummary.make(from: context,
+                                                                         schemaVersion: targetSchemaVersion)
+                            guard expected.preservesDomainAndTypedRows(in: result, sourceSchemaVersion: sourceVersion) else {
+                                throw V10StoreMigrationError.semanticMismatch
+                            }
+                            return result
+                        })
+                    activeStoreURL = outcome.activeStoreURL
+                    isNewStore = false
+                } else {
+                    activeStoreURL = baseStoreURL
+                    isNewStore = true
                 }
-                return V8TypedLibraryStore(modelContainer: compatibilityContainer)
             }
+
+            let configuration = ModelConfiguration(schema: schema, url: activeStoreURL)
+            let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV12.self,
+                                               configurations: configuration)
+            let context = ModelContext(container)
+            if try context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty {
+                guard isNewStore else { throw V10StoreMigrationError.semanticMismatch }
+                try V8TypedStoreCodec.materialize(LibrarySnapshot(schemaVersion: 8, v3SchemaVersion: 3),
+                                                  in: context, sourceSchemaVersion: 8)
+            }
+            try V10CategoryProfileBootstrap.migrateOrCreate(in: context)
+            if try !V9TypedSearchIndex.isCurrent(in: context) {
+                try V9TypedSearchIndex.rebuild(in: context)
+            }
+            return V8TypedLibraryStore(modelContainer: container)
         } catch {
-            return V8MigrationBlockedStore(reason: "V9/V8 typed store 无法打开或迁移；原 V7 source 和已验证 backup 未被覆盖。\(type(of: error))")
+            return V8MigrationBlockedStore(reason: "V12/2.0 staging migration or active-store verification failed; the source library was not opened with the V12 migration plan and remains available for recovery. \(type(of: error))")
         }
     }
 
-    /// Establish the one parent directory owned by the active V8/V9 SQLite
-    /// family before SwiftData opens it.  Keeping this helper independent of
+    @MainActor
+    private static func ownerLease(for storeURL: URL, checkForOtherApplicationInstance: Bool) throws -> V10StoreOwnerLease {
+        let parent = storeURL.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
+        if let existing = retainedOwnerLeases[parent.path] { return existing }
+        if checkForOtherApplicationInstance, let bundleID = Bundle.main.bundleIdentifier {
+            let currentPID = ProcessInfo.processInfo.processIdentifier
+            let competingInstances = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                .filter { $0.processIdentifier != currentPID }
+            guard competingInstances.isEmpty else { throw V10StoreMigrationError.storeOwnerBusy }
+        }
+        let lease = try V10StoreOwnerLease.acquire(for: storeURL)
+        retainedOwnerLeases[parent.path] = lease
+        return lease
+    }
+
+    @MainActor
+    private static func recoverPendingMigrations(near baseStoreURL: URL, backupRoot: URL) throws {
+        let parent = baseStoreURL.deletingLastPathComponent()
+        let journals = try FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)
+            .filter {
+                ($0.lastPathComponent.hasPrefix(".latticelens-v11-migration-") ||
+                 $0.lastPathComponent.hasPrefix(".latticelens-v12-migration-")) && $0.pathExtension == "json"
+            }
+        for journalURL in journals {
+            let journal = try JSONDecoder.latticeLens.decode(V10StoreMigrationJournal.self, from: Data(contentsOf: journalURL))
+            guard journal.phase != .activated, journal.phase != .rolledBack else { continue }
+            let targetDescriptorURL = V10StoreMigrationCoordinator.descriptorURL(
+                for: baseStoreURL, targetSchemaVersion: journal.targetSchemaVersion)
+            _ = try V10StoreMigrationCoordinator.recover(
+                journalURL: journalURL, parent: parent, descriptorURL: targetDescriptorURL,
+                backupRoot: backupRoot, verifyActive: {
+                    try inspectExistingStore(at: $0, schemaVersion: journal.targetSchemaVersion).summary
+                })
+        }
+    }
+
+    @MainActor
+    private static func inspectExistingStore(at storeURL: URL, schemaVersion: Int) throws -> (schemaVersion: Int, summary: V10StoreSemanticSummary) {
+        let schema: Schema
+        switch schemaVersion {
+        case 8: schema = Schema(versionedSchema: LatticeLensSchemaV8.self)
+        case 9: schema = Schema(versionedSchema: LatticeLensSchemaV9.self)
+        case 10: schema = Schema(versionedSchema: LatticeLensSchemaV10.self)
+        case 11: schema = Schema(versionedSchema: LatticeLensSchemaV11.self)
+        case 12: schema = Schema(versionedSchema: LatticeLensSchemaV12.self)
+        default: throw V10StoreMigrationError.invalidSource
+        }
+        let configuration = ModelConfiguration(schema: schema, url: storeURL, allowsSave: false)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        let context = container.mainContext
+        guard try !context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty else {
+            throw V10StoreMigrationError.invalidSource
+        }
+        return (schemaVersion, try V10StoreSemanticSummary.make(from: context, schemaVersion: schemaVersion))
+    }
+
+    @MainActor
+    private static func inspectV12Store(at storeURL: URL) throws -> V10StoreSemanticSummary {
+        let schema = Schema(versionedSchema: LatticeLensSchemaV12.self)
+        let configuration = ModelConfiguration(schema: schema, url: storeURL, allowsSave: false)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        guard try !container.mainContext.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty else {
+            throw V10StoreMigrationError.invalidDescriptor
+        }
+        return try V10StoreSemanticSummary.make(from: container.mainContext, schemaVersion: 12)
+    }
+
+    @MainActor
+    private static func verifyActiveV12StoreCanOpen(at storeURL: URL) throws {
+        let schema = Schema(versionedSchema: LatticeLensSchemaV12.self)
+        let configuration = ModelConfiguration(schema: schema, url: storeURL, allowsSave: false)
+        let container = try ModelContainer(for: schema, configurations: configuration)
+        guard let marker = try container.mainContext.fetch(FetchDescriptor<StoredV8StoreMarker>()).first,
+              marker.schemaVersion >= 80 else {
+            throw V10StoreMigrationError.invalidDescriptor
+        }
+        _ = try V10StoreSemanticSummary.make(from: container.mainContext, schemaVersion: 12)
+    }
+
+    /// Establish the one parent directory owned by the active SQLite store
+    /// before SwiftData opens it. Keeping this helper independent of
     /// path selection makes first-launch behaviour testable without probing
     /// Application Support or a real library.
     static func ensureActiveStoreDirectory(
@@ -1163,40 +1415,57 @@ enum LibraryStoreFactory {
         )
     }
 
-    private static func defaultStoreURL() -> URL {
+    static func defaultStoreURL(environment: [String: String]) -> URL {
         // A production-dependency smoke test cannot rely on `HOME` for
         // isolation: AppKit may still resolve Application Support for the
         // logged-in account.  This explicit two-key gate is deliberately
         // separate from fixture mode so the test exercises real networking
         // while every store read/write stays below its disposable root.
-        if let isolatedRoot = AppLaunchConfiguration.productionIsolationStoreRoot {
-            return URL(fileURLWithPath: isolatedRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v8.store")
+        if let isolatedRoot = AppLaunchConfiguration.productionIsolationStoreRoot(environment: environment) {
+            return productionIsolationDefaultStoreURL(
+                isolationRoot: URL(fileURLWithPath: isolatedRoot, isDirectory: true)
+            )
         }
         // Every XCTest/fixture invocation supplies an explicitly project-local
         // root.  Never fall through to Application Support in that mode: a
         // host-free contract test must not even attempt to open a user's
         // library, regardless of which view-model initializer it exercises.
-        if let testRoot = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
+        if environment["LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"] == "1" {
+            guard let testRoot = environment["LATTICELENS_TEST_STORE_ROOT"], testRoot.hasPrefix("/") else {
+                preconditionFailure("The isolated test launch requires LATTICELENS_TEST_STORE_ROOT")
+            }
+            return URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v8.store")
+        }
+        if let testRoot = environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
             return URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v8.store")
         }
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return root.appending(path: "LatticeLens/Library-v8.store")
+        return productionDefaultStoreURL(applicationSupportRoot: root)
     }
 
     /// Candidate compatibility families, ordered from the current staged V7
     /// location to the pre-V7 root file used by early releases.  This helper
     /// is intentionally pure (it performs no filesystem probing) so migration
     /// path selection can be regression-tested without touching a user store.
-    static func legacyV7StoreCandidates(applicationSupportRoot: URL? = nil) -> [URL] {
+    static func legacyV7StoreCandidates(
+        applicationSupportRoot: URL? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [URL] {
         let root: URL
         if let applicationSupportRoot {
             // An explicit root is used only by deterministic tests/diagnostic
             // callers and must win over a process-wide fixture environment.
             root = applicationSupportRoot
-        } else if let isolatedRoot = AppLaunchConfiguration.productionIsolationStoreRoot {
+        } else if let isolatedRoot = AppLaunchConfiguration.productionIsolationStoreRoot(environment: environment) {
             return [URL(fileURLWithPath: isolatedRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v7.store")]
-        } else if let testRoot = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
+        } else if environment["LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"] == "1" {
+            guard let testRoot = environment["LATTICELENS_TEST_STORE_ROOT"],
+                  testRoot.hasPrefix("/") else {
+                preconditionFailure("The isolated test launch requires LATTICELENS_TEST_STORE_ROOT")
+            }
+            return [URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v7.store")]
+        } else if let testRoot = environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
             return [URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "swiftdata/LatticeLens-v7.store")]
         } else {
             root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -1222,9 +1491,11 @@ enum LibraryStoreFactory {
     static func recoverLegacyStoreIfNeeded(
         storeURL: URL,
         applicationSupportRoot: URL? = nil,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws {
-        let candidates = legacyV7StoreCandidates(applicationSupportRoot: applicationSupportRoot)
+        let candidates = legacyV7StoreCandidates(applicationSupportRoot: applicationSupportRoot,
+                                                 environment: environment)
         let existingCandidates = candidates.filter { fileManager.fileExists(atPath: $0.path) }
         guard !existingCandidates.isEmpty else { return }
         // An interrupted upgrade can leave an empty, marker-bearing
@@ -1325,7 +1596,14 @@ enum LibraryStoreFactory {
         // The fallback path obeys the same XCTest isolation contract as the
         // SwiftData URL.  A failed test-store bootstrap must never redirect a
         // host-free test into a user's Application Support JSON library.
-        if let testRoot = ProcessInfo.processInfo.environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"] == "1" {
+            guard let testRoot = environment["LATTICELENS_TEST_STORE_ROOT"], testRoot.hasPrefix("/") else {
+                preconditionFailure("The isolated test launch requires LATTICELENS_TEST_STORE_ROOT")
+            }
+            return URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "json/LatticeLens-fallback.json")
+        }
+        if let testRoot = environment["LATTICELENS_TEST_STORE_ROOT"], !testRoot.isEmpty {
             return URL(fileURLWithPath: testRoot, isDirectory: true).appending(path: "json/LatticeLens-fallback.json")
         }
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

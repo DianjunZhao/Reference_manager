@@ -1,10 +1,33 @@
 import Foundation
 
+/// A structurally labelled display equation extracted from the current local
+/// ar5iv HTML file.  It is intentionally separate from a prose retrieval
+/// chunk: title relevance must never decide whether a numbered equation is
+/// sent to the all-coverage formula contract.
+struct NumberedEquationInput: Codable, Hashable, Sendable {
+    let equationID: String
+    let label: String
+    let tex: String
+    let evidenceID: String
+    let section: String?
+
+    enum CodingKeys: String, CodingKey {
+        case equationID = "equation_id"
+        case label
+        case tex
+        case evidenceID = "evidence_id"
+        case section
+    }
+}
+
 struct EvidenceInputPayload: Codable, Sendable {
+    /// Ordinary prose context remains bounded. Numbered equations use their
+    /// own inventory below and are never selected by this relevance limit.
     static let maximumChunks = 12
-    static let maximumAnchors = 32
-    static let maximumPayloadBytes = 256 * 1024
-    static let maximumPayloadScalars = 120_000
+    static let maximumMetadataAnchors = 12
+    static let maximumNumberedEquations = 256
+    static let maximumPayloadBytes = 1_000_000
+    static let maximumPayloadScalars = 480_000
     let paperID: Int
     let documentHash: String
     /// Coordinates carried by a full-text anchor depend on the document
@@ -17,12 +40,35 @@ struct EvidenceInputPayload: Codable, Sendable {
     let abstract: String?
     let chunks: [EvidenceChunk]
     let anchors: [EvidenceAnchor]
+    let numberedEquations: [NumberedEquationInput]
+    /// `false` is fail-closed. It covers old HTML extractions, PDF fallback,
+    /// malformed indexes and explicit local payload limits; no provider call
+    /// is permitted in those cases.
+    var numberedEquationCoverageComplete: Bool
+    var numberedEquationCoverageFailure: String?
     let figureKeys: [String]
     let retrievalQuery: String
     let rankerVersion: String
     let payloadByteCount: Int
     let payloadScalarCount: Int
     let payloadTokenEstimate: Int
+    /// Hash of the complete local numbered-equation inventory.  Older
+    /// payloads may omit it; a new formula job will then derive a bounded
+    /// payload identity from the validated equation projection.
+    let inventoryHash: String?
+    /// Present for a formula batch request.  A batch is validated against its
+    /// own equation subset; the merged artifact is validated against the full
+    /// inventory before persistence.
+    let batchIndex: Int?
+    let batchTotal: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case paperID, documentHash, documentSourceKind, title, abstract, chunks, anchors
+        case numberedEquations = "numbered_equations"
+        case numberedEquationCoverageComplete = "numbered_equation_coverage_complete"
+        case numberedEquationCoverageFailure = "numbered_equation_coverage_failure"
+        case figureKeys, retrievalQuery, rankerVersion, payloadByteCount, payloadScalarCount, payloadTokenEstimate, inventoryHash, batchIndex, batchTotal
+    }
 
     init(paper: Paper, document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor]) {
         paperID = paper.literatureID
@@ -30,33 +76,156 @@ struct EvidenceInputPayload: Codable, Sendable {
         documentSourceKind = document.sourceKind
         title = paper.displayTitle
         abstract = paper.preferredAbstract
-        var selectedChunks = [EvidenceChunk]()
-        var runningBytes = 0
-        var runningScalars = 0
-        for chunk in chunks.filter({ $0.paperID == paper.literatureID && $0.documentHash == document.sha256 }).prefix(Self.maximumChunks) {
-            let chunkBytes = chunk.byteCount
-            let chunkScalars = chunk.scalarCount
-            guard runningBytes + chunkBytes <= Self.maximumPayloadBytes,
-                  runningScalars + chunkScalars <= Self.maximumPayloadScalars else { break }
-            selectedChunks.append(chunk)
-            runningBytes += chunkBytes
-            runningScalars += chunkScalars
-        }
+        let eligibleChunks = chunks.filter { $0.paperID == paper.literatureID && $0.documentHash == document.sha256 }
+        let formulaChunks = eligibleChunks.filter { $0.equationID != nil || $0.equationLabel != nil || $0.equationTeX != nil || $0.equationOrdinal != nil }
+            .sorted { lhs, rhs in
+                let left = lhs.equationOrdinal ?? .max
+                let right = rhs.equationOrdinal ?? .max
+                return left == right ? lhs.id < rhs.id : left < right
+            }
+        let ordinaryChunks = eligibleChunks.filter { $0.equationID == nil && $0.equationLabel == nil && $0.equationTeX == nil && $0.equationOrdinal == nil }
+        let selectedOrdinaryChunks = Array(ordinaryChunks.prefix(Self.maximumChunks))
+        let selectedChunks = selectedOrdinaryChunks + formulaChunks
         let selectedIDs = Set(selectedChunks.map(\.id))
         self.chunks = selectedChunks
-        // A v2 request contains only retrieved full-text anchors plus a small,
-        // deterministic metadata allowance.  Metadata provenance remains
-        // useful before/alongside full text, but it must not turn an unbounded
-        // collection of captions into an implicit whole-library prompt.
+        // Every selected formula chunk retains its own same-document anchor.
+        // Metadata stays separately bounded; formula anchors never consume the
+        // metadata allowance or get silently removed by a generic prefix.
         let fullTextAnchors = anchors.filter { selectedIDs.contains($0.id) }.sorted { $0.id < $1.id }
-        let metadataAnchors = anchors.filter { $0.sourceKind != .pdf }.sorted { $0.id < $1.id }
-        self.anchors = Array((fullTextAnchors + metadataAnchors).prefix(Self.maximumAnchors))
+        let metadataAnchors = Array(anchors.filter { $0.sourceKind != .pdf }.sorted { $0.id < $1.id }.prefix(Self.maximumMetadataAnchors))
+        self.anchors = fullTextAnchors + metadataAnchors
+
+        let anchorsByID = Dictionary(uniqueKeysWithValues: fullTextAnchors.map { ($0.id, $0) })
+        var coverageFailure: String?
+        if document.sourceKind != .arxivHTML {
+            coverageFailure = "PDF 文本回退不具备结构化编号公式全覆盖保证；请读取 ar5iv HTML 后再生成。"
+        } else if document.numberedEquationIndexVersion != FullTextService.numberedEquationIndexVersion {
+            coverageFailure = "本地 ar5iv HTML 尚未建立当前编号公式索引；请先在本机重建索引。"
+        } else if document.numberedEquationIndexComplete != true {
+            coverageFailure = document.numberedEquationIndexFailure ?? "本地 ar5iv HTML 的编号公式索引不完整；不会生成部分覆盖结果。"
+        } else if formulaChunks.count > Self.maximumNumberedEquations {
+            coverageFailure = "编号公式索引超过本地全覆盖上限（\(formulaChunks.count)/\(Self.maximumNumberedEquations)）；不会生成部分覆盖结果。"
+        }
+
+        var equations = [NumberedEquationInput]()
+        var seenEquationIDs = Set<String>()
+        for chunk in formulaChunks {
+            guard let equationID = chunk.equationID,
+                  let label = chunk.equationLabel,
+                  let tex = chunk.equationTeX,
+                  !equationID.isEmpty, !label.isEmpty, !tex.isEmpty,
+                  seenEquationIDs.insert(equationID).inserted,
+                  let anchor = anchorsByID[chunk.id], anchor.quoteHash == chunk.textHash,
+                  anchor.quote == chunk.text else {
+                coverageFailure = "本地 ar5iv 编号公式索引损坏或缺少同一 document 的 evidence anchor；不会生成部分覆盖结果。"
+                break
+            }
+            equations.append(NumberedEquationInput(equationID: equationID, label: label, tex: tex,
+                                                   evidenceID: anchor.id, section: chunk.section))
+        }
+        self.numberedEquations = equations
+        self.numberedEquationCoverageComplete = coverageFailure == nil
+        self.numberedEquationCoverageFailure = coverageFailure
         figureKeys = Array(paper.figures.prefix(12).map(\.key))
         retrievalQuery = SearchNormalizer.normalize(paper.displayTitle)
-        rankerVersion = "local-title-token-v1"
-        payloadByteCount = self.chunks.reduce(0) { $0 + $1.byteCount } + self.anchors.reduce(0) { $0 + $1.quote.utf8.count }
-        payloadScalarCount = self.chunks.reduce(0) { $0 + $1.scalarCount } + self.anchors.reduce(0) { $0 + $1.quote.unicodeScalars.count }
-        payloadTokenEstimate = self.chunks.reduce(0) { $0 + $1.tokenEstimate } + self.anchors.reduce(0) { $0 + max(1, $1.quote.split { $0.isWhitespace || $0.isPunctuation }.count) }
+        rankerVersion = "local-title-token-v2-plus-numbered-equations"
+        let numberedBytes = equations.reduce(0) { $0 + $1.equationID.utf8.count + $1.label.utf8.count + $1.tex.utf8.count + $1.evidenceID.utf8.count + ($1.section?.utf8.count ?? 0) }
+        let numberedScalars = equations.reduce(0) { $0 + $1.equationID.unicodeScalars.count + $1.label.unicodeScalars.count + $1.tex.unicodeScalars.count + $1.evidenceID.unicodeScalars.count + ($1.section?.unicodeScalars.count ?? 0) }
+        payloadByteCount = self.chunks.reduce(0) { $0 + $1.byteCount } + self.anchors.reduce(0) { $0 + $1.quote.utf8.count } + numberedBytes
+        payloadScalarCount = self.chunks.reduce(0) { $0 + $1.scalarCount } + self.anchors.reduce(0) { $0 + $1.quote.unicodeScalars.count } + numberedScalars
+        payloadTokenEstimate = self.chunks.reduce(0) { $0 + $1.tokenEstimate } + self.anchors.reduce(0) { $0 + max(1, $1.quote.split { $0.isWhitespace || $0.isPunctuation }.count) } + equations.reduce(0) { $0 + max(1, $1.tex.split { $0.isWhitespace || $0.isPunctuation }.count) }
+        if self.numberedEquationCoverageComplete,
+           (payloadByteCount > Self.maximumPayloadBytes || payloadScalarCount > Self.maximumPayloadScalars) {
+            self.numberedEquationCoverageComplete = false
+            self.numberedEquationCoverageFailure = "编号公式与受限 evidence payload 超过本地全覆盖上限（\(payloadByteCount) bytes，\(payloadScalarCount) scalars）；不会生成部分覆盖结果。"
+        }
+        inventoryHash = document.numberedEquationInventoryHash
+            ?? FormulaInventory.payloadHash(documentHash: document.sha256, equations: equations)
+        self.batchIndex = nil
+        self.batchTotal = nil
+    }
+
+    /// Builds a bounded payload carrying only the requested numbered equation
+    /// IDs.  Ordinary prose is sent in the first batch; later batches contain
+    /// only their formula chunks plus bounded metadata anchors.  The source
+    /// inventory remains represented by `numberedEquations`, while the final
+    /// workflow performs a second full-source bijection check.
+    func batch(for equationIDs: [String], index: Int, total: Int) throws -> EvidenceInputPayload {
+        guard total > 0, index >= 0, index < total else { throw LatticeLensError.schemaViolation("formula batch index 无效") }
+        let requested = equationIDs
+        guard !requested.isEmpty || numberedEquations.isEmpty,
+              Set(requested).count == requested.count,
+              Set(requested).isSubset(of: Set(numberedEquations.map(\.equationID)) ) else {
+            throw LatticeLensError.schemaViolation("formula batch equation_id 不属于本次 inventory")
+        }
+        let selectedEquations = requested.compactMap { id in numberedEquations.first { $0.equationID == id } }
+        guard selectedEquations.count == requested.count else { throw LatticeLensError.schemaViolation("formula batch 缺少 inventory equation") }
+        let selectedChunks = chunks.filter { chunk in
+            guard let id = chunk.equationID else { return index == 0 }
+            return requested.contains(id)
+        }
+        let selectedIDs = Set(selectedChunks.map(\.id))
+        let selectedAnchors = anchors.filter { anchor in
+            selectedIDs.contains(anchor.id) || (anchor.sourceKind != .pdf && index == 0)
+        }
+        var copy = EvidenceInputPayload(
+            paperID: paperID, documentHash: documentHash, documentSourceKind: documentSourceKind,
+            title: title, abstract: abstract, chunks: selectedChunks, anchors: selectedAnchors,
+            numberedEquations: selectedEquations, numberedEquationCoverageComplete: numberedEquationCoverageComplete,
+            numberedEquationCoverageFailure: numberedEquationCoverageFailure, figureKeys: figureKeys,
+            retrievalQuery: retrievalQuery, rankerVersion: rankerVersion,
+            payloadByteCount: selectedChunks.reduce(0) { $0 + $1.byteCount }
+                + selectedAnchors.reduce(0) { $0 + $1.quote.utf8.count }
+                + selectedEquations.reduce(0) { $0 + $1.equationID.utf8.count + $1.label.utf8.count + $1.tex.utf8.count + $1.evidenceID.utf8.count + ($1.section?.utf8.count ?? 0) },
+            payloadScalarCount: selectedChunks.reduce(0) { $0 + $1.scalarCount }
+                + selectedAnchors.reduce(0) { $0 + $1.quote.unicodeScalars.count }
+                + selectedEquations.reduce(0) { $0 + $1.equationID.unicodeScalars.count + $1.label.unicodeScalars.count + $1.tex.unicodeScalars.count + $1.evidenceID.unicodeScalars.count + ($1.section?.unicodeScalars.count ?? 0) },
+            payloadTokenEstimate: selectedChunks.reduce(0) { $0 + $1.tokenEstimate }
+                + selectedEquations.reduce(0) { $0 + max(1, $1.tex.split { $0.isWhitespace || $0.isPunctuation }.count) },
+            inventoryHash: inventoryHash,
+            batchIndex: index, batchTotal: total
+        )
+        // A caller can still inspect this subset as a bounded source.  It is
+        // the merged full-source validation, not this flag, that authorizes a
+        // complete artifact.
+        copy.numberedEquationCoverageComplete = numberedEquationCoverageComplete
+        return copy
+    }
+
+    /// The prose insight pass must not ask a provider to derive the complete
+    /// equation set in one request. Formula claims are filled only by the
+    /// separately checkpointed batch workflow.
+    func proseOnly() -> EvidenceInputPayload {
+        let proseChunks = chunks.filter { $0.equationID == nil && $0.equationLabel == nil && $0.equationTeX == nil && $0.equationOrdinal == nil }
+        let proseIDs = Set(proseChunks.map(\.id))
+        let proseAnchors = anchors.filter { $0.sourceKind != .pdf || proseIDs.contains($0.id) }
+        return EvidenceInputPayload(
+            paperID: paperID, documentHash: documentHash, documentSourceKind: documentSourceKind,
+            title: title, abstract: abstract, chunks: proseChunks, anchors: proseAnchors,
+            numberedEquations: [], numberedEquationCoverageComplete: numberedEquationCoverageComplete,
+            numberedEquationCoverageFailure: numberedEquationCoverageFailure, figureKeys: figureKeys,
+            retrievalQuery: retrievalQuery, rankerVersion: rankerVersion,
+            payloadByteCount: proseChunks.reduce(0) { $0 + $1.byteCount } + proseAnchors.reduce(0) { $0 + $1.quote.utf8.count },
+            payloadScalarCount: proseChunks.reduce(0) { $0 + $1.scalarCount } + proseAnchors.reduce(0) { $0 + $1.quote.unicodeScalars.count },
+            payloadTokenEstimate: proseChunks.reduce(0) { $0 + $1.tokenEstimate },
+            inventoryHash: inventoryHash, batchIndex: nil, batchTotal: nil
+        )
+    }
+
+    private init(paperID: Int, documentHash: String, documentSourceKind: FullTextSourceKind,
+                 title: String, abstract: String?, chunks: [EvidenceChunk], anchors: [EvidenceAnchor],
+                 numberedEquations: [NumberedEquationInput], numberedEquationCoverageComplete: Bool,
+                 numberedEquationCoverageFailure: String?, figureKeys: [String], retrievalQuery: String,
+                 rankerVersion: String, payloadByteCount: Int, payloadScalarCount: Int,
+                 payloadTokenEstimate: Int, inventoryHash: String?, batchIndex: Int?, batchTotal: Int?) {
+        self.paperID = paperID; self.documentHash = documentHash; self.documentSourceKind = documentSourceKind
+        self.title = title; self.abstract = abstract; self.chunks = chunks; self.anchors = anchors
+        self.numberedEquations = numberedEquations; self.numberedEquationCoverageComplete = numberedEquationCoverageComplete
+        self.numberedEquationCoverageFailure = numberedEquationCoverageFailure; self.figureKeys = figureKeys
+        self.retrievalQuery = retrievalQuery; self.rankerVersion = rankerVersion
+        self.payloadByteCount = payloadByteCount; self.payloadScalarCount = payloadScalarCount
+        self.payloadTokenEstimate = payloadTokenEstimate; self.inventoryHash = inventoryHash
+        self.batchIndex = batchIndex; self.batchTotal = batchTotal
     }
 
     var anchorAllowlist: Set<String> { Set(anchors.map(\.id)) }
@@ -92,12 +261,18 @@ struct LocalEvidenceRetriever: Sendable {
             .sorted(by: { ($0.downloadedAt ?? .distantPast) > ($1.downloadedAt ?? .distantPast) }).first else { return nil }
         let allChunks = allChunks.filter { $0.paperID == paper.literatureID && $0.documentHash == document.sha256 }
         let terms = Set(SearchNormalizer.normalize(paper.displayTitle).split(whereSeparator: { $0 == " " }).map(String.init).filter { $0.count >= 3 })
-        let ranked = allChunks.sorted { lhs, rhs in
+        let ranked = allChunks.filter { $0.equationID == nil && $0.equationLabel == nil && $0.equationTeX == nil && $0.equationOrdinal == nil }.sorted { lhs, rhs in
             let lhsScore = terms.reduce(0) { $0 + (SearchNormalizer.normalize(lhs.text).contains($1) ? 1 : 0) }
             let rhsScore = terms.reduce(0) { $0 + (SearchNormalizer.normalize(rhs.text).contains($1) ? 1 : 0) }
             return lhsScore == rhsScore ? lhs.id < rhs.id : lhsScore > rhsScore
         }
-        let chunks = Array(ranked.prefix(maximumChunks))
+        let formulaChunks = allChunks.filter { $0.equationID != nil || $0.equationLabel != nil || $0.equationTeX != nil || $0.equationOrdinal != nil }
+            .sorted { lhs, rhs in
+                let left = lhs.equationOrdinal ?? .max
+                let right = rhs.equationOrdinal ?? .max
+                return left == right ? lhs.id < rhs.id : left < right
+            }
+        let chunks = Array(ranked.prefix(maximumChunks)) + formulaChunks
         let ids = Set(chunks.map(\.id))
         let fullTextAnchors = allAnchors.filter { ids.contains($0.id) }
         // Abstract/caption anchors are persisted independently of a full text and
@@ -115,7 +290,8 @@ enum PaperInsightV2Validator {
     static let schemaVersion = "paper-insight-v2"
     static let sourceScope = "fulltext_with_anchors"
 
-    static func decode(_ data: Data, source: EvidenceInputPayload, maximumFigures: Int) throws -> PaperInsightV2 {
+    static func decode(_ data: Data, source: EvidenceInputPayload, maximumFigures: Int,
+                       expectedFormulaSegments: [String: FormulaDerivationSegmentExpectation] = [:]) throws -> PaperInsightV2 {
         guard !data.isEmpty, data.count <= PaperInsightValidator.maximumResponseBytes else { throw LatticeLensError.schemaViolation("v2 insight 响应超限") }
         // LLMs sometimes put a TeX command such as `\\alpha` directly inside a
         // JSON string, rather than serialising the command marker as a JSON
@@ -158,7 +334,7 @@ enum PaperInsightV2Validator {
             contractRoot,
             anchorAllowlist: source.anchorAllowlist
         )
-        try validateShape(normalizedContractRoot)
+        try validateShape(normalizedContractRoot, source: source)
         guard let canonicalData = try? JSONEncoder.latticeLens.encode(normalizedContractRoot),
               let insight = try? JSONDecoder.latticeLens.decode(PaperInsightV2.self, from: canonicalData),
               insight.schemaVersion == schemaVersion, insight.sourceScope == sourceScope else {
@@ -188,10 +364,12 @@ enum PaperInsightV2Validator {
                 guard claim.evidenceIDs.isEmpty else { throw LatticeLensError.schemaViolation("missing claim 不得伪造 anchor") }
             }
         }
-        return insight
+        try validateNumberedEquationCoverage(insight, source: source,
+                                             expectedFormulaSegments: expectedFormulaSegments)
+        return canonicalFormulaOrder(insight, source: source)
     }
 
-    private static func validateShape(_ raw: JSONValue) throws {
+    private static func validateShape(_ raw: JSONValue, source: EvidenceInputPayload) throws {
         let root = try object(raw, keys: ["schema_version", "source_scope", "title_zh", "abstract_zh", "physics", "important_figures", "terminology"], path: "root")
         for key in ["schema_version", "source_scope", "title_zh"] {
             try nonempty(try value(root, key, "root"), path: key)
@@ -219,10 +397,12 @@ enum PaperInsightV2Validator {
             for (index, item) in items.enumerated() { try claim(item, path: "physics.\(key)[\(index)]", requiredStatus: required) }
         }
         if let formulas = physics["important_formula_derivations"] {
-            let items = try array(formulas, maximum: 8, path: "physics.important_formula_derivations")
+            let items = try array(formulas, maximum: EvidenceInputPayload.maximumNumberedEquations, path: "physics.important_formula_derivations")
             for (index, item) in items.enumerated() {
                 try claim(item, path: "physics.important_formula_derivations[\(index)]", requiredStatus: .direct,
-                          requireFormulaStructure: true)
+                          requireFormulaStructure: true,
+                          requireEquationID: source.documentSourceKind == .arxivHTML && !source.numberedEquations.isEmpty,
+                          requireTypedStepContract: source.documentSourceKind == .arxivHTML && !source.numberedEquations.isEmpty)
             }
         }
         let figures = try array(try value(root, "important_figures", "root"), maximum: 5, path: "important_figures")
@@ -315,13 +495,27 @@ enum PaperInsightV2Validator {
                 }
             }
         }
+        let equationsAreStructurallyBound = source.numberedEquations.allSatisfy { equation in
+            guard let chunk = chunksByID[equation.evidenceID],
+                  chunk.equationID == equation.equationID,
+                  chunk.equationLabel == equation.label,
+                  chunk.equationTeX == equation.tex,
+                  let anchor = anchors.first(where: { $0.id == equation.evidenceID }) else { return false }
+            return anchor.quote == chunk.text && anchor.quoteHash == chunk.textHash
+        }
+        guard equationsAreStructurallyBound,
+              Set(source.numberedEquations.map(\.equationID)).count == source.numberedEquations.count else {
+            throw LatticeLensError.schemaViolation("v2 编号公式索引不属于本次受限 document payload")
+        }
     }
 
     private static func claim(_ raw: JSONValue, path: String, requiredStatus: EpistemicStatus? = nil,
-                              requireFormulaStructure: Bool = false) throws {
+                              requireFormulaStructure: Bool = false,
+                              requireEquationID: Bool = false,
+                              requireTypedStepContract: Bool = false) throws {
         let object = try objectAllowingOptional(raw,
                                                 requiredKeys: ["text_zh", "epistemic_status", "evidence_ids"],
-                                                optionalKeys: ["formula_tex", "derivation_steps", "conclusion_zh"],
+                                                optionalKeys: ["formula_tex", "equation_id", "derivation_steps", "derivation_step_contract", "conclusion_zh", "derivation_segment"],
                                                 path: path)
         try nonempty(try value(object, "text_zh", path), path: "\(path).text_zh")
         guard let status = object["epistemic_status"]?.stringValue, EpistemicStatus(rawValue: status) != nil else {
@@ -342,7 +536,7 @@ enum PaperInsightV2Validator {
             try nonempty(formula, path: "\(path).formula_tex")
         }
         if let steps = object["derivation_steps"] {
-            let values = try array(steps, maximum: 8, path: "\(path).derivation_steps")
+            let values = try array(steps, maximum: FormulaDerivationStep.maximumStepsPerSegment, path: "\(path).derivation_steps")
             for (index, step) in values.enumerated() {
                 try nonempty(step, path: "\(path).derivation_steps[\(index)]")
             }
@@ -352,12 +546,267 @@ enum PaperInsightV2Validator {
         } else if requireFormulaStructure {
             throw LatticeLensError.schemaViolation("\(path) 缺少 derivation_steps")
         }
+        if let rawContract = object["derivation_step_contract"] {
+            let steps = try array(rawContract, maximum: FormulaDerivationStep.maximumStepsPerSegment,
+                                  path: "\(path).derivation_step_contract")
+            for (index, step) in steps.enumerated() {
+                try formulaStep(step, path: "\(path).derivation_step_contract[\(index)]")
+            }
+            if requireTypedStepContract, steps.isEmpty {
+                throw LatticeLensError.schemaViolation("\(path).derivation_step_contract 不能为空")
+            }
+        } else if requireTypedStepContract {
+            throw LatticeLensError.schemaViolation("\(path) 缺少 derivation_step_contract")
+        }
         if let conclusion = object["conclusion_zh"] {
             try nonempty(conclusion, path: "\(path).conclusion_zh")
+        }
+        if let rawSegment = object["derivation_segment"] {
+            let segment = try objectAllowingOptional(rawSegment,
+                requiredKeys: ["index", "is_final"], optionalKeys: ["continuation_summary"],
+                path: "\(path).derivation_segment")
+            guard let index = segment["index"]?.integerValue,
+                  (0..<FormulaDerivationSegmentCheckpoint.maximumSegmentsPerEquation).contains(index),
+                  case .bool? = segment["is_final"] else {
+                throw LatticeLensError.schemaViolation("\(path).derivation_segment index/is_final 无效")
+            }
+            if let summary = segment["continuation_summary"] {
+                try nonempty(summary, path: "\(path).derivation_segment.continuation_summary")
+            }
         }
         if requireFormulaStructure, object["formula_tex"] == nil {
             throw LatticeLensError.schemaViolation("\(path) 缺少 formula_tex")
         }
+        if requireEquationID {
+            guard let equationID = object["equation_id"] else {
+                throw LatticeLensError.schemaViolation("\(path) 缺少 equation_id")
+            }
+            try nonempty(equationID, path: "\(path).equation_id")
+        } else if let equationID = object["equation_id"] {
+            try nonempty(equationID, path: "\(path).equation_id")
+        }
+    }
+
+    private static func formulaStep(_ raw: JSONValue, path: String) throws {
+        let object = try objectAllowingOptional(
+            raw,
+            requiredKeys: ["step_id", "ordinal", "text_zh", "rule_or_assumption", "referenced_equation_ids", "evidence_anchor_ids", "source_document_hashes", "epistemic_status"],
+            optionalKeys: ["before_tex", "after_tex"],
+            path: path
+        )
+        try nonempty(try value(object, "step_id", path), path: "\(path).step_id")
+        guard let ordinal = object["ordinal"]?.integerValue, (1...FormulaDerivationStep.maximumSteps).contains(ordinal) else {
+            throw LatticeLensError.schemaViolation("\(path).ordinal 无效")
+        }
+        try nonempty(try value(object, "text_zh", path), path: "\(path).text_zh")
+        try nonempty(try value(object, "rule_or_assumption", path), path: "\(path).rule_or_assumption")
+        guard let status = object["epistemic_status"]?.stringValue, EpistemicStatus(rawValue: status) != nil else {
+            throw LatticeLensError.schemaViolation("\(path).epistemic_status 无效")
+        }
+        for key in ["referenced_equation_ids", "evidence_anchor_ids", "source_document_hashes"] {
+            let values = try array(try value(object, key, path), maximum: 32, path: "\(path).\(key)")
+            let strings = values.compactMap(\.stringValue)
+            guard strings.count == values.count, Set(strings).count == strings.count else {
+                throw LatticeLensError.schemaViolation("\(path).\(key) 不得包含重复或非字符串值")
+            }
+            for (index, item) in values.enumerated() {
+                try nonempty(item, path: "\(path).\(key)[\(index)]")
+            }
+        }
+        for key in ["before_tex", "after_tex"] {
+            if let tex = object[key] { try nonempty(tex, path: "\(path).\(key)") }
+        }
+    }
+
+    /// A successful ar5iv all-coverage artifact has a bijection between the
+    /// local structural inventory and returned formula claims. This executes
+    /// after ordinary shape/anchor validation so a rejection never turns a
+    /// malformed provider response into an apparently valid partial result.
+    private static func validateNumberedEquationCoverage(
+        _ insight: PaperInsightV2,
+        source: EvidenceInputPayload,
+        expectedFormulaSegments: [String: FormulaDerivationSegmentExpectation]
+    ) throws {
+        guard source.documentSourceKind == .arxivHTML else { return }
+        guard source.numberedEquationCoverageComplete else {
+            throw LatticeLensError.schemaViolation(source.numberedEquationCoverageFailure ?? "编号公式索引不完整；不会生成部分覆盖结果。")
+        }
+        let expected = Dictionary(uniqueKeysWithValues: source.numberedEquations.map { ($0.equationID, $0) })
+        let claims = insight.physics.importantFormulaDerivations
+        let isBatchPayload = source.batchIndex != nil || (source.batchTotal ?? 1) > 1
+        if !expectedFormulaSegments.isEmpty,
+           Set(expectedFormulaSegments.keys) != Set(expected.keys) {
+            throw LatticeLensError.schemaViolation("公式 segment 校验清单与本次 source equation 集合不一致")
+        }
+        guard claims.count == expected.count else {
+            throw LatticeLensError.schemaViolation("编号公式覆盖不完整：已返回 \(claims.count)/\(expected.count) 条；不会保存部分公式推导。")
+        }
+        var seen = Set<String>()
+        var dependencies = [String: Set<String>]()
+        for claim in claims {
+            guard claim.epistemicStatus == .direct,
+                  let equationID = claim.equationID,
+                  seen.insert(equationID).inserted,
+                  let equation = expected[equationID] else {
+                throw LatticeLensError.schemaViolation("编号公式覆盖无效：返回了重复或不属于本次清单的 equation_id；不会保存结果。")
+            }
+            guard claim.evidenceIDs == [equation.evidenceID] else {
+                throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 必须且只能使用它自己的 evidence anchor；不会保存结果。")
+            }
+            guard let formulaTeX = claim.formulaTeX,
+                  equivalentFormulaTeX(formulaTeX, equation.tex) else {
+                throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的 formula_tex 未逐字保留本地 ar5iv TeX；不会保存结果。")
+            }
+            let steps = claim.formulaDerivationSteps
+            guard !steps.isEmpty, claim.derivationSteps == steps.map(\.textZH) else {
+                throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 缺少新版本 typed derivation step contract；不会保存结果。")
+            }
+            let segmentExpectation = expectedFormulaSegments[equationID]
+            if let segmentExpectation {
+                guard let metadata = claim.derivationSegment,
+                      metadata.index == segmentExpectation.index,
+                      metadata.isFinal ? (metadata.continuationSummary == nil && claim.conclusionZH != nil) :
+                        (metadata.continuationSummary?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false && claim.conclusionZH == nil),
+                      steps.count <= FormulaDerivationStep.maximumStepsPerSegment,
+                      steps.first?.beforeTeX?.trimmingCharacters(in: .whitespacesAndNewlines) ==
+                        segmentExpectation.precedingTeX.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                    throw LatticeLensError.schemaViolation("编号公式 segment metadata、续写边界或 final/conclusion 状态不一致。")
+                }
+            } else {
+                if let metadata = claim.derivationSegment,
+                   metadata.index != 0 || !metadata.isFinal || metadata.continuationSummary != nil {
+                    throw LatticeLensError.schemaViolation("未启用 segment 续写时只接受 index=0 的完整公式推导。")
+                }
+                if let failure = FormulaDerivationChainValidator.failure(for: claim, sourceTeX: equation.tex) {
+                    throw LatticeLensError.schemaViolation(
+                        "编号公式覆盖无效：\(equation.label) 的推导链不完整（\(failure.displayNameZH)）；不会保存结果。"
+                    )
+                }
+            }
+            var derivationAnchorIDs = Set(claim.evidenceIDs)
+            var priorAfterTeX: String?
+            for (offset, step) in steps.enumerated() {
+                let expectedOrdinal = (segmentExpectation?.startingOrdinal ?? 1) + offset
+                guard step.stepID == "\(equationID):step:\(expectedOrdinal)", step.ordinal == expectedOrdinal else {
+                    throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的 step ID 或 ordinal 不连续。")
+                }
+                if let segmentExpectation {
+                    guard let before = step.beforeTeX?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          let after = step.afterTeX?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !after.isEmpty,
+                          before == (priorAfterTeX ?? segmentExpectation.precedingTeX.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                        throw LatticeLensError.schemaViolation("编号公式 segment 内部 TeX 边界不连续。")
+                    }
+                    priorAfterTeX = after
+                }
+                guard step.epistemicStatus == .inference,
+                      step.sourceDocumentHashes == [source.documentHash] else {
+                    throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的模型步骤必须标为 inference 并绑定当前 document hash。")
+                }
+                guard Set(step.evidenceAnchorIDs).isSubset(of: source.anchorAllowlist),
+                      !step.evidenceAnchorIDs.isEmpty || !step.referencedEquationIDs.isEmpty else {
+                    throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的步骤缺少当前来源 anchor 或公式依赖。")
+                }
+                guard !step.referencedEquationIDs.contains(equationID) else {
+                    throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的步骤含自身依赖。")
+                }
+                if step.structuralStatus == .rejected {
+                    throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的 TeX 结构检查拒绝该步骤。")
+                }
+                let dependencyAnchorIDs = step.referencedEquationIDs.compactMap { expected[$0]?.evidenceID }
+                let supportingAnchorIDs = Set(step.evidenceAnchorIDs).union(dependencyAnchorIDs)
+                derivationAnchorIDs.formUnion(supportingAnchorIDs)
+                let quotes = supportingAnchorIDs.compactMap { source.sourceByAnchor[$0] }
+                let numericContent = [step.textZH, step.ruleOrAssumption,
+                                      step.beforeTeX ?? "", step.afterTeX ?? ""].joined(separator: " ")
+                guard numericTokensAreAnchored(numericContent, quotes: quotes) else {
+                    throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的步骤数值无法回查同一来源 anchor。")
+                }
+                dependencies[equationID, default: []].formUnion(step.referencedEquationIDs)
+            }
+            let conclusionQuotes = derivationAnchorIDs.compactMap { source.sourceByAnchor[$0] }
+            if let conclusion = claim.conclusionZH,
+               !numericTokensAreAnchored(conclusion, quotes: conclusionQuotes) {
+                throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的结论数值无法回查来源 anchor。")
+            }
+            if !isBatchPayload {
+                guard steps.allSatisfy({ Set($0.referencedEquationIDs).isSubset(of: Set(expected.keys)) }) else {
+                    throw LatticeLensError.schemaViolation("编号公式 coverage 引用了当前 inventory 之外的 equation ID。")
+                }
+            }
+        }
+        guard seen == Set(expected.keys) else {
+            throw LatticeLensError.schemaViolation("编号公式覆盖不完整：已返回 \(seen.count)/\(expected.count) 条；不会保存部分公式推导。")
+        }
+        if !isBatchPayload, containsDependencyCycle(dependencies) {
+            throw LatticeLensError.schemaViolation("编号公式 derivation dependency graph 存在有向环。")
+        }
+        // For a batch request the equality above is intentionally scoped to
+        // that batch.  The caller must run this validator again with the
+        // unbatched source before writing a complete artifact.  Keeping this
+        // branch explicit documents the boundary and prevents a future
+        // change from treating a partial batch as full coverage.
+        _ = isBatchPayload
+    }
+
+    private static func containsDependencyCycle(_ dependencies: [String: Set<String>]) -> Bool {
+        var visiting = Set<String>()
+        var visited = Set<String>()
+        func visit(_ node: String) -> Bool {
+            if visiting.contains(node) { return true }
+            if visited.contains(node) { return false }
+            visiting.insert(node)
+            for dependency in dependencies[node, default: []] where visit(dependency) { return true }
+            visiting.remove(node)
+            visited.insert(node)
+            return false
+        }
+        return dependencies.keys.contains(where: visit)
+    }
+
+    /// The local extractor stores bare annotation TeX. A provider may retain
+    /// only an outer display delimiter; accept that harmless presentation
+    /// wrapper but reject all expression edits, whitespace rewrites included.
+    private static func equivalentFormulaTeX(_ candidate: String, _ source: String) -> Bool {
+        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bare: String
+        if trimmed.hasPrefix("$$"), trimmed.hasSuffix("$$"), trimmed.count >= 4 {
+            bare = String(trimmed.dropFirst(2).dropLast(2))
+        } else if trimmed.hasPrefix("$"), trimmed.hasSuffix("$"), trimmed.count >= 2 {
+            bare = String(trimmed.dropFirst().dropLast())
+        } else {
+            bare = trimmed
+        }
+        return bare == source
+    }
+
+    /// Providers may serialize valid array elements in a different order. The
+    /// persisted reader must nevertheless follow the original paper order,
+    /// which is the deterministic ordinal order of the local inventory.
+    private static func canonicalFormulaOrder(_ insight: PaperInsightV2, source: EvidenceInputPayload) -> PaperInsightV2 {
+        guard source.documentSourceKind == .arxivHTML, !source.numberedEquations.isEmpty else { return insight }
+        let claimsByID = Dictionary(uniqueKeysWithValues: insight.physics.importantFormulaDerivations.compactMap { claim in
+            claim.equationID.map { ($0, claim) }
+        })
+        let orderedClaims = source.numberedEquations.compactMap { claimsByID[$0.equationID] }
+        let physics = InsightPhysicsV2(
+            researchQuestion: insight.physics.researchQuestion,
+            methodAndDataFlow: insight.physics.methodAndDataFlow,
+            mainResults: insight.physics.mainResults,
+            reasonableInferences: insight.physics.reasonableInferences,
+            missingInformation: insight.physics.missingInformation,
+            caveats: insight.physics.caveats,
+            importantFormulaDerivations: orderedClaims
+        )
+        return PaperInsightV2(
+            schemaVersion: insight.schemaVersion,
+            sourceScope: insight.sourceScope,
+            titleZH: insight.titleZH,
+            abstractZH: insight.abstractZH,
+            physics: physics,
+            importantFigures: insight.importantFigures,
+            terminology: insight.terminology
+        )
     }
 
     /// A research question is normally a direct, anchored claim.  `missing`
@@ -379,26 +828,46 @@ enum PaperInsightV2Validator {
         // ensemble/count context, are treated as physics tokens.  Years,
         // equation labels, reference numbers and page numbers therefore do
         // not force a claim to cite an unrelated anchor.
+        let normalizedText = normalizeFormulaTeXForNumericAnchoring(text)
+        let normalizedQuotes = quotes.map(normalizeFormulaTeXForNumericAnchoring)
         let pattern = #"(?<![0-9A-Za-z])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?(?:\s*(?:±|\+/-)\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)?(?:\s*(?:GeV|MeV|keV|TeV|fm(?:\^-?\d+)?|GeV\^\d+|%|a(?:\^-?\d+)?|L\^3[×x*]T|L|T|cfg(?:s)?|ensembles?))?(?![0-9A-Za-z])"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return false }
-        let range = NSRange(text.startIndex..., in: text)
-        let values = regex.matches(in: text, range: range).compactMap { match -> String? in
-            guard let swiftRange = Range(match.range, in: text) else { return nil }
-            let token = String(text[swiftRange])
+        let range = NSRange(normalizedText.startIndex..., in: normalizedText)
+        let values = regex.matches(in: normalizedText, range: range).compactMap { match -> String? in
+            guard let swiftRange = Range(match.range, in: normalizedText) else { return nil }
+            let token = String(normalizedText[swiftRange])
             let hasUnit = token.range(of: #"(?:GeV|MeV|keV|TeV|fm|%|\ba\b|\bL\b|\bT\b|cfg|ensemble)"#, options: [.regularExpression, .caseInsensitive]) != nil
             let hasUncertainty = token.contains("±") || token.contains("+/-") || token.contains("(")
             if hasUnit || hasUncertainty { return token }
-            let contextStart = text.index(swiftRange.lowerBound, offsetBy: -32, limitedBy: text.startIndex) ?? text.startIndex
-            let contextEnd = text.index(swiftRange.upperBound, offsetBy: 32, limitedBy: text.endIndex) ?? text.endIndex
-            let context = text[contextStart..<contextEnd]
+            let contextStart = normalizedText.index(swiftRange.lowerBound, offsetBy: -32, limitedBy: normalizedText.startIndex) ?? normalizedText.startIndex
+            let contextEnd = normalizedText.index(swiftRange.upperBound, offsetBy: 32, limitedBy: normalizedText.endIndex) ?? normalizedText.endIndex
+            let context = normalizedText[contextStart..<contextEnd]
             return context.range(of: #"ensemble|configuration|config|sample|trajectory|t[_ -]?sep|source[ -]?sink|momentum"#, options: [.regularExpression, .caseInsensitive]) != nil ? token : nil
         }
         return values.allSatisfy { token in
             let pattern = "(?<![0-9A-Za-z])\(NSRegularExpression.escapedPattern(for: token))(?![0-9A-Za-z])"
-            return quotes.contains { quote in
+            return normalizedQuotes.contains { quote in
                 (try? NSRegularExpression(pattern: pattern))?.firstMatch(in: quote, range: NSRange(quote.startIndex..., in: quote)) != nil
             }
         }
+    }
+
+    private static func normalizeFormulaTeXForNumericAnchoring(_ value: String) -> String {
+        var normalized = value
+        if let unitCommand = try? NSRegularExpression(
+            pattern: #"\\(?:mathrm|text|operatorname|mbox)\s*\{([^{}]*)\}"#
+        ) {
+            normalized = unitCommand.stringByReplacingMatches(
+                in: normalized, range: NSRange(normalized.startIndex..., in: normalized),
+                withTemplate: "$1"
+            )
+        }
+        normalized = normalized.replacingOccurrences(of: #"\\(?:,|;|:|quad|qquad)"#,
+                                                     with: " ", options: .regularExpression)
+        normalized = normalized.replacingOccurrences(of: #"\\!"#, with: "", options: .regularExpression)
+        normalized = normalized.replacingOccurrences(of: #"\\pm"#, with: "±", options: .regularExpression)
+        normalized = normalized.replacingOccurrences(of: #"\\times"#, with: "×", options: .regularExpression)
+        return normalized
     }
 
     private static func object(_ raw: JSONValue, keys: Set<String>, path: String) throws -> [String: JSONValue] {
@@ -744,7 +1213,8 @@ private enum UnanchoredEvidenceClaimNormalizer {
         var discarded = false
         if let question = physics["research_question"] {
             if isLegacyScalarResearchQuestion(question) ||
-                isDiscardableUnanchoredClaim(question, anchorAllowlist: anchorAllowlist, requiredStatus: .direct, requiresFormulaStructure: false) {
+                isDiscardableUnanchoredClaim(question, anchorAllowlist: anchorAllowlist, requiredStatus: .direct,
+                                             requiresFormulaStructure: false, requiresEquationID: false) {
                 physics["research_question"] = missingClaim(unavailableResearchQuestion)
                 discarded = true
             }
@@ -808,7 +1278,8 @@ private enum UnanchoredEvidenceClaimNormalizer {
                 item,
                 anchorAllowlist: anchorAllowlist,
                 requiredStatus: itemStatus,
-                requiresFormulaStructure: requiresFormulaStructure
+                requiresFormulaStructure: requiresFormulaStructure,
+                requiresEquationID: requiresFormulaStructure
             )
             didDiscard = didDiscard || shouldDiscard
             return !shouldDiscard
@@ -829,10 +1300,11 @@ private enum UnanchoredEvidenceClaimNormalizer {
         _ raw: JSONValue,
         anchorAllowlist: Set<String>,
         requiredStatus: EpistemicStatus?,
-        requiresFormulaStructure: Bool
+        requiresFormulaStructure: Bool,
+        requiresEquationID: Bool
     ) -> Bool {
         let requiredKeys: Set<String> = ["text_zh", "epistemic_status", "evidence_ids"]
-        let optionalKeys: Set<String> = ["formula_tex", "derivation_steps", "conclusion_zh"]
+        let optionalKeys: Set<String> = ["formula_tex", "equation_id", "derivation_steps", "derivation_step_contract", "conclusion_zh", "derivation_segment"]
         guard let object = raw.objectValue,
               requiredKeys.isSubset(of: Set(object.keys)),
               Set(object.keys).subtracting(requiredKeys).isSubset(of: optionalKeys),
@@ -847,7 +1319,8 @@ private enum UnanchoredEvidenceClaimNormalizer {
         guard evidenceIDs.count == evidenceValues.count,
               Set(evidenceIDs).count == evidenceIDs.count,
               evidenceIDs.allSatisfy(isBoundedNonempty),
-              validOptionalFormulaFields(object, requiresFormulaStructure: requiresFormulaStructure) else {
+              validOptionalFormulaFields(object, requiresFormulaStructure: requiresFormulaStructure,
+                                         requiresEquationID: requiresEquationID) else {
             return false
         }
         return evidenceIDs.isEmpty || !Set(evidenceIDs).isSubset(of: anchorAllowlist)
@@ -855,14 +1328,15 @@ private enum UnanchoredEvidenceClaimNormalizer {
 
     private static func validOptionalFormulaFields(
         _ object: [String: JSONValue],
-        requiresFormulaStructure: Bool
+        requiresFormulaStructure: Bool,
+        requiresEquationID: Bool
     ) -> Bool {
         if let formula = object["formula_tex"],
            !(formula.stringValue.map(isBoundedNonempty) ?? false) {
             return false
         }
         if let steps = object["derivation_steps"] {
-            guard let values = steps.arrayValue, values.count <= 8,
+            guard let values = steps.arrayValue, values.count <= FormulaDerivationStep.maximumStepsPerSegment,
                   values.allSatisfy({ $0.stringValue.map(isBoundedNonempty) ?? false }),
                   !requiresFormulaStructure || !values.isEmpty else {
                 return false
@@ -874,7 +1348,25 @@ private enum UnanchoredEvidenceClaimNormalizer {
            !(conclusion.stringValue.map(isBoundedNonempty) ?? false) {
             return false
         }
-        return !requiresFormulaStructure || object["formula_tex"] != nil
+        if let equationID = object["equation_id"],
+           !(equationID.stringValue.map(isBoundedNonempty) ?? false) {
+            return false
+        }
+        if let rawSegment = object["derivation_segment"] {
+            guard let segment = rawSegment.objectValue,
+                  Set(segment.keys).isSubset(of: ["index", "is_final", "continuation_summary"]),
+                  let index = segment["index"]?.integerValue,
+                  (0..<FormulaDerivationSegmentCheckpoint.maximumSegmentsPerEquation).contains(index),
+                  case .bool? = segment["is_final"] else {
+                return false
+            }
+            if let summary = segment["continuation_summary"],
+               !(summary.stringValue.map(isBoundedNonempty) ?? false) {
+                return false
+            }
+        }
+        return (!requiresFormulaStructure || object["formula_tex"] != nil) &&
+            (!requiresEquationID || object["equation_id"] != nil)
     }
 
     private static func missingClaim(_ text: String) -> JSONValue {

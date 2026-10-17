@@ -23,7 +23,7 @@ let package = Package(
             // XCUIApplication requires an Xcode UI-test host.  The real test
             // remains in this directory for LatticeLens.xcodeproj, while the
             // package target retains only host-free accessibility contracts.
-            exclude: ["LatticeLensUITests.swift"]
+            exclude: ["LatticeLensUITests.swift", "UIFixture.entitlements"]
         )
     ]
 )

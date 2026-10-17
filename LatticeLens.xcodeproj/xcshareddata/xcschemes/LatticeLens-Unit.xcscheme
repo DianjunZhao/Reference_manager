@@ -27,6 +27,48 @@
       selectedDebuggerIdentifier = ""
       selectedLauncherIdentifier = "Xcode.IDEFoundation.Launcher.PosixSpawn"
       shouldUseLaunchSchemeArgsEnv = "YES">
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "HOME"
+            value = "$(DERIVED_FILE_DIR)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "CFFIXED_USER_HOME"
+            value = "$(DERIVED_FILE_DIR)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_TEST_STORE_ROOT"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-Unit-Test-Store"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_TEST_TMP_ROOT"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-Unit-Test-TMP"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_FIXTURE_CACHE_ROOT"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-Unit-Fixture-Cache"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_USE_FIXTURES"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "TMPDIR"
+            value = "$(DERIVED_FILE_DIR)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
       <Testables>
          <TestableReference
             skipped = "NO">
@@ -60,6 +102,38 @@
             ReferencedContainer = "container:LatticeLens.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <EnvironmentVariables>
+         <EnvironmentVariable
+            key = "LATTICELENS_TEST_STORE_ROOT"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-Unit-Test-Store"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_TEST_TMP_ROOT"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-Unit-Test-TMP"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_FIXTURE_CACHE_ROOT"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-Unit-Fixture-Cache"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_USE_FIXTURES"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "TMPDIR"
+            value = "$(DERIVED_FILE_DIR)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+      </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"

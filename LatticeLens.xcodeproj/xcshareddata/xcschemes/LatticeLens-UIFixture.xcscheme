@@ -29,6 +29,16 @@
       shouldUseLaunchSchemeArgsEnv = "YES">
       <EnvironmentVariables>
          <EnvironmentVariable
+            key = "HOME"
+            value = "$(DERIVED_FILE_DIR)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "CFFIXED_USER_HOME"
+            value = "$(DERIVED_FILE_DIR)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
             key = "LATTICELENS_USE_FIXTURES"
             value = "1"
             isEnabled = "YES">
@@ -40,12 +50,27 @@
          </EnvironmentVariable>
          <EnvironmentVariable
             key = "LATTICELENS_FIXTURE_CACHE_ROOT"
-            value = "$(PROJECT_DIR)"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-UI-Fixture-Cache"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
             key = "LATTICELENS_TEST_STORE_ROOT"
-            value = "$(PROJECT_DIR)/.codex-task-tmp-v5-xcode-ui-fixture-store"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-UI-Test-Store"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_TEST_TMP_ROOT"
+            value = "$(DERIVED_FILE_DIR)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"
+            value = "1"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "TMPDIR"
+            value = "$(DERIVED_FILE_DIR)"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>
@@ -95,12 +120,22 @@
          </EnvironmentVariable>
          <EnvironmentVariable
             key = "LATTICELENS_FIXTURE_CACHE_ROOT"
-            value = "$(PROJECT_DIR)"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-UI-Fixture-Cache"
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
             key = "LATTICELENS_TEST_STORE_ROOT"
-            value = "$(PROJECT_DIR)/.codex-task-tmp-v5-xcode-ui-fixture-store"
+            value = "$(DERIVED_FILE_DIR)/LatticeLens-UI-Test-Store"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "LATTICELENS_TEST_TMP_ROOT"
+            value = "$(DERIVED_FILE_DIR)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
+            key = "TMPDIR"
+            value = "$(DERIVED_FILE_DIR)"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>

@@ -9,6 +9,7 @@ struct AuthorIndexProgress: Sendable, Equatable {
     var completedPages: Int = 0
     var remaining: Int? = nil
     var state: SyncCheckpointState = .active
+    var failureReason: String? = nil
 }
 
 enum HIndexOutcome: Sendable {
@@ -294,12 +295,31 @@ struct AuthorIndexService: Sendable {
     /// Exact category union used by both candidate and h-index generations.
     /// Keeping it in one contract also makes the durable checkpoint auditable.
     static let candidateQuery = "arxiv_categories:hep-lat OR arxiv_categories:hep-th"
-    /// Durable checkpoint identity, bumped when pagination mechanics change.
-    /// This is metadata only; the network client builds the actual partitioned
-    /// INSPIRE queries and never sends this suffix to the service.
+    /// Frozen 1.0 identity retained only for the explicitly selected legacy
+    /// convenience initializer below. New 2.0 jobs use all three revisions.
     static let candidateQueryCheckpoint = candidateQuery + " [pagination:control-number-v2]"
     static let candidateJobID = "author-candidates:hep-lat-or-hep-th"
     static let hIndexJobID = "author-h-index:hep-lat-or-hep-th"
+    /// 2.0's configurable category contract.  The legacy constants above are
+    /// intentionally retained so a 1.0 checkpoint can be decoded and resumed
+    /// only when the caller explicitly requests the legacy profile.
+    static let defaultCategoryProfile = CategoryProfile(categories: SupportedArxivCategory.defaultEnabled)
+
+    static func candidateQuery(for categories: Set<SupportedArxivCategory>) -> String {
+        ArxivCategoryQueryBuilder.query(categories: categories)
+    }
+
+    static func candidateQueryCheckpoint(for categories: Set<SupportedArxivCategory>) -> String {
+        CategoryProfile(categories: categories).checkpointIdentity
+    }
+
+    static func candidateJobID(for categories: Set<SupportedArxivCategory>) -> String {
+        CategoryProfile(categories: categories).jobID()
+    }
+
+    static func hIndexJobID(for categories: Set<SupportedArxivCategory>) -> String {
+        CategoryProfile(categories: categories).jobID(kind: "author-h-index")
+    }
     /// The API permits at most 40 250-row pages in a control-number range.
     /// Keep the global guard aligned with all explicit partitions rather than
     /// the old 100-page value, which would fail closed after only a subset if
@@ -309,11 +329,45 @@ struct AuthorIndexService: Sendable {
     let client: InspireClient
     let store: any LibraryStoring
     let hIndexQueue: HIndexQueue
+    let categoryProfile: CategoryProfile
+    private let usesLegacyConvenienceIdentity: Bool
 
-    init(client: InspireClient, store: any LibraryStoring, hIndexQueue: HIndexQueue = HIndexQueue()) {
+    init(client: InspireClient, store: any LibraryStoring, hIndexQueue: HIndexQueue = HIndexQueue(),
+         categories: Set<SupportedArxivCategory> = SupportedArxivCategory.defaultEnabled) {
+        self.init(client: client, store: store, hIndexQueue: hIndexQueue,
+                  categoryProfile: CategoryProfile(categories: categories),
+                  usesLegacyConvenienceIdentity: categories == SupportedArxivCategory.legacyV1)
+    }
+
+    /// Production callers pass the frozen durable profile, including the
+    /// user's profile revision. The categories-only initializer above remains
+    /// as an explicit compatibility path for existing fixtures and 1.0 jobs.
+    init(client: InspireClient, store: any LibraryStoring, hIndexQueue: HIndexQueue = HIndexQueue(),
+         categoryProfile: CategoryProfile) {
+        self.init(client: client, store: store, hIndexQueue: hIndexQueue,
+                  categoryProfile: categoryProfile, usesLegacyConvenienceIdentity: false)
+    }
+
+    private init(client: InspireClient, store: any LibraryStoring, hIndexQueue: HIndexQueue,
+                 categoryProfile: CategoryProfile, usesLegacyConvenienceIdentity: Bool) {
         self.client = client
         self.store = store
         self.hIndexQueue = hIndexQueue
+        self.categoryProfile = categoryProfile
+        self.usesLegacyConvenienceIdentity = usesLegacyConvenienceIdentity
+    }
+
+    var configuredCandidateQuery: String {
+        categoryProfile.query
+    }
+    var configuredCandidateQueryCheckpoint: String {
+        usesLegacyConvenienceIdentity ? Self.candidateQueryCheckpoint : categoryProfile.checkpointIdentity
+    }
+    var configuredCandidateJobID: String {
+        usesLegacyConvenienceIdentity ? Self.candidateJobID : categoryProfile.jobID()
+    }
+    var configuredHIndexJobID: String {
+        usesLegacyConvenienceIdentity ? Self.hIndexJobID : categoryProfile.jobID(kind: "author-h-index")
     }
 
     func refreshPinnedSelf() async throws {
@@ -335,7 +389,7 @@ struct AuthorIndexService: Sendable {
         onProgress: (@MainActor @Sendable (AuthorIndexProgress) async -> Void)? = nil
     ) async throws -> AuthorIndexProgress {
         let initialSnapshot = await store.snapshot()
-        let previous = try await store.checkpoint(jobID: Self.candidateJobID)
+        let previous = try await store.checkpoint(jobID: configuredCandidateJobID)
         // Candidate pagination and h-index verification are two durable
         // phases of one generation.  A process can finish the candidate
         // pages, then pause with only h-index retry IDs left.  In that state
@@ -348,7 +402,7 @@ struct AuthorIndexService: Sendable {
            previous.state == .completed,
            let activeGeneration = initialSnapshot.authorIndexGenerations[previous.generationID],
            activeGeneration.state == .active,
-           let hIndexCheckpoint = try await store.checkpoint(jobID: Self.hIndexJobID),
+           let hIndexCheckpoint = try await store.checkpoint(jobID: configuredHIndexJobID),
            hIndexCheckpoint.generationID == previous.generationID,
            V4CheckpointRecovery.shouldResume(hIndexCheckpoint),
            !hIndexCheckpoint.resumableIDs.isEmpty {
@@ -369,14 +423,14 @@ struct AuthorIndexService: Sendable {
         // the newly supported hep-th candidates.  Start a fresh generation
         // while retaining the previous completed membership as a fallback.
         let usesPartitionedPagination = previous?.nextURL?.query?.contains("control_number") ?? true
-        if force || previous == nil || previous?.state == .completed || previous?.query != Self.candidateQueryCheckpoint || !usesPartitionedPagination {
+        if force || previous == nil || previous?.state == .completed || previous?.query != configuredCandidateQueryCheckpoint || !usesPartitionedPagination {
             let existingMembership = initialSnapshot.authorIndexGenerations.values
                 .filter { $0.state == .completed }
                 .max { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }?
                 .activeMembership
                 ?? Set(initialSnapshot.authors.values.filter(\.isHIndexCandidate).map(\.recid))
-            checkpoint = SyncCheckpoint(jobID: Self.candidateJobID, jobKind: "author-candidates",
-                                        query: Self.candidateQueryCheckpoint, activeMembership: existingMembership)
+            checkpoint = SyncCheckpoint(jobID: configuredCandidateJobID, jobKind: "author-candidates",
+                                        query: configuredCandidateQueryCheckpoint, activeMembership: existingMembership)
         } else {
             checkpoint = previous!
             checkpoint.state = .active
@@ -402,7 +456,7 @@ struct AuthorIndexService: Sendable {
             repeat {
                 try Task.checkCancellation()
                 guard checkpoint.completedPages < Self.maximumCandidatePages else { throw LatticeLensError.paginationLimitExceeded }
-                let page = try await client.authorCandidatesPage(nextURL: checkpoint.nextURL)
+                let page = try await client.authorCandidatesPage(nextURL: checkpoint.nextURL, categories: categoryProfile.categories)
                 checkpoint.stagingMembership.formUnion(page.authors.map(\.recid))
                 checkpoint.completedPages += 1
                 checkpoint.successfulRecords += page.authors.count
@@ -449,7 +503,8 @@ struct AuthorIndexService: Sendable {
             generation.hQueueFailed = checkpoint.failedRecords
             generation.lastCheckpointAt = checkpoint.updatedAt
             try? await store.commitAuthorIndexState(checkpoint: checkpoint, generation: generation)
-            return await indexProgress(state: .paused, pages: checkpoint.completedPages)
+            return await indexProgress(state: .paused, pages: checkpoint.completedPages,
+                                       failureReason: error.localizedDescription)
         }
     }
 
@@ -463,23 +518,31 @@ struct AuthorIndexService: Sendable {
         onProgress: (@MainActor @Sendable (AuthorIndexProgress) async -> Void)? = nil
     ) async throws -> AuthorIndexProgress {
         let snapshot = await store.snapshot()
-        let generation = snapshot.authorIndexGenerations.values
+        let activeGenerations = snapshot.authorIndexGenerations.values
             .filter { $0.state == .active }
+        let generation = activeGenerations
+            .filter { $0.query == configuredCandidateQueryCheckpoint }
             .max { $0.startedAt < $1.startedAt }
+        if generation == nil, activeGenerations.contains(where: { $0.query != configuredCandidateQueryCheckpoint }) {
+            throw LatticeLensError.categoryProfileMismatch
+        }
         let candidateIDs: Set<Int>? = generation?.stagingMembership
-        let prior = try await store.checkpoint(jobID: Self.hIndexJobID)
+        let prior = try await store.checkpoint(jobID: configuredHIndexJobID)
+        if let prior, prior.query != configuredCandidateQueryCheckpoint {
+            throw LatticeLensError.categoryProfileMismatch
+        }
         let canResume = !force && V4CheckpointRecovery.shouldResume(prior) &&
             (generation == nil || prior?.generationID == generation?.id)
         let resumeIDs = canResume ? Set(prior!.resumableIDs) : nil
         let candidates = snapshot.authors.values
             .filter { author in
-                guard (candidateIDs?.contains(author.recid) ?? author.isHIndexCandidate), !author.isSelf else { return false }
+                guard (candidateIDs?.contains(author.recid) ?? author.isCandidate(in: categoryProfile.categories)), !author.isSelf else { return false }
                 if let resumeIDs { return resumeIDs.contains(author.recid) }
                 return force || author.hIndex == nil || author.hIndexState == .stale || author.hIndexState == .failed || author.hIndexState == .unknown
             }
             .sorted { $0.recid < $1.recid }
-        var checkpoint = canResume ? prior! : SyncCheckpoint(jobID: Self.hIndexJobID, jobKind: "author-h-index",
-                                        query: Self.candidateQueryCheckpoint, generationID: generation?.id ?? UUID().uuidString,
+        var checkpoint = canResume ? prior! : SyncCheckpoint(jobID: configuredHIndexJobID, jobKind: "author-h-index",
+                                        query: configuredCandidateQueryCheckpoint, generationID: generation?.id ?? UUID().uuidString,
                                         nextURL: nil, successfulRecords: 0, failedRecords: 0,
                                         pendingIDs: candidates.map { $0.recid })
         // Promote exactly the persisted retry set into the new in-flight
@@ -534,7 +597,8 @@ struct AuthorIndexService: Sendable {
         await store.authorSidebarProjection().visibleAuthors(search: search)
     }
 
-    private func indexProgress(state: SyncCheckpointState, pages: Int) async -> AuthorIndexProgress {
+    private func indexProgress(state: SyncCheckpointState, pages: Int,
+                               failureReason: String? = nil) async -> AuthorIndexProgress {
         let snapshot = await store.snapshot()
         // Progress must use the same membership as the h-index queue. The
         // fixed self author is intentionally excluded from that queue, and
@@ -551,7 +615,7 @@ struct AuthorIndexService: Sendable {
                 !author.isSelf && membership.contains(author.recid)
             }
         } else {
-            candidates = snapshot.authors.values.filter { $0.isHIndexCandidate && !$0.isSelf }
+            candidates = snapshot.authors.values.filter { $0.isCandidate(in: categoryProfile.categories) && !$0.isSelf }
         }
         let verified = candidates.filter { $0.hIndex != nil }.count
         let qualified = candidates.filter { $0.hIndexState == .qualified }.count
@@ -559,6 +623,7 @@ struct AuthorIndexService: Sendable {
         let failed = candidates.filter { $0.hIndexState == .failed }.count
         return AuthorIndexProgress(verified: verified, candidates: candidates.count, failed: failed,
                                    qualified: qualified, rejected: rejected, completedPages: pages,
-                                   remaining: max(0, candidates.count - verified), state: state)
+                                   remaining: max(0, candidates.count - verified), state: state,
+                                   failureReason: failureReason)
     }
 }

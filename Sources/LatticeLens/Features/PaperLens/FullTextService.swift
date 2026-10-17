@@ -87,9 +87,21 @@ struct URLSessionFullTextDownloader: FullTextDownloading, Sendable {
 
 }
 
+typealias FullTextExtraction = (
+    document: FullTextDocument,
+    chunks: [EvidenceChunk],
+    anchors: [EvidenceAnchor],
+    formulaInventory: FormulaInventory?
+)
+
 struct FullTextService: Sendable {
     static let maximumBytes = 40 * 1024 * 1024
     static let maximumChunkScalars = 3_000
+    /// Bump this only when the deterministic ar5iv display-equation extractor
+    /// changes. A persisted document without this exact marker is treated as
+    /// an old extraction and is re-indexed locally before an all-equations
+    /// request; it is never silently treated as complete.
+    static let numberedEquationIndexVersion = 3
 
     let store: any LibraryStoring
     let cacheDirectory: URL
@@ -97,21 +109,49 @@ struct FullTextService: Sendable {
 
     static var defaultCacheDirectory: URL {
         if usesFixtureLaunch {
-            if let rawRoot = AppLaunchConfiguration.fixtureCacheRoot {
-                return URL(fileURLWithPath: rawRoot, isDirectory: true)
-                    .appending(path: "LatticeLens-UIFixture-\(ProcessInfo.processInfo.processIdentifier)/FullText")
+            if let storeURL = AppLaunchConfiguration.diskBackedLargeFixtureStoreURL {
+                return diskBackedFixtureCacheDirectory(storeURL: storeURL)
             }
-            return FileManager.default.temporaryDirectory
-                .appending(path: "LatticeLens-UIFixture-\(ProcessInfo.processInfo.processIdentifier)/FullText")
+            if let rawRoot = AppLaunchConfiguration.fixtureCacheRoot {
+                return processLocalFixtureCacheDirectory(
+                    root: URL(fileURLWithPath: rawRoot, isDirectory: true),
+                    processIdentifier: ProcessInfo.processInfo.processIdentifier
+                )
+            }
+            if ProcessInfo.processInfo.environment["LATTICELENS_REQUIRE_PROJECT_LOCAL_TEST_ROOTS"] == "1" {
+                guard let rawRoot = ProcessInfo.processInfo.environment["LATTICELENS_TEST_TMP_ROOT"],
+                      rawRoot.hasPrefix("/") else {
+                    preconditionFailure("The isolated fixture launch requires LATTICELENS_TEST_TMP_ROOT")
+                }
+                return processLocalFixtureCacheDirectory(
+                    root: URL(fileURLWithPath: rawRoot, isDirectory: true),
+                    processIdentifier: ProcessInfo.processInfo.processIdentifier
+                )
+            }
+            return processLocalFixtureCacheDirectory(
+                root: FileManager.default.temporaryDirectory,
+                processIdentifier: ProcessInfo.processInfo.processIdentifier
+            )
         }
         return (FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory).appending(path: "LatticeLens/FullText")
     }
 
-    /// This directory exists only for the lifetime of a fixture app process.
-    /// It is intentionally not part of a user's Library or application cache.
+    static func diskBackedFixtureCacheDirectory(storeURL: URL) -> URL {
+        storeURL.deletingLastPathComponent()
+            .appending(path: "FullText", directoryHint: .isDirectory)
+    }
+
+    static func processLocalFixtureCacheDirectory(root: URL, processIdentifier: Int32) -> URL {
+        root.appending(path: "LatticeLens-UIFixture-\(processIdentifier)/FullText",
+                       directoryHint: .isDirectory)
+    }
+
+    /// Process-local fixtures are disposable at app exit. A disk-backed
+    /// fixture keeps its content-addressed source beside the isolated store
+    /// so quit/relaunch and offline reindexing can read the same bytes.
     static func removeFixtureCacheIfPresent() {
-        guard usesFixtureLaunch else { return }
+        guard usesFixtureLaunch, !AppLaunchConfiguration.requestsDiskBackedLargeFixture else { return }
         let root = defaultCacheDirectory.deletingLastPathComponent()
         try? FileManager.default.removeItem(at: root)
     }
@@ -181,9 +221,7 @@ struct FullTextService: Sendable {
             let extracted = try sourceKind == .arxivHTML
                 ? extractHTML(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, localURL: localURL, hash: hash, byteCount: data.count)
                 : extract(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, localURL: localURL, hash: hash, byteCount: data.count)
-            let extractedPlan = try await store.saveFullTextAndPlan(document: extracted.document, chunks: extracted.chunks, anchors: extracted.anchors)
-            try await retireCommittedBlobs(extractedPlan)
-            return extracted.document
+            return try await commit(extraction: extracted)
         } catch {
             var failed = provisional
             failed.extractionState = error as? FullTextServiceError == .noText ? .textExtractionUnavailable : .failed
@@ -192,6 +230,34 @@ struct FullTextService: Sendable {
             try await retireCommittedBlobs(failedPlan)
             throw error
         }
+    }
+
+    /// Rebuilds structured numbered-equation chunks from an already cached
+    /// ar5iv HTML file. This performs no HEAD/GET, does not enumerate cache
+    /// directories, and validates the content-addressed filename, byte count
+    /// and SHA-256 before replacing only this document's extracted chunks.
+    func reindexNumberedEquations(document: FullTextDocument) async throws -> FullTextDocument {
+        guard document.sourceKind == .arxivHTML,
+              let filename = document.localFilename else {
+            throw FullTextServiceError.invalidSource
+        }
+        let localURL = try V4OwnedPath.canonicalFile(named: filename, root: cacheDirectory)
+        let data = try Data(contentsOf: localURL, options: [.mappedIfSafe])
+        guard data.count == document.byteCount, StableHash.sha256(data) == document.sha256 else {
+            throw FullTextServiceError.invalidSource
+        }
+        var extraction = try extractHTML(
+            paperID: document.paperID,
+            sourceURL: document.sourceURL,
+            sourceKind: document.sourceKind,
+            localURL: localURL,
+            hash: document.sha256,
+            byteCount: document.byteCount
+        )
+        // Re-indexing is not a new download. Preserve the original receipt
+        // timestamp while upgrading only its deterministic local extraction.
+        extraction.document.downloadedAt = document.downloadedAt
+        return try await commit(extraction: extraction)
     }
 
     func delete(document: FullTextDocument) async throws {
@@ -266,6 +332,51 @@ struct FullTextService: Sendable {
         }
     }
 
+    /// Typed inventory persistence is a separate V10 repository transaction.
+    /// Publish the document as incomplete first, then make it complete only
+    /// after the inventory and all item rows have committed. A crash between
+    /// those saves therefore leaves a recoverable, explicitly incomplete
+    /// document rather than a false complete receipt.
+    private func commit(extraction: FullTextExtraction) async throws -> FullTextDocument {
+        guard let inventory = extraction.formulaInventory,
+              let inventoryStore = store as? any FormulaInventoryStoring else {
+            let plan = try await store.saveFullTextAndPlan(document: extraction.document,
+                chunks: extraction.chunks, anchors: extraction.anchors)
+            try await retireCommittedBlobs(plan)
+            return extraction.document
+        }
+
+        var stagedDocument = extraction.document
+        if inventory.isComplete {
+            stagedDocument.numberedEquationIndexComplete = false
+            stagedDocument.numberedEquationInventoryHash = nil
+            stagedDocument.numberedEquationIndexFailure = "typed_inventory_persistence_pending"
+        }
+        let stagedPlan = try await store.saveFullTextAndPlan(document: stagedDocument,
+            chunks: extraction.chunks, anchors: extraction.anchors)
+        try await retireCommittedBlobs(stagedPlan)
+
+        do {
+            try await inventoryStore.saveFormulaInventory(inventory, paperID: extraction.document.paperID)
+        } catch {
+            stagedDocument.numberedEquationIndexComplete = false
+            stagedDocument.numberedEquationInventoryHash = nil
+            stagedDocument.numberedEquationIndexFailure =
+                "typed_inventory_persistence_failure:\(String(reflecting: type(of: error)))"
+            if let repairPlan = try? await store.saveFullTextAndPlan(document: stagedDocument,
+                    chunks: extraction.chunks, anchors: extraction.anchors) {
+                try? await retireCommittedBlobs(repairPlan)
+            }
+            return stagedDocument
+        }
+
+        guard inventory.isComplete else { return extraction.document }
+        let finalizedPlan = try await store.saveFullTextAndPlan(document: extraction.document,
+            chunks: extraction.chunks, anchors: extraction.anchors)
+        try await retireCommittedBlobs(finalizedPlan)
+        return extraction.document
+    }
+
     private func recordOrphanDeletion(path: URL, blobHash: String?, error: Error) async throws {
         guard let blobHash, Self.contentHash(fromCanonicalFilename: path.lastPathComponent) == blobHash else {
             throw FullTextServiceError.invalidSource
@@ -288,7 +399,7 @@ struct FullTextService: Sendable {
         return candidate
     }
 
-    func extract(paperID: Int, sourceURL: URL, sourceKind: FullTextSourceKind, localURL: URL, hash: String, byteCount: Int) throws -> (document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor]) {
+    func extract(paperID: Int, sourceURL: URL, sourceKind: FullTextSourceKind, localURL: URL, hash: String, byteCount: Int) throws -> FullTextExtraction {
         guard let pdf = PDFDocument(url: localURL) else { throw FullTextServiceError.unableToOpenPDF }
         var chunks: [EvidenceChunk] = []
         var anchors: [EvidenceAnchor] = []
@@ -311,17 +422,24 @@ struct FullTextService: Sendable {
         let document = FullTextDocument(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, sha256: hash,
                                         byteCount: byteCount, localFilename: localURL.lastPathComponent, pageCount: pdf.pageCount,
                                         extractionState: .extracted, downloadedAt: Date(), lastErrorCategory: nil)
-        return (document, chunks, anchors)
+        return (document, chunks, anchors, nil)
     }
 
     /// ar5iv exposes the TeX source as semantic HTML/MathML. Preserve the
-    /// source TeX annotation in each bounded text chunk so formula-focused
-    /// prompts can cite and derive the original expression.
-    private func extractHTML(paperID: Int, sourceURL: URL, sourceKind: FullTextSourceKind, localURL: URL, hash: String, byteCount: Int) throws -> (document: FullTextDocument, chunks: [EvidenceChunk], anchors: [EvidenceAnchor]) {
+    /// source TeX annotation in each bounded text chunk and additionally make
+    /// one independent, hash-bound chunk for every structurally labelled
+    /// display equation. The latter is the complete coverage inventory; it is
+    /// deliberately independent of title relevance ranking.
+    private func extractHTML(paperID: Int, sourceURL: URL, sourceKind: FullTextSourceKind, localURL: URL, hash: String, byteCount: Int) throws -> FullTextExtraction {
         guard let data = try? Data(contentsOf: localURL),
               let html = String(data: data, encoding: .utf8) else { throw FullTextServiceError.noText }
         let text = Self.plainTextFromArxivHTML(html)
         guard !text.isEmpty else { throw FullTextServiceError.noText }
+        // The inventory identity must follow the bytes that were actually
+        // downloaded and hash-verified above. A constant such as
+        // "local-html" would let two different documents reuse equation IDs.
+        let numberedFormulaExtraction = Self.numberedEquations(from: html, documentHash: hash)
+        let numberedFormulas = numberedFormulaExtraction.formulas
         var chunks: [EvidenceChunk] = []
         var anchors: [EvidenceAnchor] = []
         for (chunkIndex, fragment) in Self.chunkRanges(text).enumerated() {
@@ -337,11 +455,105 @@ struct FullTextService: Sendable {
             anchors.append(EvidenceAnchor(id: identifier, paperID: paperID, sourceKind: .pdf, page: nil,
                                           section: chunk.section, quote: fragment.text, quoteHash: quoteHash, figureKey: nil))
         }
+        for formula in numberedFormulas {
+            // Preserve source TeX as a distinct full-text quote. The display
+            // delimiters make this exact anchor legible in the local reader;
+            // `equationTeX` itself stays delimiter-free for the schema.
+            let quote = "编号公式 \(formula.label)\n$$\(formula.tex)$$"
+            let quoteHash = StableHash.sha256(quote)
+            let identifier = "ar5iv-equation:\(paperID):\(hash):q\(formula.ordinal):\(quoteHash)"
+            let chunk = EvidenceChunk(
+                id: identifier, paperID: paperID, documentHash: hash, page: 1,
+                section: formula.section, characterRangeStart: formula.ordinal,
+                characterRangeEnd: formula.ordinal + quote.unicodeScalars.count,
+                text: quote, textHash: quoteHash,
+                equationID: "ar5iv:\(hash):\(formula.ordinal)", equationLabel: formula.label,
+                equationTeX: formula.tex, equationOrdinal: formula.ordinal
+            )
+            chunks.append(chunk)
+            // EvidenceSourceKind.pdf is the existing full-text anchor contract;
+            // page remains nil because ar5iv HTML has no PDF coordinate.
+            anchors.append(EvidenceAnchor(id: identifier, paperID: paperID, sourceKind: .pdf, page: nil,
+                                          section: formula.section, quote: quote, quoteHash: quoteHash, figureKey: nil))
+        }
         guard !chunks.isEmpty else { throw FullTextServiceError.noText }
         let document = FullTextDocument(paperID: paperID, sourceURL: sourceURL, sourceKind: sourceKind, sha256: hash,
                                         byteCount: byteCount, localFilename: localURL.lastPathComponent, pageCount: nil,
-                                        extractionState: .extracted, downloadedAt: Date(), lastErrorCategory: nil)
-        return (document, chunks, anchors)
+                                        extractionState: .extracted, downloadedAt: Date(), lastErrorCategory: nil,
+                                        numberedEquationIndexVersion: Self.numberedEquationIndexVersion,
+                                        numberedEquationCount: numberedFormulas.count,
+                                        numberedEquationIndexComplete: numberedFormulaExtraction.isComplete,
+                                        numberedEquationIndexFailure: numberedFormulaExtraction.failure,
+                                        numberedEquationInventoryHash: numberedFormulaExtraction.inventoryHash)
+        return (document, chunks, anchors, numberedFormulaExtraction.inventory)
+    }
+
+    private struct NumberedHTMLFormula: Sendable {
+        let label: String
+        let tex: String
+        let ordinal: Int
+        let section: String?
+    }
+
+    private struct NumberedHTMLFormulaExtraction: Sendable {
+        let inventory: FormulaInventory
+        let formulas: [NumberedHTMLFormula]
+        let labelledEquationCount: Int
+        let explicitFailure: String?
+        let inventoryHash: String
+
+        var isComplete: Bool { formulas.count == labelledEquationCount }
+
+        var failure: String? {
+            if let explicitFailure { return explicitFailure }
+            guard !isComplete else { return nil }
+            return "ar5iv HTML 中检测到 \(labelledEquationCount) 条带编号公式，但仅能为 \(formulas.count) 条建立 TeX/evidence 记录；不会生成部分覆盖结果。"
+        }
+    }
+
+    /// ar5iv's LaTeXML display equations use a `ltx_equation` container and a
+    /// `ltx_tag_equation` label. This is a deliberately narrow structural
+    /// extractor, not a heuristic search for parenthesized text: each emitted
+    /// result has both a visible label containing a numeral and a semantic TeX
+    /// annotation/alttext source.
+    private static func numberedEquations(from html: String, documentHash: String) -> NumberedHTMLFormulaExtraction {
+        let inventory = FormulaInventoryParser.parse(html: html, documentHash: documentHash)
+        let formulas = inventory.items.map { item in
+            NumberedHTMLFormula(label: item.label, tex: item.sourceTeX, ordinal: item.ordinal,
+                                section: nil)
+        }
+        return NumberedHTMLFormulaExtraction(inventory: inventory,
+                                             formulas: formulas,
+                                             labelledEquationCount: inventory.labelledEquationCount,
+                                             explicitFailure: inventory.failureReason,
+                                             inventoryHash: inventory.inventoryHash)
+    }
+
+    private static func firstCapture(in value: String, pattern: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        guard let match = regex.firstMatch(in: value, range: range),
+              let captured = Range(match.range(at: 1), in: value) else { return nil }
+        return String(value[captured])
+    }
+
+    private static func htmlSection(before index: String.Index, in html: String) -> String? {
+        let prefix = String(html[..<index])
+        let pattern = #"(?is)<h[1-6]\b[^>]*>(.*?)</h[1-6]>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(prefix.startIndex..<prefix.endIndex, in: prefix)
+        guard let match = regex.matches(in: prefix, range: range).last,
+              let captured = Range(match.range(at: 1), in: prefix) else { return nil }
+        let section = htmlText(String(prefix[captured]))
+        guard !section.isEmpty else { return nil }
+        return String(section.unicodeScalars.prefix(240))
+    }
+
+    private static func htmlText(_ html: String) -> String {
+        var value = replacing(html, pattern: #"(?is)<[^>]+>"#, with: " ")
+        value = decodeHTMLEntities(value)
+        value = value.replacingOccurrences(of: #"[ \t\r\n\f\v]+"#, with: " ", options: .regularExpression)
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func plainTextFromArxivHTML(_ html: String) -> String {
@@ -357,14 +569,20 @@ struct FullTextService: Sendable {
         value = replacing(value, pattern: #"(?is)<br\s*/?>"#, with: "\n")
         value = replacing(value, pattern: #"(?is)</(p|div|section|article|h[1-6]|li|tr|figcaption|table)>"#, with: "\n")
         value = replacing(value, pattern: #"(?is)<[^>]+>"#, with: " ")
+        value = decodeHTMLEntities(value)
+        value = value.replacingOccurrences(of: #"[ \t\r\f\v]+"#, with: " ", options: .regularExpression)
+        value = value.replacingOccurrences(of: #" *\n+ *"#, with: "\n", options: .regularExpression)
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func decodeHTMLEntities(_ value: String) -> String {
         let entities: [(String, String)] = [
             ("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
             ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'")
         ]
-        for (entity, replacement) in entities { value = value.replacingOccurrences(of: entity, with: replacement) }
-        value = value.replacingOccurrences(of: #"[ \t\r\f\v]+"#, with: " ", options: .regularExpression)
-        value = value.replacingOccurrences(of: #" *\n+ *"#, with: "\n", options: .regularExpression)
-        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return entities.reduce(value) { partial, mapping in
+            partial.replacingOccurrences(of: mapping.0, with: mapping.1)
+        }
     }
 
     private static func replacing(_ value: String, pattern: String, with replacement: String? = nil, withTemplate template: String? = nil) -> String {

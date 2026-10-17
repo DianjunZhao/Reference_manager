@@ -7,17 +7,20 @@ actor EvidenceInsightWorkflow {
     private let client: any LLMCompleting
     private let retriever: LocalEvidenceRetriever
     private let timeouts: V4AnalysisTimeouts
+    private let formulaJobs: any FormulaJobStoring
 
     init(
         store: any LibraryStoring,
         client: any LLMCompleting = OpenAICompatibleClient(),
         retriever: LocalEvidenceRetriever = LocalEvidenceRetriever(),
-        timeouts: V4AnalysisTimeouts = .evidence
+        timeouts: V4AnalysisTimeouts = .evidence,
+        formulaJobs: (any FormulaJobStoring)? = nil
     ) {
         self.store = store
         self.client = client
         self.retriever = retriever
         self.timeouts = timeouts
+        self.formulaJobs = formulaJobs ?? (store as? any FormulaJobStoring) ?? InMemoryFormulaJobStore()
     }
 
     func generate(
@@ -42,6 +45,11 @@ actor EvidenceInsightWorkflow {
         guard !source.chunks.isEmpty, !source.anchors.isEmpty else {
             throw LatticeLensError.schemaViolation("全文检索没有产生可发送的受限 evidence payload。")
         }
+        guard source.numberedEquationCoverageComplete else {
+            throw LatticeLensError.schemaViolation(
+                source.numberedEquationCoverageFailure ?? "编号公式索引不完整；不会生成部分覆盖结果。"
+            )
+        }
         let profile = settings.activeProfile
         let payloadData = try JSONEncoder.latticeLens.encode(source)
         let baseURL = try APIEndpointBuilder.normalizedBaseURL(from: profile.baseURL, provider: profile.provider).absoluteString
@@ -50,7 +58,7 @@ actor EvidenceInsightWorkflow {
             paperUpdated: paper.updated,
             documentHash: retrieved.document.sha256,
             chunkIDs: source.chunks.map(\.id),
-            promptVersion: EvidenceInsightPrompt.version,
+            promptVersion: "\(EvidenceInsightPrompt.version)|\(FormulaDerivationPrompt.version)|\(source.inventoryHash ?? "missing-inventory")",
             schemaVersion: PaperInsightV2Validator.schemaVersion,
             sourceScope: PaperInsightV2Validator.sourceScope,
             provider: settings.activeProvider.rawValue,
@@ -63,27 +71,69 @@ actor EvidenceInsightWorkflow {
             terminologyHash: StableHash.sha256(settings.terminology.map { "\($0.source)|\($0.preferredZH)|\($0.note)" }.sorted().joined(separator: "\n")),
             providerCapabilityHash: StableHash.sha256("stream=\(profile.usesStreaming)|vision=\(profile.supportsVision)")
         )
+        let publicationContext = EvidenceInsightPublicationContext(
+            cacheKey: key.value,
+            paperID: paper.literatureID,
+            documentHash: retrieved.document.sha256,
+            inventoryHash: source.inventoryHash ?? FormulaInventory.payloadHash(
+                documentHash: source.documentHash, equations: source.numberedEquations
+            ),
+            sourcePayloadHash: StableHash.sha256(payloadData),
+            provider: profile.provider.rawValue,
+            providerProfileFingerprint: FormulaDerivationWorkflow.executionFingerprint(
+                profile: profile, settingsFingerprint: settings.sessionFingerprint
+            ),
+            modelID: profile.effectiveModel,
+            promptVersion: key.promptVersion,
+            schemaVersion: PaperInsightV2Validator.schemaVersion,
+            sourceScope: PaperInsightV2Validator.sourceScope
+        )
         if let cached = context.evidenceInsights.first(where: { $0.cacheKey == key.value }) {
+            if let publicationStore = formulaJobs as? any EvidenceInsightPublicationStoring {
+                try? await publicationStore.removeReadyEvidenceInsightPublication(cacheKey: key.value)
+            }
             await onState(.completed(cacheHit: true, requestCount: 0))
             return cached
         }
 
-        await onState(.connecting)
-        let counter = EvidenceCharacterCounter()
-        let receive: @Sendable (String) async -> Void = { delta in
-            // Coalesce UI updates to at most ~4 per second.  The transport
-            // still accumulates every delta, but avoiding one MainActor update
-            // per token materially reduces back-pressure on slow streams.
-            if let progress = await counter.append(delta) {
-                await onState(.receiving(characters: progress.characters, bytes: progress.bytes))
-            }
-        }
-        let transport: @Sendable (LLMTransportState) async -> Void = { state in
-            if state == .waitingFirstContent { await onState(.waitingFirstContent) }
+        guard let publicationStore = formulaJobs as? any EvidenceInsightPublicationStoring else {
+            throw LatticeLensError.persistenceUnavailable(
+                "当前公式作业存储不支持 ready-to-publish 持久化；为避免不可恢复的最终写入，不会发送 LLM 请求。"
+            )
         }
         do {
+            if let pending = try await publicationStore.readyEvidenceInsightPublication(cacheKey: key.value) {
+                guard pending.context == publicationContext,
+                      pending.hasConsistentIdentity,
+                      pending.artifact.numberedEquationIDs == source.numberedEquations.map(\.equationID) else {
+                    throw LatticeLensError.schemaViolation(
+                        "待发布 evidence artifact 的 cache/source/inventory/model 上下文不匹配；已停止恢复且不会重发 provider 请求。"
+                    )
+                }
+                try Task.checkCancellation()
+                await onState(.validating)
+                try await store.saveEvidenceInsight(pending.artifact)
+                try? await publicationStore.removeReadyEvidenceInsightPublication(cacheKey: key.value)
+                await onState(.completed(cacheHit: true, requestCount: 0))
+                return pending.artifact
+            }
+
+            await onState(.connecting)
+            let counter = EvidenceCharacterCounter()
+            let receive: @Sendable (String) async -> Void = { delta in
+                // Coalesce UI updates to at most ~4 per second.  The transport
+                // still accumulates every delta, but avoiding one MainActor update
+                // per token materially reduces back-pressure on slow streams.
+                if let progress = await counter.append(delta) {
+                    await onState(.receiving(characters: progress.characters, bytes: progress.bytes))
+                }
+            }
+            let transport: @Sendable (LLMTransportState) async -> Void = { state in
+                if state == .waitingFirstContent { await onState(.waitingFirstContent) }
+            }
             let response: String
             let requestCount: Int
+            let proseSource = source.proseOnly()
             if settings.mode == .deep, paper.preferredAbstract != nil {
                 let translationPayload = try PaperInsightPrompt.translationPayload(source: InsightSourcePayload(paper: paper))
                 let translationResponse = try await completeRequest(
@@ -98,7 +148,7 @@ actor EvidenceInsightWorkflow {
                 let translation = try PaperInsightPrompt.decodeTranslation(Data(translationResponse.utf8))
                 await onState(.connecting)
                 let payload = try EvidenceInsightPrompt.userPayload(
-                    source: source,
+                    source: proseSource,
                     detail: settings.detailLevel,
                     maximumFigures: settings.maximumFigures,
                     terminology: settings.terminology,
@@ -116,7 +166,7 @@ actor EvidenceInsightWorkflow {
                 requestCount = 2
             } else {
                 let payload = try EvidenceInsightPrompt.userPayload(
-                    source: source,
+                    source: proseSource,
                     detail: settings.detailLevel,
                     maximumFigures: settings.maximumFigures,
                     terminology: settings.terminology
@@ -137,9 +187,43 @@ actor EvidenceInsightWorkflow {
                 await onState(.receiving(characters: progress.characters, bytes: progress.bytes))
             }
             await onState(.validating)
-            let insight = try PaperInsightV2Validator.decode(
-                Data(response.utf8), source: source, maximumFigures: settings.maximumFigures
+            let proseInsight = try PaperInsightV2Validator.decode(
+                Data(response.utf8), source: proseSource, maximumFigures: settings.maximumFigures
             )
+            let profile = settings.activeProfile
+            let formulaExecutionFingerprint = FormulaDerivationWorkflow.executionFingerprint(
+                profile: profile, settingsFingerprint: settings.sessionFingerprint
+            )
+            let formulaJobID = FormulaDerivationWorkflow.durableJobID(
+                paperID: paper.literatureID,
+                documentHash: source.documentHash,
+                inventoryHash: source.inventoryHash ?? FormulaInventory.payloadHash(
+                    documentHash: source.documentHash, equations: source.numberedEquations
+                ),
+                executionFingerprint: formulaExecutionFingerprint
+            )
+            let formula = try await FormulaDerivationWorkflow(client: client, store: formulaJobs, timeouts: timeouts)
+                .run(source: source, profile: profile, apiKey: apiKey,
+                     executionFingerprint: formulaExecutionFingerprint, jobID: formulaJobID) { progress in
+                    await onState(.formulaProgress(completedBatches: progress.completedBatches,
+                                                   totalBatches: progress.totalBatches,
+                                                   bytes: progress.receivedBytes,
+                                                   characters: progress.receivedCharacters))
+                }
+            let physics = InsightPhysicsV2(researchQuestion: proseInsight.physics.researchQuestion,
+                                           methodAndDataFlow: proseInsight.physics.methodAndDataFlow,
+                                           mainResults: proseInsight.physics.mainResults,
+                                           reasonableInferences: proseInsight.physics.reasonableInferences,
+                                           missingInformation: proseInsight.physics.missingInformation,
+                                           caveats: proseInsight.physics.caveats,
+                                           importantFormulaDerivations: formula.claims)
+            let insight = PaperInsightV2(schemaVersion: proseInsight.schemaVersion,
+                                         sourceScope: proseInsight.sourceScope,
+                                         titleZH: proseInsight.titleZH,
+                                         abstractZH: proseInsight.abstractZH,
+                                         physics: physics,
+                                         importantFigures: proseInsight.importantFigures,
+                                         terminology: proseInsight.terminology)
             let artifact = EvidenceInsightArtifact(
                 cacheKey: key.value,
                 paperID: paper.literatureID,
@@ -150,14 +234,22 @@ actor EvidenceInsightWorkflow {
                 retrievalQuery: source.retrievalQuery,
                 rankerVersion: source.rankerVersion,
                 selectedChunkIDs: source.chunks.map(\.id),
-                promptVersion: EvidenceInsightPrompt.version,
+                promptVersion: key.promptVersion,
                 schemaVersion: PaperInsightV2Validator.schemaVersion,
                 payloadHash: StableHash.sha256(payloadData),
                 payloadByteCount: source.payloadByteCount,
-                payloadScalarCount: source.payloadScalarCount
+                payloadScalarCount: source.payloadScalarCount,
+                numberedEquationIDs: source.numberedEquations.map(\.equationID),
+                numberedEquationCoverageComplete: source.numberedEquationCoverageComplete
             )
+            let publication = ReadyEvidenceInsightPublication(context: publicationContext, artifact: artifact)
+            guard publication.hasConsistentIdentity else {
+                throw LatticeLensError.schemaViolation("completed evidence artifact failed ready-publication identity validation")
+            }
+            try await publicationStore.saveReadyEvidenceInsightPublication(publication)
             try await store.saveEvidenceInsight(artifact)
-            await onState(.completed(cacheHit: false, requestCount: requestCount))
+            try? await publicationStore.removeReadyEvidenceInsightPublication(cacheKey: key.value)
+            await onState(.completed(cacheHit: false, requestCount: requestCount + formula.attemptedRequestsThisRun))
             return artifact
         } catch is CancellationError {
             await onState(.cancelled)
@@ -182,6 +274,7 @@ actor EvidenceInsightWorkflow {
         onDelta: @escaping @Sendable (String) async -> Void
     ) async throws -> String {
         let client = self.client
+        let requestTimeout = self.timeouts.hard
         return try await V4AnalysisDeadlineEnforcer.perform(
             timeouts: timeouts,
             maximumResponseBytes: maximumResponseBytes,
@@ -189,12 +282,11 @@ actor EvidenceInsightWorkflow {
             onDelta: onDelta
         ) { transport, delta in
             if let configurable = client as? any LLMRequestTimeoutConfiguring {
-                // A nil request timeout is deliberate: Evidence has no total
-                // application deadline. The enforcer still applies finite
-                // connect/first-content/idle phases and user cancellation.
+                // The job has no aggregate wall-clock deadline, but each
+                // provider request receives a finite resource deadline.
                 return try await configurable.complete(
                     system: system, userPayload: userPayload, profile: profile, apiKey: apiKey,
-                    maximumResponseBytes: maximumResponseBytes, requestTimeout: nil,
+                    maximumResponseBytes: maximumResponseBytes, requestTimeout: requestTimeout,
                     onTransportState: transport, onDelta: delta
                 )
             }

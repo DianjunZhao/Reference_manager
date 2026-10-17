@@ -3,9 +3,11 @@ import Foundation
 /// Prompt contract for the v2 evidence reader.  The provider receives this
 /// JSON envelope as data; the source quotes cannot modify the system contract.
 enum EvidenceInsightPrompt {
-    // v9 adds an explicit array-separator audit, preventing a v8 cache entry
-    // from being reused when one unambiguous missing-comma typo is repaired.
-    static let version = "paper-insight-prompt-v9"
+    // v10 changes formula generation from a subjective top-eight selection to
+    // a complete, local ar5iv-labelled equation inventory. The cache version
+    // prevents legacy "important formula" results from being reused as if
+    // they proved full coverage.
+    static let version = "paper-insight-prompt-v10"
 
     static let systemInstruction = """
     Return one paper-insight-v2 JSON object and nothing else: no Markdown,
@@ -23,15 +25,21 @@ enum EvidenceInsightPrompt {
     pixels; figures in this request are caption-only. Do not invent lattice
     spacing, volume, action, renormalization, Fourier/source-sink convention,
     statistics, fit ranges, numerical values, units, or uncertainties when the
-    provided anchors do not state them. In physics.important_formula_derivations,
-    return up to 8 of the paper's most important displayed equations or
-    definitions as concise Chinese derivations. Each item must be a direct
-    evidence claim and must include formula_tex (the original TeX between
-    delimiters), derivation_steps (an ordered array of algebraic steps, each
-    retaining TeX where needed), and conclusion_zh (the scoped conclusion).
-    Keep text_zh as a short evidence summary, cite the exact full-text anchor(s), and
-    never invent an equation that is absent from the supplied chunks. If no
-    equation is present, return an empty important_formula_derivations array.
+    provided anchors do not state them. source.numbered_equations is the
+    complete local inventory of ar5iv-labelled display equations for this
+    document. In physics.important_formula_derivations, return exactly one
+    direct evidence claim for EVERY entry in source.numbered_equations: do not
+    select only important equations, omit entries, merge two entries, reorder
+    IDs, or add equations that are not in that inventory. Each formula claim
+    MUST include equation_id copied byte-for-byte from its inventory entry,
+    formula_tex copied exactly from that entry's bare tex field (no algebraic
+    rewrite), derivation_steps as a nonempty ordered Chinese array, and
+    conclusion_zh. Its evidence_ids MUST include that same entry's evidence_id.
+    Keep text_zh as a short evidence summary and never invent an equation that
+    is absent from the supplied inventory. Before returning, compare the
+    equation_id set and count against source.numbered_equations: they must be
+    identical. If source.numbered_equations is empty, return exactly [] for
+    important_formula_derivations. Do not claim partial formula coverage.
     Put mathematical expressions in text_zh, derivation_steps, and
     conclusion_zh inside standard TeX delimiters ($...$ or $$...$$). Put the
     bare original TeX only in formula_tex. Never emit MathML/XML tags such as
@@ -57,8 +65,8 @@ enum EvidenceInsightPrompt {
     reasonable_inferences, missing_information, caveats, and may additionally
     contain important_formula_derivations. A claim is
     {"text_zh":"...","epistemic_status":"direct|inference|missing","evidence_ids":["supplied anchor id"]}.
-    Formula claims additionally contain formula_tex, derivation_steps, and
-    conclusion_zh. Use [] for an unavailable optional list; do not omit a
+    Formula claims additionally contain equation_id, formula_tex,
+    derivation_steps, and conclusion_zh. Use [] for an unavailable optional list; do not omit a
     required root or physics key. important_figures and terminology may be [].
 
     In particular, physics.research_question MUST be an object, never a JSON

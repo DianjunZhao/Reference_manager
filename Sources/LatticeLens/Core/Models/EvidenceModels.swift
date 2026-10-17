@@ -159,6 +159,24 @@ struct FullTextDocument: Codable, Hashable, Identifiable, Sendable {
     var extractionState: FullTextExtractionState
     var downloadedAt: Date?
     var lastErrorCategory: String?
+    /// ar5iv HTML can be re-read locally into a deterministic inventory of
+    /// labelled display equations.  `nil` means this document predates that
+    /// extraction pass, so it must never be presented as all-equations
+    /// coverage.  These optional fields deliberately keep older persisted
+    /// stores decodable.
+    var numberedEquationIndexVersion: Int? = nil
+    var numberedEquationCount: Int? = nil
+    /// A current version marker alone is insufficient: every visible ar5iv
+    /// equation label must also have produced exactly one TeX-backed record.
+    /// `nil` preserves compatibility with documents extracted before this
+    /// explicit completeness receipt existed.
+    var numberedEquationIndexComplete: Bool? = nil
+    var numberedEquationIndexFailure: String? = nil
+    /// Stable identity of the complete local formula inventory.  This is
+    /// separate from the document hash: a parser-version or structural
+    /// extraction change must invalidate formula jobs even when the source
+    /// bytes are unchanged.
+    var numberedEquationInventoryHash: String? = nil
     var id: String { "\(paperID):\(sha256)" }
 }
 
@@ -178,10 +196,19 @@ struct EvidenceChunk: Codable, Hashable, Identifiable, Sendable {
     let byteCount: Int
     let scalarCount: Int
     let tokenEstimate: Int
+    /// Present only for a display equation that ar5iv itself labelled, for
+    /// example `(2.3)` or `(A.1)`.  Regular retrieval chunks remain exactly
+    /// compatible with the pre-indexed representation.
+    let equationID: String?
+    let equationLabel: String?
+    let equationTeX: String?
+    let equationOrdinal: Int?
 
     init(id: String, paperID: Int, documentHash: String, page: Int, section: String?,
          characterRangeStart: Int, characterRangeEnd: Int, text: String, textHash: String,
-         byteCount: Int? = nil, scalarCount: Int? = nil, tokenEstimate: Int? = nil) {
+         byteCount: Int? = nil, scalarCount: Int? = nil, tokenEstimate: Int? = nil,
+         equationID: String? = nil, equationLabel: String? = nil,
+         equationTeX: String? = nil, equationOrdinal: Int? = nil) {
         self.id = id
         self.paperID = paperID
         self.documentHash = documentHash
@@ -194,11 +221,16 @@ struct EvidenceChunk: Codable, Hashable, Identifiable, Sendable {
         self.byteCount = byteCount ?? text.utf8.count
         self.scalarCount = scalarCount ?? text.unicodeScalars.count
         self.tokenEstimate = tokenEstimate ?? max(1, text.split { $0.isWhitespace || $0.isPunctuation }.count)
+        self.equationID = equationID
+        self.equationLabel = equationLabel
+        self.equationTeX = equationTeX
+        self.equationOrdinal = equationOrdinal
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, paperID, documentHash, page, section, characterRangeStart, characterRangeEnd, text, textHash
         case byteCount, scalarCount, tokenEstimate
+        case equationID, equationLabel, equationTeX, equationOrdinal
     }
 
     init(from decoder: Decoder) throws {
@@ -214,7 +246,11 @@ struct EvidenceChunk: Codable, Hashable, Identifiable, Sendable {
                   textHash: try values.decode(String.self, forKey: .textHash),
                   byteCount: try values.decodeIfPresent(Int.self, forKey: .byteCount),
                   scalarCount: try values.decodeIfPresent(Int.self, forKey: .scalarCount),
-                  tokenEstimate: try values.decodeIfPresent(Int.self, forKey: .tokenEstimate))
+                  tokenEstimate: try values.decodeIfPresent(Int.self, forKey: .tokenEstimate),
+                  equationID: try values.decodeIfPresent(String.self, forKey: .equationID),
+                  equationLabel: try values.decodeIfPresent(String.self, forKey: .equationLabel),
+                  equationTeX: try values.decodeIfPresent(String.self, forKey: .equationTeX),
+                  equationOrdinal: try values.decodeIfPresent(Int.self, forKey: .equationOrdinal))
     }
 }
 
@@ -253,6 +289,111 @@ enum EpistemicStatus: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum FormulaStructuralStatus: String, Codable, CaseIterable, Sendable {
+    case verifiedStructural = "verified_structural"
+    case needsManual = "needs_manual"
+    case rejected
+}
+
+enum FormulaPhysicsReviewStatus: String, Codable, CaseIterable, Sendable {
+    case needsManualPhysics = "needs_manual_physics"
+    case reviewedWithReceipt = "reviewed_with_receipt"
+}
+
+/// One provenance-bound step in a numbered-equation derivation. The two
+/// status dimensions are computed locally: provider JSON cannot claim a
+/// structural pass or a human physics review.
+struct FormulaDerivationStep: Codable, Hashable, Sendable, Identifiable {
+    /// One provider response is deliberately small; a complete derivation is
+    /// assembled from at most eight independently checkpointed segments.
+    static let maximumStepsPerSegment = 32
+    static let maximumSteps = 256
+
+    let stepID: String
+    let ordinal: Int
+    let textZH: String
+    let beforeTeX: String?
+    let afterTeX: String?
+    let ruleOrAssumption: String
+    let referencedEquationIDs: [String]
+    let evidenceAnchorIDs: [String]
+    let sourceDocumentHashes: [String]
+    let epistemicStatus: EpistemicStatus
+
+    var id: String { stepID }
+    var structuralStatus: FormulaStructuralStatus {
+        FormulaStepTeXStructure.status(before: beforeTeX, after: afterTeX)
+    }
+    var physicsReview: FormulaPhysicsReviewStatus { .needsManualPhysics }
+
+    enum CodingKeys: String, CodingKey {
+        case stepID = "step_id"
+        case ordinal
+        case textZH = "text_zh"
+        case beforeTeX = "before_tex"
+        case afterTeX = "after_tex"
+        case ruleOrAssumption = "rule_or_assumption"
+        case referencedEquationIDs = "referenced_equation_ids"
+        case evidenceAnchorIDs = "evidence_anchor_ids"
+        case sourceDocumentHashes = "source_document_hashes"
+        case epistemicStatus = "epistemic_status"
+    }
+
+    init(stepID: String, ordinal: Int, textZH: String, beforeTeX: String? = nil,
+         afterTeX: String? = nil, ruleOrAssumption: String,
+         referencedEquationIDs: [String] = [], evidenceAnchorIDs: [String] = [],
+         sourceDocumentHashes: [String], epistemicStatus: EpistemicStatus) {
+        self.stepID = stepID
+        self.ordinal = ordinal
+        self.textZH = textZH
+        self.beforeTeX = beforeTeX
+        self.afterTeX = afterTeX
+        self.ruleOrAssumption = ruleOrAssumption
+        self.referencedEquationIDs = referencedEquationIDs
+        self.evidenceAnchorIDs = evidenceAnchorIDs
+        self.sourceDocumentHashes = sourceDocumentHashes
+        self.epistemicStatus = epistemicStatus
+    }
+}
+
+struct FormulaDerivationSegmentMetadata: Codable, Hashable, Sendable {
+    let index: Int
+    let isFinal: Bool
+    let continuationSummary: String?
+
+    enum CodingKeys: String, CodingKey {
+        case index
+        case isFinal = "is_final"
+        case continuationSummary = "continuation_summary"
+    }
+}
+
+private struct LegacyEvidenceClaimIdentity: Encodable {
+    let identityVersion: Int
+    let codingPath: [String]
+    let textZH: String
+    let epistemicStatus: EpistemicStatus
+    let evidenceIDs: [String]
+    let formulaTeX: String?
+    let equationID: String?
+    let derivationSteps: [String]
+    let formulaDerivationSteps: [FormulaDerivationStep]
+    let conclusionZH: String?
+    let derivationSegment: FormulaDerivationSegmentMetadata?
+    let derivationSegmentProvenanceHash: String?
+
+    func stableUUID() throws -> UUID {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let digest = StableHash.sha256(try encoder.encode(self))
+        let value = "\(digest.prefix(8))-\(digest.dropFirst(8).prefix(4))-\(digest.dropFirst(12).prefix(4))-\(digest.dropFirst(16).prefix(4))-\(digest.dropFirst(20).prefix(12))"
+        guard let uuid = UUID(uuidString: value) else {
+            throw EncodingError.invalidValue(value, .init(codingPath: [], debugDescription: "Could not form a stable legacy EvidenceClaim UUID."))
+        }
+        return uuid
+    }
+}
+
 struct EvidenceClaim: Codable, Hashable, Identifiable, Sendable {
     let id: UUID
     let textZH: String
@@ -261,37 +402,106 @@ struct EvidenceClaim: Codable, Hashable, Identifiable, Sendable {
     /// Optional structured fields used by formula-focused v2 evidence. They
     /// remain optional so previously cached claim artifacts decode unchanged.
     let formulaTeX: String?
+    /// The immutable ID of an ar5iv-labelled equation.  It is populated only
+    /// by the all-numbered-equations contract; legacy formula artifacts keep
+    /// this optional field absent and are visibly marked as non-comprehensive.
+    let equationID: String?
     let derivationSteps: [String]
+    let formulaDerivationSteps: [FormulaDerivationStep]
     let conclusionZH: String?
+    let derivationSegment: FormulaDerivationSegmentMetadata?
+    /// Hash of the ordered, validated segment receipts that produced this
+    /// complete claim. It binds the final proof to request/response hashes.
+    let derivationSegmentProvenanceHash: String?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case textZH = "text_zh"
         case epistemicStatus = "epistemic_status"
         case evidenceIDs = "evidence_ids"
         case formulaTeX = "formula_tex"
+        case equationID = "equation_id"
         case derivationSteps = "derivation_steps"
+        case formulaDerivationSteps = "derivation_step_contract"
         case conclusionZH = "conclusion_zh"
+        case derivationSegment = "derivation_segment"
+        case derivationSegmentProvenanceHash = "derivation_segment_provenance_hash"
     }
 
     init(id: UUID = UUID(), textZH: String, epistemicStatus: EpistemicStatus, evidenceIDs: [String],
-         formulaTeX: String? = nil, derivationSteps: [String] = [], conclusionZH: String? = nil) {
+         formulaTeX: String? = nil, equationID: String? = nil,
+         derivationSteps: [String] = [], formulaDerivationSteps: [FormulaDerivationStep] = [],
+         conclusionZH: String? = nil, derivationSegment: FormulaDerivationSegmentMetadata? = nil,
+         derivationSegmentProvenanceHash: String? = nil) {
         self.id = id
         self.textZH = textZH
         self.epistemicStatus = epistemicStatus
         self.evidenceIDs = evidenceIDs
         self.formulaTeX = formulaTeX
-        self.derivationSteps = derivationSteps
+        self.equationID = equationID
+        self.formulaDerivationSteps = formulaDerivationSteps
+        self.derivationSteps = derivationSteps.isEmpty ? formulaDerivationSteps.map(\.textZH) : derivationSteps
         self.conclusionZH = conclusionZH
+        self.derivationSegment = derivationSegment
+        self.derivationSegmentProvenanceHash = derivationSegmentProvenanceHash
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        self.init(textZH: try values.decode(String.self, forKey: .textZH),
-                  epistemicStatus: try values.decode(EpistemicStatus.self, forKey: .epistemicStatus),
-                  evidenceIDs: try values.decode([String].self, forKey: .evidenceIDs),
-                  formulaTeX: try values.decodeIfPresent(String.self, forKey: .formulaTeX),
-                  derivationSteps: try values.decodeIfPresent([String].self, forKey: .derivationSteps) ?? [],
-                  conclusionZH: try values.decodeIfPresent(String.self, forKey: .conclusionZH))
+        let textZH = try values.decode(String.self, forKey: .textZH)
+        let epistemicStatus = try values.decode(EpistemicStatus.self, forKey: .epistemicStatus)
+        let evidenceIDs = try values.decode([String].self, forKey: .evidenceIDs)
+        let formulaTeX = try values.decodeIfPresent(String.self, forKey: .formulaTeX)
+        let equationID = try values.decodeIfPresent(String.self, forKey: .equationID)
+        let derivationSteps = try values.decodeIfPresent([String].self, forKey: .derivationSteps) ?? []
+        let formulaDerivationSteps = try values.decodeIfPresent([FormulaDerivationStep].self, forKey: .formulaDerivationSteps) ?? []
+        let conclusionZH = try values.decodeIfPresent(String.self, forKey: .conclusionZH)
+        let derivationSegment = try values.decodeIfPresent(FormulaDerivationSegmentMetadata.self, forKey: .derivationSegment)
+        let derivationSegmentProvenanceHash = try values.decodeIfPresent(String.self, forKey: .derivationSegmentProvenanceHash)
+        let id: UUID
+        if let explicitID = try values.decodeIfPresent(UUID.self, forKey: .id) {
+            id = explicitID
+        } else {
+            let identity = LegacyEvidenceClaimIdentity(
+                identityVersion: 1,
+                codingPath: decoder.codingPath.map { key in
+                    key.intValue.map { "\(key.stringValue)#\($0)" } ?? key.stringValue
+                },
+                textZH: textZH,
+                epistemicStatus: epistemicStatus,
+                evidenceIDs: evidenceIDs,
+                formulaTeX: formulaTeX,
+                equationID: equationID,
+                derivationSteps: derivationSteps,
+                formulaDerivationSteps: formulaDerivationSteps,
+                conclusionZH: conclusionZH,
+                derivationSegment: derivationSegment,
+                derivationSegmentProvenanceHash: derivationSegmentProvenanceHash
+            )
+            id = try identity.stableUUID()
+        }
+        self.init(id: id, textZH: textZH, epistemicStatus: epistemicStatus, evidenceIDs: evidenceIDs,
+                  formulaTeX: formulaTeX, equationID: equationID, derivationSteps: derivationSteps,
+                  formulaDerivationSteps: formulaDerivationSteps, conclusionZH: conclusionZH,
+                  derivationSegment: derivationSegment,
+                  derivationSegmentProvenanceHash: derivationSegmentProvenanceHash)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(textZH, forKey: .textZH)
+        try values.encode(epistemicStatus, forKey: .epistemicStatus)
+        try values.encode(evidenceIDs, forKey: .evidenceIDs)
+        try values.encodeIfPresent(formulaTeX, forKey: .formulaTeX)
+        try values.encodeIfPresent(equationID, forKey: .equationID)
+        try values.encode(derivationSteps, forKey: .derivationSteps)
+        if !formulaDerivationSteps.isEmpty {
+            try values.encode(formulaDerivationSteps, forKey: .formulaDerivationSteps)
+        }
+        try values.encodeIfPresent(conclusionZH, forKey: .conclusionZH)
+        try values.encodeIfPresent(derivationSegment, forKey: .derivationSegment)
+        try values.encodeIfPresent(derivationSegmentProvenanceHash, forKey: .derivationSegmentProvenanceHash)
     }
 }
 
@@ -377,6 +587,11 @@ struct EvidenceInsightArtifact: Codable, Hashable, Identifiable, Sendable {
     let payloadHash: String
     let payloadByteCount: Int
     let payloadScalarCount: Int
+    /// The exact local ar5iv equation inventory bound to this artifact.  Both
+    /// fields default on decode so old cached "important formula" artifacts
+    /// remain readable but cannot impersonate a verified complete result.
+    let numberedEquationIDs: [String]
+    let numberedEquationCoverageComplete: Bool
     var isStale: Bool
     var id: String { cacheKey }
 
@@ -384,7 +599,9 @@ struct EvidenceInsightArtifact: Codable, Hashable, Identifiable, Sendable {
          createdAt: Date, retrievalQuery: String = "paper title terms", rankerVersion: String = "local-title-token-v1",
          selectedChunkIDs: [String]? = nil, promptVersion: String = EvidenceInsightPrompt.version,
          schemaVersion: String = PaperInsightV2Validator.schemaVersion, payloadHash: String = "",
-         payloadByteCount: Int = 0, payloadScalarCount: Int = 0, isStale: Bool = false) {
+         payloadByteCount: Int = 0, payloadScalarCount: Int = 0,
+         numberedEquationIDs: [String] = [], numberedEquationCoverageComplete: Bool = false,
+         isStale: Bool = false) {
         self.cacheKey = cacheKey
         self.paperID = paperID
         self.documentHash = documentHash
@@ -399,12 +616,15 @@ struct EvidenceInsightArtifact: Codable, Hashable, Identifiable, Sendable {
         self.payloadHash = payloadHash
         self.payloadByteCount = payloadByteCount
         self.payloadScalarCount = payloadScalarCount
+        self.numberedEquationIDs = numberedEquationIDs
+        self.numberedEquationCoverageComplete = numberedEquationCoverageComplete
         self.isStale = isStale
     }
 
     private enum CodingKeys: String, CodingKey {
         case cacheKey, paperID, documentHash, chunkIDs, insight, createdAt, retrievalQuery, rankerVersion
-        case selectedChunkIDs, promptVersion, schemaVersion, payloadHash, payloadByteCount, payloadScalarCount, isStale
+        case selectedChunkIDs, promptVersion, schemaVersion, payloadHash, payloadByteCount, payloadScalarCount
+        case numberedEquationIDs, numberedEquationCoverageComplete, isStale
     }
 
     init(from decoder: Decoder) throws {
@@ -423,7 +643,51 @@ struct EvidenceInsightArtifact: Codable, Hashable, Identifiable, Sendable {
                   payloadHash: try values.decodeIfPresent(String.self, forKey: .payloadHash) ?? "",
                   payloadByteCount: try values.decodeIfPresent(Int.self, forKey: .payloadByteCount) ?? 0,
                   payloadScalarCount: try values.decodeIfPresent(Int.self, forKey: .payloadScalarCount) ?? 0,
+                  numberedEquationIDs: try values.decodeIfPresent([String].self, forKey: .numberedEquationIDs) ?? [],
+                  numberedEquationCoverageComplete: try values.decodeIfPresent(Bool.self, forKey: .numberedEquationCoverageComplete) ?? false,
                   isStale: try values.decodeIfPresent(Bool.self, forKey: .isStale) ?? false)
+    }
+}
+
+/// Non-secret identity captured with a completed evidence artifact before its
+/// final library write. Provider credentials and raw endpoint URLs are never
+/// persisted here; the profile and settings are represented by a stable hash.
+struct EvidenceInsightPublicationContext: Codable, Hashable, Sendable {
+    let cacheKey: String
+    let paperID: Int
+    let documentHash: String
+    let inventoryHash: String
+    let sourcePayloadHash: String
+    let provider: String
+    let providerProfileFingerprint: String
+    let modelID: String
+    let promptVersion: String
+    let schemaVersion: String
+    let sourceScope: String
+
+    var analysisRunID: String { Self.analysisRunID(cacheKey: cacheKey) }
+    static func analysisRunID(cacheKey: String) -> String {
+        "evidence-insight-publication:\(StableHash.sha256(cacheKey))"
+    }
+}
+
+/// A fully validated artifact that is durable but not yet visible in the
+/// library's normal evidence-artifact collection.
+struct ReadyEvidenceInsightPublication: Codable, Hashable, Sendable {
+    let context: EvidenceInsightPublicationContext
+    let artifact: EvidenceInsightArtifact
+
+    var hasConsistentIdentity: Bool {
+        let equationIDs = artifact.insight.physics.importantFormulaDerivations.compactMap(\.equationID)
+        return !context.cacheKey.isEmpty && context.paperID == artifact.paperID &&
+            context.cacheKey == artifact.cacheKey && context.documentHash == artifact.documentHash &&
+            context.sourcePayloadHash == artifact.payloadHash &&
+            context.promptVersion == artifact.promptVersion && context.schemaVersion == artifact.schemaVersion &&
+            context.sourceScope == artifact.insight.sourceScope && artifact.insight.schemaVersion == context.schemaVersion &&
+            artifact.numberedEquationCoverageComplete && !artifact.isStale &&
+            artifact.chunkIDs == artifact.selectedChunkIDs &&
+            Set(artifact.numberedEquationIDs).count == artifact.numberedEquationIDs.count &&
+            equationIDs == artifact.numberedEquationIDs
     }
 }
 
