@@ -7,6 +7,14 @@ not certify the current source tree.
 
 ## Unreleased — Reference_manager 2.0 / v5 in progress
 
+- 2026-10-18 exact-cap author-index recovery (Build 205): a partition is now
+  split as soon as `hits.total` reaches 10,000, including when a service or
+  proxy omits `links.next` at the paging boundary. Parent probe rows are not
+  staged, adjacent child ranges remain resumable, and pagination identity
+  advances to revision 6 so Build 204 checkpoints restart under the corrected
+  boundary rule. This closes the exact-cap/no-next-link case that the previous
+  Build 204 regression suite did not cover.
+
 - 2026-10-18 saturated author-index window fix (Build 204): a page-41 link
   now triggers recursive control-number partitioning even when INSPIRE caps
   `hits.total` at 10,000 or omits `size` from the link. The parent probe rows

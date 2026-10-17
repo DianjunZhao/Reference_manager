@@ -341,10 +341,10 @@ struct InspireClient: Sendable {
         let advertisedNextPage = advertisedNextComponents
             .flatMap { Int($0.queryItems?.first(where: { $0.name == "page" })?.value ?? "") }
         let nextBeyondWindow = advertisedNextPage.map { $0 > maximumPageNumber } ?? false
-        // INSPIRE or an intervening proxy can cap `hits.total` at 10,000 or
-        // omit/rewrite `size` in its next link. A page-41 link is still direct
-        // evidence that this partition cannot be completed inside the service
-        // window, even when the reported total is exactly 10,000.
+        // INSPIRE or an intervening proxy can cap `hits.total` at 10,000 and
+        // omit/rewrite `size` or even `links.next`. Reaching the cap is
+        // ambiguous even when page 40 looks terminal, so split before treating
+        // the parent range as complete; a page-41 link is additional evidence.
         let windowHasAdvertisedMore = pageNumber >= maximumPageNumber && responsePage.links?.next != nil
         let advertisedDataBeyondWindow = nextBeyondWindow || windowHasAdvertisedMore
         // INSPIRE rejects offsets beyond its 10,000-result window. Split an
@@ -353,7 +353,7 @@ struct InspireClient: Sendable {
         // itself is deliberately discarded: its rows will be returned by the
         // children, so staging the parent page would double-count them.
         if let currentRange, let cursorState,
-           (responsePage.hits.total > Self.maximumAuthorCandidateResultsPerPartition || advertisedDataBeyondWindow) {
+           (responsePage.hits.total >= Self.maximumAuthorCandidateResultsPerPartition || advertisedDataBeyondWindow) {
             guard let split = currentRange.split(openRangeWindow: Self.openAuthorRangeWindow) else {
                 throw incompleteAuthorPartitionError(currentRange)
             }

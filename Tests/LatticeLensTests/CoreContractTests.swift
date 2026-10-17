@@ -47,6 +47,9 @@ final class CoreContractTests: XCTestCase {
                                                                    profile: persistedProfile))
         XCTAssertTrue(persistedProfile.provenance.contains("query-v\(ArxivCategoryQueryBuilder.revision)"))
         XCTAssertTrue(persistedProfile.provenance.contains("pagination-v\(AuthorCandidatePaginationContract.revision)"))
+        XCTAssertEqual(AuthorCandidatePaginationContract.revision, 6,
+                       "the capped-total recovery must invalidate Build 204's resumable pagination identity")
+        XCTAssertFalse(persistedProfile.checkpointIdentity.contains("pagination-v5"))
 
         _ = try await client.authorCandidatesPage()
         let capturedURL = await transport.url(at: 0)
@@ -793,6 +796,31 @@ final class CoreContractTests: XCTestCase {
             .contains("control_number:[1000000 TO 1124999]") == true)
         XCTAssertEqual(childItems.first(where: { $0.name == "page" })?.value, "1")
         XCTAssertNotNil(childURL.fragment, "the remaining sibling range must survive as a durable cursor")
+        let requestCount = await transport.requestCount()
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    func testAuthorCandidateWindowBoundarySplitsAtCappedTotalWithoutNextLink() async throws {
+        let payload = Data(#"{"hits":{"hits":[{"id":999002,"metadata":{"name":{"value":"Probe, Must Not Persist"},"arxiv_categories":["hep-lat"]}}],"total":10000},"links":{}}"#.utf8)
+        let transport = ScriptedHTTPTransport([.init(data: payload, statusCode: 200, headers: nil)])
+        let client = InspireClient(transport: transport)
+        let page40 = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-ph%20OR%20arxiv_categories:hep-th)%20AND%20control_number:%5B1000000%20TO%201249999%5D&size=250&page=40"))
+
+        let result = try await client.authorCandidatesPage(
+            nextURL: page40,
+            categories: [.hepLat, .hepPh, .hepTh]
+        )
+
+        XCTAssertTrue(result.authors.isEmpty,
+                      "a capped page at the last legal offset must not be published as a complete parent partition")
+        XCTAssertEqual(result.total, 10_000)
+        let childURL = try XCTUnwrap(result.nextURL,
+                                     "a capped total remains ambiguous even when the service omits links.next")
+        let childItems = URLComponents(url: childURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(childItems.first(where: { $0.name == "q" })?.value?
+            .contains("control_number:[1000000 TO 1124999]") == true)
+        XCTAssertEqual(childItems.first(where: { $0.name == "page" })?.value, "1")
+        XCTAssertNotNil(childURL.fragment, "the sibling range must survive in the durable cursor")
         let requestCount = await transport.requestCount()
         XCTAssertEqual(requestCount, 1)
     }
