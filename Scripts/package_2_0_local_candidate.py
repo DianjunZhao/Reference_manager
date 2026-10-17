@@ -24,6 +24,10 @@ from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "Scripts"))
+from release_identity import current_product_identity
+
+PRODUCT_VERSION, BUILD_NUMBER = current_product_identity(ROOT)
 OUTPUT = ROOT / "release-assets" / "Release-2.0.0-local"
 G09_ARTIFACT_CHECKS = (
     "dmg_verify",
@@ -701,10 +705,10 @@ def app_identity(app):
         fail("app bundle is missing its Info.plist or AppIcon")
     with info_path.open("rb") as stream:
         info = plistlib.load(stream)
-    if (info.get("CFBundleShortVersionString") != "2.0.0" or
-            info.get("CFBundleVersion") != "203" or
+    if (info.get("CFBundleShortVersionString") != PRODUCT_VERSION or
+            info.get("CFBundleVersion") != str(BUILD_NUMBER) or
             info.get("CFBundleIdentifier") != "org.latticelens.app"):
-        fail("app identity does not match LatticeLens 2.0.0 (203)")
+        fail(f"app identity does not match LatticeLens {PRODUCT_VERSION} ({BUILD_NUMBER})")
     executable = info.get("CFBundleExecutable")
     binary = app / "Contents" / "MacOS" / str(executable)
     if not binary.is_file():
@@ -757,10 +761,10 @@ def main(arguments=None):
     migration = load_json(migration_path)
 
     if (validation.get("schema_version") != "latticelens-verify-2.0-final-local" or
-            validation.get("product_version") != "2.0.0" or
-            validation.get("build_number") != 203 or
+            validation.get("product_version") != PRODUCT_VERSION or
+            validation.get("build_number") != BUILD_NUMBER or
             validation.get("verdict") != "PARTIAL_NOT_FINAL"):
-        fail("this packager requires a current 2.0.0 (203) PARTIAL_NOT_FINAL receipt")
+        fail(f"this packager requires a current {PRODUCT_VERSION} ({BUILD_NUMBER}) PARTIAL_NOT_FINAL receipt")
     manifest_hash = validation.get("input_manifest_sha256")
     if (input_manifest_path.relative_to(ROOT).as_posix() != validation.get("input_manifest_path") or
             sha256(input_manifest_path) != manifest_hash):
@@ -1049,8 +1053,8 @@ def main(arguments=None):
             "run_id": run_id,
             "generated_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "artifact_class": "same_mac_local_ad_hoc_candidate",
-            "product_version": "2.0.0",
-            "build_number": 203,
+            "product_version": PRODUCT_VERSION,
+            "build_number": BUILD_NUMBER,
             "minimum_macos": "14.0",
             "bundle_id": "org.latticelens.app",
             "signature_class": "ad_hoc_local",

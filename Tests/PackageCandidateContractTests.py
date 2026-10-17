@@ -20,6 +20,22 @@ SPEC.loader.exec_module(PACKAGE_CANDIDATE)
 
 
 class PackageCandidateContractTests(unittest.TestCase):
+    def test_packager_release_identity_matches_the_xcode_project(self):
+        self.assertEqual(PACKAGE_CANDIDATE.current_product_identity(ROOT), ("2.0.0", 204))
+        self.assertEqual((PACKAGE_CANDIDATE.PRODUCT_VERSION, PACKAGE_CANDIDATE.BUILD_NUMBER),
+                         PACKAGE_CANDIDATE.current_product_identity(ROOT))
+
+        with tempfile.TemporaryDirectory(dir=ROOT, prefix=".codex-task-tmp-release-identity-") as temporary:
+            project = Path(temporary) / "LatticeLens.xcodeproj"
+            project.mkdir()
+            (project / "project.pbxproj").write_text(
+                "MARKETING_VERSION = 2.0.0; INFOPLIST_KEY_CFBundleShortVersionString = 2.0.0; "
+                "CURRENT_PROJECT_VERSION = 204; INFOPLIST_KEY_CFBundleVersion = 205;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "build numbers disagree"):
+                PACKAGE_CANDIDATE.current_product_identity(Path(temporary))
+
     @staticmethod
     def _candidate_output_snapshot():
         candidate = ROOT / "release-assets" / "Release-2.0.0-local"

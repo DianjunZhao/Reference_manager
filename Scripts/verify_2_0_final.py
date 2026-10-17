@@ -21,6 +21,10 @@ from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "Scripts"))
+from release_identity import current_product_identity
+
+PRODUCT_VERSION, BUILD_NUMBER = current_product_identity(ROOT)
 REPORT_PATH = ROOT / "evidence" / "Validation-2.0-final-local.json"
 SUMMARY_PATH = ROOT / "VALIDATION_2.0_FINAL.md"
 MANUAL_ACCEPTANCE_PATH = ROOT / "evidence" / "ManualAcceptance-2.0-final-local.json"
@@ -2503,8 +2507,10 @@ def validate_v12_performance_report(path, expected_manifest_hash):
     if not isinstance(build, dict):
         build = {}
         errors.append("The benchmark build identity is missing or malformed.")
-    if build.get("configuration") != "SwiftPM-debug-XCTest" or build.get("product_version") != "2.0.0" or build.get("build_number") != 203:
-        errors.append("The benchmark build identity does not match the current 2.0.0 (203) fixture build.")
+    if (build.get("configuration") != "SwiftPM-debug-XCTest" or
+            build.get("product_version") != PRODUCT_VERSION or
+            build.get("build_number") != BUILD_NUMBER):
+        errors.append(f"The benchmark build identity does not match the current {PRODUCT_VERSION} ({BUILD_NUMBER}) fixture build.")
     machine = value.get("machine", {})
     if not isinstance(machine, dict) or not isinstance(machine.get("architecture"), str) or not machine.get("operating_system"):
         errors.append("The benchmark is missing its machine architecture or operating-system identity.")
@@ -3717,8 +3723,8 @@ def main():
         "report_path": report_path.relative_to(ROOT).as_posix(),
         "summary_path": summary_path.relative_to(ROOT).as_posix(),
         "recorded_at_utc": now,
-        "product_version": "2.0.0",
-        "build_number": 203,
+        "product_version": PRODUCT_VERSION,
+        "build_number": BUILD_NUMBER,
         "input_manifest_sha256": manifest_hash,
         "input_manifest_path": manifest_path.relative_to(ROOT).as_posix(),
         "input_file_count": len(manifest_entries),

@@ -7,6 +7,15 @@ not certify the current source tree.
 
 ## Unreleased — Reference_manager 2.0 / v5 in progress
 
+- 2026-10-18 saturated author-index window fix (Build 204): a page-41 link
+  now triggers recursive control-number partitioning even when INSPIRE caps
+  `hits.total` at 10,000 or omits `size` from the link. The parent probe rows
+  are discarded, sibling work remains in the checkpoint, and pagination
+  identity advances to revision 5 so an older incomplete generation is not
+  resumed under the repaired contract. The packager and verifier now derive
+  version/build identity from the Xcode project and reject inconsistent app
+  bundle settings.
+
 - 2026-10-17 author-index window recovery (Build 203): page-window limits now
   follow the effective request size, so a recovered `size=100` request may
   continue through page 100 while respecting INSPIRE's 10,000-result offset

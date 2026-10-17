@@ -4,6 +4,7 @@
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -479,6 +480,13 @@ class OldAppRollbackProcessCleanupTests(unittest.TestCase):
 
 
 class InputManifestContractTests(unittest.TestCase):
+    def test_verifier_and_benchmark_fixture_share_the_project_release_identity(self):
+        self.assertEqual((VERIFIER.PRODUCT_VERSION, VERIFIER.BUILD_NUMBER), ("2.0.0", 204))
+        source = (ROOT / "Tests" / "LatticeLensTests" / "V4BenchmarkTests.swift").read_text(encoding="utf-8")
+        match = re.search(r'"build_number":\s*(\d+)', source)
+        self.assertIsNotNone(match)
+        self.assertEqual(int(match.group(1)), VERIFIER.BUILD_NUMBER)
+
     def test_frozen_inputs_include_both_implementation_plans(self):
         inputs = {path.resolve() for path in VERIFIER.input_paths()}
         required = {
