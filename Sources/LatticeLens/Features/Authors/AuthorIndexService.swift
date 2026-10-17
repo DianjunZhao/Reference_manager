@@ -297,7 +297,7 @@ struct AuthorIndexService: Sendable {
     static let candidateQuery = "arxiv_categories:hep-lat OR arxiv_categories:hep-th"
     /// Frozen 1.0 identity retained only for the explicitly selected legacy
     /// convenience initializer below. New 2.0 jobs use all three revisions.
-    static let candidateQueryCheckpoint = candidateQuery + " [pagination:control-number-v2]"
+    static let candidateQueryCheckpoint = candidateQuery + " [pagination:control-number-v3]"
     static let candidateJobID = "author-candidates:hep-lat-or-hep-th"
     static let hIndexJobID = "author-h-index:hep-lat-or-hep-th"
     /// 2.0's configurable category contract.  The legacy constants above are
@@ -320,11 +320,10 @@ struct AuthorIndexService: Sendable {
     static func hIndexJobID(for categories: Set<SupportedArxivCategory>) -> String {
         CategoryProfile(categories: categories).jobID(kind: "author-h-index")
     }
-    /// The API permits at most 40 250-row pages in a control-number range.
-    /// Keep the global guard aligned with all explicit partitions rather than
-    /// the old 100-page value, which would fail closed after only a subset if
-    /// future author ranges become denser.
-    private static let maximumCandidatePages = 7 * 40
+    /// Bound one foreground run without making a dense, adaptively split
+    /// generation permanently unresumable. `completedPages` remains durable;
+    /// this per-run budget resets on the next explicit resume.
+    private static let maximumCandidatePagesPerRun = 512
 
     let client: InspireClient
     let store: any LibraryStoring
@@ -452,13 +451,15 @@ struct AuthorIndexService: Sendable {
         // before the first network request.  A relaunch can therefore resume
         // the same stable ID without exposing staging membership.
         try await store.commitAuthorIndexState(checkpoint: checkpoint, generation: generation)
+        var pagesThisRun = 0
         do {
             repeat {
                 try Task.checkCancellation()
-                guard checkpoint.completedPages < Self.maximumCandidatePages else { throw LatticeLensError.paginationLimitExceeded }
+                guard pagesThisRun < Self.maximumCandidatePagesPerRun else { throw LatticeLensError.paginationLimitExceeded }
                 let page = try await client.authorCandidatesPage(nextURL: checkpoint.nextURL, categories: categoryProfile.categories)
                 checkpoint.stagingMembership.formUnion(page.authors.map(\.recid))
                 checkpoint.completedPages += 1
+                pagesThisRun += 1
                 checkpoint.successfulRecords += page.authors.count
                 checkpoint.nextURL = page.nextURL
                 checkpoint.updatedAt = Date()

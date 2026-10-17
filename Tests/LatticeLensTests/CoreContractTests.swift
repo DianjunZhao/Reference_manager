@@ -556,15 +556,85 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(viewModel.syncStatus.phase, .failed)
     }
 
-    func testAuthorCandidatePaginationRefusesAnOverWindowPartitionInsteadOfSkippingItsRemainder() async throws {
-        // A partition advertising more than the 10,000-result window cannot
-        // be replaced by the next range: that would silently omit authors.
-        let page = #"{"hits":{"hits":[],"total":10001},"links":{"next":"https://inspirehep.net/api/authors/?q=old&page=41&size=250"}}"#
-        let client = InspireClient(transport: SequentialTransport([Data(page.utf8)]))
+    func testAuthorCandidatePaginationSplitsOverWindowRangeAndPersistsResumeCursor() async throws {
+        let overWindow = Data(#"{"hits":{"hits":[{"id":99,"metadata":{"name":{"value":"Probe, Must Not Persist"},"arxiv_categories":["hep-lat"]}}],"total":17477},"links":{"next":"https://inspirehep.net/api/authors/?page=41&size=250"}}"#.utf8)
+        let left = Data(#"{"hits":{"hits":[{"id":101,"metadata":{"name":{"value":"Left, Child"},"arxiv_categories":["hep-ph"]}}],"total":1},"links":{}}"#.utf8)
+        let right = Data(#"{"hits":{"hits":[{"id":102,"metadata":{"name":{"value":"Right, Child"},"arxiv_categories":["hep-lat"]}}],"total":1},"links":{}}"#.utf8)
+        let transport = ScriptedHTTPTransport([
+            .init(data: overWindow, statusCode: 200, headers: nil),
+            .init(data: left, statusCode: 200, headers: nil),
+            .init(data: right, statusCode: 200, headers: nil)
+        ])
+        let client = InspireClient(transport: transport)
+        let categories: Set<SupportedArxivCategory> = [.hepLat, .hepPh, .hepTh]
+
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "inspirehep.net"
+        components.path = "/api/authors/"
+        components.queryItems = [
+            URLQueryItem(name: "q", value: "(arxiv_categories:hep-lat OR arxiv_categories:hep-ph OR arxiv_categories:hep-th) AND control_number:[1000000 TO 1249999]"),
+            URLQueryItem(name: "size", value: "250"),
+            URLQueryItem(name: "page", value: "1")
+        ]
+        let sourceURL = try XCTUnwrap(components.url)
+        let probe = try await client.authorCandidatesPage(nextURL: sourceURL, categories: categories)
+
+        XCTAssertTrue(probe.authors.isEmpty, "the over-window probe page must not be staged before its children are scanned")
+        XCTAssertEqual(probe.total, 17_477)
+        let leftCursor = try XCTUnwrap(probe.nextURL)
+        let leftItems = URLComponents(url: leftCursor, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(leftItems.first(where: { $0.name == "q" })?.value?.contains("control_number:[1000000 TO 1124999]") == true)
+        XCTAssertTrue(leftItems.first(where: { $0.name == "q" })?.value?.contains("arxiv_categories:hep-th") == true)
+        XCTAssertEqual(leftItems.first(where: { $0.name == "page" })?.value, "1")
+        XCTAssertNotNil(leftCursor.fragment, "the right child must survive in the durable cursor")
+
+        let encodedCheckpoint = try JSONEncoder().encode(SyncCheckpoint(
+            jobID: "author-candidates:cursor-test",
+            jobKind: "author-candidates",
+            query: CategoryProfile(categories: categories).checkpointIdentity,
+            nextURL: leftCursor
+        ))
+        let restoredCheckpoint = try JSONDecoder().decode(SyncCheckpoint.self, from: encodedCheckpoint)
+        XCTAssertEqual(restoredCheckpoint.nextURL, leftCursor,
+                       "a persisted checkpoint must retain the adaptive partition queue")
+
+        let firstChild = try await client.authorCandidatesPage(nextURL: try XCTUnwrap(restoredCheckpoint.nextURL), categories: categories)
+        XCTAssertEqual(firstChild.authors.map(\.recid), [101])
+        let requestWithoutCursor = await transport.url(at: 1)
+        XCTAssertNil(requestWithoutCursor?.fragment, "the internal continuation token must never be sent to INSPIRE")
+        let rightCursor = try XCTUnwrap(firstChild.nextURL)
+        let rightItems = URLComponents(url: rightCursor, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(rightItems.first(where: { $0.name == "q" })?.value?.contains("control_number:[1125000 TO 1249999]") == true)
+
+        let secondChild = try await client.authorCandidatesPage(nextURL: rightCursor, categories: categories)
+        XCTAssertEqual(secondChild.authors.map(\.recid), [102])
+        let followingBaseItems = URLComponents(url: try XCTUnwrap(secondChild.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(followingBaseItems.first(where: { $0.name == "q" })?.value?.contains("control_number:[1250000 TO 1499999]") == true)
+        let requests = await transport.requestCount()
+        XCTAssertEqual(requests, 3)
+        for index in 0..<requests {
+            let requestURL = await transport.url(at: index)
+            XCTAssertNil(requestURL?.fragment)
+        }
+    }
+
+    func testAuthorCandidatePaginationRejectsSplitRangeWhenItsResumeTokenIsRemoved() async throws {
+        let overWindow = Data(#"{"hits":{"hits":[],"total":10001},"links":{}}"#.utf8)
+        let client = InspireClient(transport: SequentialTransport([overWindow]))
+        let split = try await client.authorCandidatesPage()
+        let cursor = try XCTUnwrap(split.nextURL)
+        var components = try XCTUnwrap(URLComponents(url: cursor, resolvingAgainstBaseURL: false))
+        components.fragment = nil
+        let strippedCursor = try XCTUnwrap(components.url)
+        let emptyTransport = ScriptedHTTPTransport([])
+
         await XCTAssertThrowsLatticeLensError(
-            { try await client.authorCandidatesPage() },
-            expected: .incompleteAuthorPartition(lowerBound: 0, upperBound: 999_999)
+            { try await InspireClient(transport: emptyTransport).authorCandidatesPage(nextURL: strippedCursor) },
+            expected: .malformedPayload
         )
+        let requestCount = await emptyTransport.requestCount()
+        XCTAssertEqual(requestCount, 0, "a split range without its pending siblings cannot be resumed safely")
     }
 
     func testAuthorCandidatePaginationRejectsWrongCategoryCheckpointBeforeTransport() async throws {
@@ -598,15 +668,21 @@ final class CoreContractTests: XCTestCase {
         XCTAssertEqual(query.first(where: { $0.name == "page" })?.value, "2")
     }
 
-    func testAuthorCandidatePaginationRejectsAnOverWindowOpenEndedTail() async throws {
-        let payload = #"{"hits":{"hits":[],"total":10001},"links":{"next":"https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-ph)%20AND%20control_number%3A%5B3000000%20TO%20%2A%5D&size=250&page=41"}}"#
-        let tailPage40 = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories%3Ahep-lat%20OR%20arxiv_categories%3Ahep-ph)%20AND%20control_number%3A%5B3000000%20TO%20%2A%5D&size=250&page=40"))
-        let client = InspireClient(transport: SequentialTransport([Data(payload.utf8)]))
+    func testAuthorCandidatePaginationSplitsOpenEndedTailIntoFiniteWindowAndRemainingTail() async throws {
+        let overWindow = Data(#"{"hits":{"hits":[],"total":10001},"links":{}}"#.utf8)
+        let finiteWindow = Data(#"{"hits":{"hits":[],"total":0},"links":{}}"#.utf8)
+        let client = InspireClient(transport: SequentialTransport([overWindow, finiteWindow]))
+        let tailURL = try XCTUnwrap(URL(string: "https://inspirehep.net/api/authors/?q=(arxiv_categories:hep-lat%20OR%20arxiv_categories:hep-ph)%20AND%20control_number:%5B3000000%20TO%20%2A%5D&size=250&page=40"))
 
-        await XCTAssertThrowsLatticeLensError(
-            { try await client.authorCandidatesPage(nextURL: tailPage40) },
-            expected: .incompleteAuthorPartition(lowerBound: 3_000_000, upperBound: nil)
-        )
+        let split = try await client.authorCandidatesPage(nextURL: tailURL)
+        let finiteCursor = try XCTUnwrap(split.nextURL)
+        let finiteItems = URLComponents(url: finiteCursor, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(finiteItems.first(where: { $0.name == "q" })?.value?.contains("control_number:[3000000 TO 3249999]") == true)
+
+        let completedFiniteWindow = try await client.authorCandidatesPage(nextURL: finiteCursor)
+        XCTAssertTrue(completedFiniteWindow.authors.isEmpty)
+        let openTailItems = URLComponents(url: try XCTUnwrap(completedFiniteWindow.nextURL), resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertTrue(openTailItems.first(where: { $0.name == "q" })?.value?.contains("control_number:[3250000 TO *]") == true)
     }
 
     func testAuthorCandidatePaginationStopsAtPartialLivePageAndAdvancesPartition() async throws {

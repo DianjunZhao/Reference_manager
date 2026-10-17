@@ -119,7 +119,7 @@ final class V2RecoveryTests: XCTestCase {
         XCTAssertEqual(completed?.stagingMembership, [existing.recid, 81])
     }
 
-    func testIncompleteAuthorPartitionPausesAndPreservesTheLastCompletedGeneration() async throws {
+    func testOverWindowAuthorPartitionPersistsSplitCursorResumesAndKeepsPriorGeneration() async throws {
         let store = InMemoryLibraryStore()
         let existingRecid = 91
         var existing = makeAuthor(recid: existingRecid, name: "Previous, Qualified")
@@ -161,22 +161,51 @@ final class V2RecoveryTests: XCTestCase {
         try await store.save(checkpoint: previousCheckpoint)
         try await store.applyV3(.saveGeneration(previousGeneration))
 
-        let overWindow = Data(#"{"hits":{"hits":[],"total":10001},"links":{"next":"https://inspirehep.net/api/authors/?page=41&size=250"}}"#.utf8)
+        let overWindow = Data(#"{"hits":{"hits":[{"id":999,"metadata":{"name":{"value":"Probe, Must Not Persist"},"arxiv_categories":["hep-lat"]}}],"total":10001},"links":{"next":"https://inspirehep.net/api/authors/?page=41&size=250"}}"#.utf8)
+        let interruptedTransport = SequentialTransport([overWindow])
         let service = AuthorIndexService(
-            client: InspireClient(transport: SequentialTransport([overWindow])),
+            client: InspireClient(transport: interruptedTransport),
             store: store
         )
         let progress = try await service.rebuildCandidateIndex()
 
         XCTAssertEqual(progress.state, .paused)
-        XCTAssertTrue(progress.failureReason?.contains("control_number:[0 TO 999999]") == true)
-        XCTAssertTrue(progress.failureReason?.contains("10,000") == true)
+        let paused = try await store.checkpoint(jobID: baselineService.configuredCandidateJobID)
+        XCTAssertEqual(paused?.state, .paused)
+        XCTAssertEqual(paused?.completedPages, 1, "the over-window response is a split probe, not an author page")
+        let splitCursor = try XCTUnwrap(paused?.nextURL)
+        XCTAssertNotNil(splitCursor.fragment)
+        let splitQuery = URLComponents(url: splitCursor, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "q" })?.value
+        XCTAssertTrue(splitQuery?.contains("control_number:[0 TO 499999]") == true)
         let snapshot = await store.snapshot()
         XCTAssertEqual(snapshot.authorIndexGenerations[previousID]?.state, .completed)
         XCTAssertEqual(snapshot.authorIndexGenerations[previousID]?.activeMembership, [existingRecid])
         XCTAssertEqual(snapshot.authors[existingRecid]?.hIndexState, .qualified)
-        let paused = try await store.checkpoint(jobID: baselineService.configuredCandidateJobID)
-        XCTAssertEqual(paused?.state, .paused)
+        XCTAssertNil(snapshot.authors[999], "the probe page must not leak a potentially duplicated hit into staging")
+
+        let left = Data(#"{"hits":{"hits":[{"id":92,"metadata":{"name":{"value":"Left, Recovered"},"arxiv_categories":["hep-ph"]}}],"total":1},"links":{}}"#.utf8)
+        let right = Data(#"{"hits":{"hits":[{"id":93,"metadata":{"name":{"value":"Right, Recovered"},"arxiv_categories":["hep-lat"]}}],"total":1},"links":{}}"#.utf8)
+        let empty = Data(#"{"hits":{"hits":[],"total":0},"links":{}}"#.utf8)
+        let resumedTransport = SequentialTransport([left, right] + Array(repeating: empty, count: 6))
+        let resumedService = AuthorIndexService(
+            client: InspireClient(transport: resumedTransport),
+            store: store
+        )
+        let resumedProgress = try await resumedService.rebuildCandidateIndex()
+
+        XCTAssertEqual(resumedProgress.state, .active)
+        let completed = try await store.checkpoint(jobID: baselineService.configuredCandidateJobID)
+        XCTAssertEqual(completed?.state, .completed)
+        XCTAssertEqual(completed?.completedPages, 9)
+        XCTAssertEqual(completed?.stagingMembership, [92, 93])
+        let finalSnapshot = await store.snapshot()
+        XCTAssertEqual(finalSnapshot.authorIndexGenerations[previousID]?.state, .completed)
+        XCTAssertEqual(finalSnapshot.authorIndexGenerations[previousID]?.activeMembership, [existingRecid])
+        XCTAssertEqual(finalSnapshot.authors[existingRecid]?.hIndexState, .qualified)
+        XCTAssertNil(finalSnapshot.authors[999])
+        XCTAssertNotNil(finalSnapshot.authors[92])
+        XCTAssertNotNil(finalSnapshot.authors[93])
     }
 
     func testCandidateResumeSkipsCompletedPagesWhenOnlyHIndexRetryRemains() async throws {

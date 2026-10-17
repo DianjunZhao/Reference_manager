@@ -2,11 +2,11 @@
 
 ## Current status
 
-The current target is **LatticeLens 2.0.0 (201)**. It remains a project-local development candidate, not a final release. The checked-in [VALIDATION_2.0_FINAL.md](VALIDATION_2.0_FINAL.md) and `evidence/Validation-2.0-final-local.json` are historical receipts until explicitly regenerated. Prefer the newest run-specific Markdown/JSON report and its matching `*-inputs.json`; treat any receipt as current only when its frozen input manifest matches the source snapshot being evaluated.
+The current target is **LatticeLens 2.0.0 (202)**. It remains a project-local development candidate, not a final release. The checked-in [VALIDATION_2.0_FINAL.md](VALIDATION_2.0_FINAL.md) and `evidence/Validation-2.0-final-local.json` are historical receipts until explicitly regenerated. Prefer the newest run-specific Markdown/JSON report and its matching `*-inputs.json`; treat any receipt as current only when its frozen input manifest matches the source snapshot being evaluated.
 
 The final verifier places its managed SwiftPM/Xcode build products, test stores, fixture caches, temporary roots, logs, and result bundles under a unique project-local scratch. `TMPDIR` is provided to child tools, but Foundation/XCTest may resolve their system temporary directory independently; application/test data therefore uses explicit project-local roots and fails closed when an isolated store root is missing. This does not claim control over OS-managed XCTest state.
 
-Fresh category profiles default to `hep-lat` + `hep-ph`. The legacy `hep-lat` + `hep-th` profile remains available for migrated or explicitly selected libraries; migration must not silently replace a saved profile. The author-recID partition table has an open-ended final range, so it has no fixed recid ceiling; a partition exceeding INSPIRE's 10,000-result window still pauses as incomplete, and live global coverage is not claimed without a completed network crawl.
+Fresh category profiles default to `hep-lat` + `hep-ph`. The legacy `hep-lat` + `hep-th` profile remains available for migrated or explicitly selected libraries; migration must not silently replace a saved profile. The author-recID partition table has an open-ended final range, so it has no fixed recid ceiling; ranges above INSPIRE's 10,000-result paging window are adaptively split into disjoint ranges, with the remaining ranges stored in a validated resumable checkpoint. Live global coverage is not claimed without a completed network crawl.
 
 Historical 1.0 plans, validation, and release artifacts are retained for audit and rollback context. Their verifier receipts are not evidence for the current 2.0 source. The older `verify_v*` scripts remain historical tools; no 2.0 final-verifier PASS is claimed.
 

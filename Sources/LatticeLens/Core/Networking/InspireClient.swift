@@ -109,6 +109,51 @@ private final class InspireRedirectDelegate: NSObject, URLSessionTaskDelegate, @
 }
 
 struct InspireClient: Sendable {
+    private struct AuthorControlNumberRange: Codable, Hashable, Sendable {
+        let lowerBound: Int
+        let upperBound: Int?
+
+        var queryValue: String {
+            "control_number:[\(lowerBound) TO \(upperBound.map { String($0) } ?? "*")]"
+        }
+
+        func isContained(in parent: AuthorControlNumberRange) -> Bool {
+            guard lowerBound >= parent.lowerBound,
+                  upperBound.map({ $0 >= lowerBound }) ?? true else { return false }
+            guard let parentUpper = parent.upperBound else { return true }
+            guard let upperBound else { return false }
+            return upperBound <= parentUpper
+        }
+
+        func split(openRangeWindow: Int) -> (left: AuthorControlNumberRange, right: AuthorControlNumberRange)? {
+            if let upperBound {
+                guard lowerBound < upperBound else { return nil }
+                let midpoint = lowerBound + (upperBound - lowerBound) / 2
+                return (
+                    AuthorControlNumberRange(lowerBound: lowerBound, upperBound: midpoint),
+                    AuthorControlNumberRange(lowerBound: midpoint + 1, upperBound: upperBound)
+                )
+            }
+
+            guard openRangeWindow > 0 else { return nil }
+            let (finiteUpper, upperOverflow) = lowerBound.addingReportingOverflow(openRangeWindow - 1)
+            let (rightLower, lowerOverflow) = finiteUpper.addingReportingOverflow(1)
+            guard !upperOverflow, !lowerOverflow else { return nil }
+            return (
+                AuthorControlNumberRange(lowerBound: lowerBound, upperBound: finiteUpper),
+                AuthorControlNumberRange(lowerBound: rightLower, upperBound: nil)
+            )
+        }
+    }
+
+    private struct AuthorCandidateCursorState: Codable, Hashable, Sendable {
+        let schemaVersion: Int
+        let basePartitionIndex: Int
+        let completedThrough: Int
+        let currentRange: AuthorControlNumberRange
+        let pendingRanges: [AuthorControlNumberRange]
+    }
+
     static let defaultOrigin = URL(string: "https://inspirehep.net")!
     static let defaultMaximumResponseBytes = 8 * 1024 * 1024
     static let defaultMaximumGETAttempts = 3
@@ -123,6 +168,12 @@ struct InspireClient: Sendable {
     /// refreshes from blocking the main timeline when INSPIRE omits validators.
     /// Validator-bearing responses still use conditional GET on every call.
     private let unvalidatedBodyTTL: TimeInterval
+
+    private static let authorCursorFragmentPrefix = "latticelens-author-cursor-v3."
+    private static let maximumAuthorCursorBytes = 4_096
+    private static let maximumAuthorCursorTokenBytes = 5_500
+    private static let maximumPendingAuthorRanges = 64
+    private static let openAuthorRangeWindow = 250_000
 
     /// The list endpoint otherwise returns very large embedded payloads.
     /// These are the only metadata fields required by the paper mapper, so an
@@ -182,9 +233,9 @@ struct InspireClient: Sendable {
     ) async throws -> (authors: [Author], nextURL: URL?, total: Int) {
         let url: URL
         if let nextURL {
-            url = try validatedNextURL(nextURL, expectedPath: "/api/authors")
+            url = try validatedAuthorCandidateURL(nextURL)
         } else {
-            url = try authorCandidateURL(partition: 0, page: 1, categories: categories)
+            url = try authorCandidateURL(range: Self.authorCandidatePartitions[0], page: 1, categories: categories)
         }
         // Keep the URL actually accepted by the service.  A 400 recovery can
         // downgrade `size=250` to `size=100`; pagination must continue with
@@ -202,10 +253,22 @@ struct InspireClient: Sendable {
         // sent to INSPIRE unchanged (HTTP 400).
         let decodedQuery = decodeAuthorQuery(queryValue)
         let hasControlNumberClause = decodedQuery.localizedCaseInsensitiveContains("control_number")
-        let matchedPartition = authorCandidatePartition(for: decodedQuery)
-        guard !hasControlNumberClause || matchedPartition != nil else { throw LatticeLensError.malformedPayload }
-        let isPartitioned = matchedPartition != nil
-        let partition = matchedPartition ?? 0
+        let currentRange = authorCandidateRange(for: decodedQuery, categories: categories)
+        guard !hasControlNumberClause || currentRange != nil else { throw LatticeLensError.malformedPayload }
+        let isPartitioned = currentRange != nil
+        let cursorState: AuthorCandidateCursorState?
+        if let currentRange {
+            if nextURL != nil {
+                cursorState = try authorCandidateCursorState(from: url, currentRange: currentRange)
+            } else {
+                cursorState = AuthorCandidateCursorState(schemaVersion: 3, basePartitionIndex: 0,
+                                                         completedThrough: currentRange.lowerBound - 1,
+                                                         currentRange: currentRange, pendingRanges: [])
+            }
+        } else {
+            guard url.fragment == nil else { throw LatticeLensError.malformedPayload }
+            cursorState = nil
+        }
 
         // A checkpoint written by an older build may already contain the
         // server's page-41 URL.  INSPIRE rejects that URL with HTTP 400 before
@@ -214,22 +277,9 @@ struct InspireClient: Sendable {
         // state; this guard is for interrupted upgrades and hand-copied
         // checkpoints.
         if pageNumber > 40 {
-            if isPartitioned { throw incompleteAuthorPartitionError(partition) }
-            return ([], try authorCandidateURL(partition: 0, page: 1, categories: categories), 0)
-        }
-        if isPartitioned {
-            let actualQuery = normalizedAuthorCandidateQuery(decodedQuery)
-            let expectedQueries = try [true, false].map { grouped in
-                normalizedAuthorCandidateQuery(try Self.authorCandidateQueryValue(
-                    partition: partition, categories: categories, grouped: grouped))
-            }
-            guard expectedQueries.contains(actualQuery) else {
-                // A durable page URL is part of the category generation, not
-                // an independent transport hint. Sending a stale hep-lat /
-                // hep-th URL while the caller owns hep-lat / hep-ph would
-                // contaminate the new generation with the wrong directory.
-                throw LatticeLensError.malformedPayload
-            }
+            if let currentRange { throw incompleteAuthorPartitionError(currentRange) }
+            return ([], try authorCandidateURL(range: Self.authorCandidatePartitions[0], page: 1,
+                                               categories: categories), 0)
         }
         let responseData: Data
         do {
@@ -251,10 +301,14 @@ struct InspireClient: Sendable {
             // Keep the partition identity in every variant and let the
             // caller persist a paused checkpoint if the service still
             // rejects all canonical forms.
-            let variants = [
-                try authorCandidateURL(partition: partition, page: pageNumber, size: 100, grouped: true, categories: categories),
-                try authorCandidateURL(partition: partition, page: pageNumber, size: 250, grouped: false, categories: categories),
-                try authorCandidateURL(partition: partition, page: pageNumber, size: 100, grouped: false, categories: categories)
+            guard let currentRange, let cursorState else { throw error }
+            let variants = try [
+                authorCandidateURL(range: currentRange, page: pageNumber, size: 100, grouped: true,
+                                   categories: categories, cursor: cursorState),
+                authorCandidateURL(range: currentRange, page: pageNumber, size: 250, grouped: false,
+                                   categories: categories, cursor: cursorState),
+                authorCandidateURL(range: currentRange, page: pageNumber, size: 100, grouped: false,
+                                   categories: categories, cursor: cursorState)
             ]
             var recovered: Data?
             var recoveredURL: URL?
@@ -276,14 +330,30 @@ struct InspireClient: Sendable {
             }
         }
         let responsePage = try decoder.decode(InspireSearchPage<InspireAuthorHit>.self, from: responseData)
+        // INSPIRE rejects offsets beyond its 10,000-result window. Split an
+        // overfull numeric range into adjacent, non-overlapping children and
+        // persist the right child in the cursor fragment. The probe response
+        // itself is deliberately discarded: its rows will be returned by the
+        // children, so staging the parent page would double-count them.
+        if let currentRange, let cursorState,
+           responsePage.hits.total > Self.maximumAuthorCandidateResultsPerPartition {
+            guard let split = currentRange.split(openRangeWindow: Self.openAuthorRangeWindow) else {
+                throw incompleteAuthorPartitionError(currentRange)
+            }
+            let childCursor = AuthorCandidateCursorState(
+                schemaVersion: 3,
+                basePartitionIndex: cursorState.basePartitionIndex,
+                completedThrough: cursorState.completedThrough,
+                currentRange: split.left,
+                pendingRanges: [split.right] + cursorState.pendingRanges
+            )
+            let childURL = try authorCandidateURL(range: split.left, page: 1,
+                                                  categories: categories, cursor: childCursor)
+            return ([], childURL, responsePage.hits.total)
+        }
+
         let authors = try responsePage.hits.hits.map(InspireMapper.author)
 
-        // INSPIRE rejects offsets beyond its 10,000-result window.  The
-        // hep-lat/hep-th union currently contains more than that, so never
-        // follow the server's page-41 link.  Advance to a disjoint
-        // control-number range instead; each range remains below the API
-        // window and the durable checkpoint still stores an ordinary trusted
-        // INSPIRE URL.
         // Prefer the explicit `size` sent in the request.  A few fixture and
         // older proxy responses omit it while still returning a valid `next`
         // link; in that case the observed hit count is the only bounded page
@@ -304,12 +374,6 @@ struct InspireClient: Sendable {
         let advertisedNextComponents = advertisedNextURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
         let advertisedNextSize = advertisedNextComponents?.queryItems?
             .first(where: { $0.name == "size" })?.value.flatMap(Int.init)
-        // INSPIRE only exposes the first 10,000 hits through page offsets. A
-        // control-number partition whose authoritative total is larger cannot
-        // be completed by advancing to the next disjoint range.
-        if isPartitioned, responsePage.hits.total > Self.maximumAuthorCandidateResultsPerPartition {
-            throw incompleteAuthorPartitionError(partition)
-        }
         let hasMoreByTotal: Bool
         if let requestedPageSize, let advertisedNextSize, requestedPageSize == advertisedNextSize {
             hasMoreByTotal = responsePage.hits.total > pageNumber * pageSize
@@ -330,13 +394,39 @@ struct InspireClient: Sendable {
             // while silently dropping later hep-th ranges.  The partition and
             // page are already locally proven, so construct the next request
             // from that immutable state instead.
+            guard let currentRange, let cursorState else { throw LatticeLensError.malformedPayload }
             if hasMoreByTotal && (exhaustedWindow || nextBeyondWindow || pageNumber >= 40) {
-                throw incompleteAuthorPartitionError(partition)
+                throw incompleteAuthorPartitionError(currentRange)
             }
             if hasMoreByTotal {
-                next = try authorCandidateURL(partition: partition, page: pageNumber + 1, size: pageSize, categories: categories)
-            } else if partition + 1 < Self.authorCandidatePartitions.count {
-                next = try authorCandidateURL(partition: partition + 1, page: 1, categories: categories)
+                next = try authorCandidateURL(range: currentRange, page: pageNumber + 1, size: pageSize,
+                                              categories: categories, cursor: cursorState)
+            } else if !cursorState.pendingRanges.isEmpty {
+                var remaining = cursorState.pendingRanges
+                let nextRange = remaining.removeFirst()
+                guard let completedThrough = currentRange.upperBound else {
+                    throw incompleteAuthorPartitionError(currentRange)
+                }
+                let nextCursor = AuthorCandidateCursorState(
+                    schemaVersion: 3,
+                    basePartitionIndex: cursorState.basePartitionIndex,
+                    completedThrough: completedThrough,
+                    currentRange: nextRange,
+                    pendingRanges: remaining
+                )
+                next = try authorCandidateURL(range: nextRange, page: 1,
+                                              categories: categories, cursor: nextCursor)
+            } else if cursorState.basePartitionIndex + 1 < Self.authorCandidatePartitions.count {
+                let nextIndex = cursorState.basePartitionIndex + 1
+                let nextRange = Self.authorCandidatePartitions[nextIndex]
+                guard let completedThrough = currentRange.upperBound else {
+                    throw incompleteAuthorPartitionError(currentRange)
+                }
+                let nextCursor = AuthorCandidateCursorState(schemaVersion: 3, basePartitionIndex: nextIndex,
+                                                           completedThrough: completedThrough,
+                                                           currentRange: nextRange, pendingRanges: [])
+                next = try authorCandidateURL(range: nextRange, page: 1,
+                                              categories: categories, cursor: nextCursor)
             } else {
                 next = nil
             }
@@ -350,44 +440,52 @@ struct InspireClient: Sendable {
         return (authors, next, responsePage.hits.total)
     }
 
-    /// Disjoint INSPIRE author control-number ranges. The final range is open
-    /// ended so new recids cannot disappear beyond a guessed product ceiling.
-    /// Every range is still capped by the service's 10,000-result page window;
-    /// a dense range fails closed instead of being mistaken for complete.
+    /// Base ranges keep the long-running crawl bounded without imposing a
+    /// recid ceiling. Dense ranges are adaptively split before pagination.
     private static let maximumAuthorCandidateResultsPerPartition = 10_000
-    private static let authorCandidatePartitions: [(lowerBound: Int, upperBound: Int?)] = [
-        (0, 999_999), (1_000_000, 1_249_999), (1_250_000, 1_499_999),
-        (1_500_000, 1_749_999), (1_750_000, 1_999_999),
-        (2_000_000, 2_999_999), (3_000_000, nil)
+    private static let authorCandidatePartitions: [AuthorControlNumberRange] = [
+        .init(lowerBound: 0, upperBound: 999_999),
+        .init(lowerBound: 1_000_000, upperBound: 1_249_999),
+        .init(lowerBound: 1_250_000, upperBound: 1_499_999),
+        .init(lowerBound: 1_500_000, upperBound: 1_749_999),
+        .init(lowerBound: 1_750_000, upperBound: 1_999_999),
+        .init(lowerBound: 2_000_000, upperBound: 2_999_999),
+        .init(lowerBound: 3_000_000, upperBound: nil)
     ]
 
-    private func authorCandidateURL(partition: Int, page: Int, size: Int = 250, grouped: Bool = true,
-                                    categories: Set<SupportedArxivCategory> = SupportedArxivCategory.defaultEnabled) throws -> URL {
-        let query = try Self.authorCandidateQueryValue(partition: partition, categories: categories, grouped: grouped)
-        return try makeURL(path: "/api/authors", query: [
+    private func authorCandidateURL(range: AuthorControlNumberRange, page: Int, size: Int = 250,
+                                    grouped: Bool = true,
+                                    categories: Set<SupportedArxivCategory> = SupportedArxivCategory.defaultEnabled,
+                                    cursor: AuthorCandidateCursorState? = nil) throws -> URL {
+        let query = Self.authorCandidateQueryValue(range: range, categories: categories, grouped: grouped)
+        let baseURL = try makeURL(path: "/api/authors", query: [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "size", value: String(max(1, min(size, 250)))),
             URLQueryItem(name: "page", value: String(max(1, page))),
             URLQueryItem(name: "fields", value: Self.authorCandidateFields)
         ])
+        guard let cursor else { return baseURL }
+        guard cursor.currentRange == range, Self.isValidAuthorCursor(cursor) else {
+            throw LatticeLensError.malformedPayload
+        }
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.fragment = try Self.encodedAuthorCursor(cursor)
+        guard let url = components?.url else { throw LatticeLensError.invalidResponse }
+        return url
     }
 
-    private static func authorCandidateQueryValue(partition: Int,
+    private static func authorCandidateQueryValue(range: AuthorControlNumberRange,
                                                   categories: Set<SupportedArxivCategory>,
-                                                  grouped: Bool) throws -> String {
-        guard Self.authorCandidatePartitions.indices.contains(partition) else { throw LatticeLensError.paginationLimitExceeded }
-        let range = Self.authorCandidatePartitions[partition]
-        let upperBound = range.upperBound.map { String($0) } ?? "*"
-        let controlNumberRange = "control_number:[\(range.lowerBound) TO \(upperBound)]"
+                                                  grouped: Bool) -> String {
         let baseQuery = ArxivCategoryQueryBuilder.query(categories: categories)
         let categoryTerms = SupportedArxivCategory.canonical(categories).map { category in
             "arxiv_categories:\(category.rawValue)"
         }
         let categoryQuery = grouped
             ? "(\(baseQuery))"
-            : categoryTerms.map { "(\($0) AND \(controlNumberRange))" }.joined(separator: " OR ")
+            : categoryTerms.map { "(\($0) AND \(range.queryValue))" }.joined(separator: " OR ")
         return grouped
-            ? "\(categoryQuery) AND \(controlNumberRange)"
+            ? "\(categoryQuery) AND \(range.queryValue)"
             : categoryQuery
     }
 
@@ -395,40 +493,120 @@ struct InspireClient: Sendable {
         query.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
+    private func authorCandidateRange(for query: String,
+                                      categories: Set<SupportedArxivCategory>) -> AuthorControlNumberRange? {
+        let normalized = normalizedAuthorCandidateQuery(query)
+        guard normalized.range(of: #"control_number:\[(\d+)\s+TO\s+(\d+|\*)\]"#,
+                               options: .regularExpression) != nil else { return nil }
+        guard let match = try? NSRegularExpression(pattern: #"control_number:\[(\d+)\s+TO\s+(\d+|\*)\]"#,
+                                                   options: [.caseInsensitive])
+            .firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)),
+              let lowerRange = Range(match.range(at: 1), in: normalized),
+              let upperRange = Range(match.range(at: 2), in: normalized),
+              let lower = Int(normalized[lowerRange]) else { return nil }
+        let upperText = String(normalized[upperRange])
+        let upper: Int?
+        if upperText == "*" {
+            upper = nil
+        } else {
+            guard let parsed = Int(upperText) else { return nil }
+            upper = parsed
+        }
+        let range = AuthorControlNumberRange(lowerBound: lower, upperBound: upper)
+        guard range.lowerBound >= 0,
+              range.upperBound.map({ $0 >= range.lowerBound }) ?? true else { return nil }
+
+        let baseQuery = ArxivCategoryQueryBuilder.query(categories: categories)
+        let expectedGrouped = normalizedAuthorCandidateQuery("(\(baseQuery)) AND \(range.queryValue)")
+        let expectedUngrouped = SupportedArxivCategory.canonical(categories)
+            .map { "(arxiv_categories:\($0.rawValue) AND \(range.queryValue))" }
+            .joined(separator: " OR ")
+        return [expectedGrouped, normalizedAuthorCandidateQuery(expectedUngrouped)].contains(normalized) ? range : nil
+    }
+
+    private func authorCandidateCursorState(from url: URL,
+                                            currentRange: AuthorControlNumberRange) throws -> AuthorCandidateCursorState {
+        guard let fragment = url.fragment else {
+            guard let index = Self.authorCandidatePartitions.firstIndex(of: currentRange) else {
+                throw LatticeLensError.malformedPayload
+            }
+            return AuthorCandidateCursorState(schemaVersion: 3, basePartitionIndex: index,
+                                              completedThrough: currentRange.lowerBound - 1,
+                                              currentRange: currentRange, pendingRanges: [])
+        }
+        guard fragment.hasPrefix(Self.authorCursorFragmentPrefix) else { throw LatticeLensError.endpointChanged }
+        let token = String(fragment.dropFirst(Self.authorCursorFragmentPrefix.count))
+        guard !token.isEmpty, token.utf8.count <= Self.maximumAuthorCursorTokenBytes else {
+            throw LatticeLensError.malformedPayload
+        }
+        var base64 = token.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = base64.count % 4
+        guard remainder != 1 else { throw LatticeLensError.malformedPayload }
+        if remainder > 0 { base64 += String(repeating: "=", count: 4 - remainder) }
+        guard let data = Data(base64Encoded: base64), data.count <= Self.maximumAuthorCursorBytes,
+              let cursor = try? JSONDecoder().decode(AuthorCandidateCursorState.self, from: data),
+              cursor.currentRange == currentRange,
+              Self.isValidAuthorCursor(cursor) else { throw LatticeLensError.malformedPayload }
+        return cursor
+    }
+
+    private static func encodedAuthorCursor(_ cursor: AuthorCandidateCursorState) throws -> String {
+        let data = try JSONEncoder().encode(cursor)
+        guard data.count <= maximumAuthorCursorBytes else { throw LatticeLensError.malformedPayload }
+        let token = data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return authorCursorFragmentPrefix + token
+    }
+
+    private static func isValidAuthorCursor(_ cursor: AuthorCandidateCursorState) -> Bool {
+        guard cursor.schemaVersion == 3,
+              authorCandidatePartitions.indices.contains(cursor.basePartitionIndex),
+              cursor.pendingRanges.count <= maximumPendingAuthorRanges else { return false }
+        let baseRange = authorCandidatePartitions[cursor.basePartitionIndex]
+        let orderedRanges = [cursor.currentRange] + cursor.pendingRanges
+        let (expectedCurrentLower, currentOverflow) = cursor.completedThrough.addingReportingOverflow(1)
+        guard !currentOverflow, expectedCurrentLower == cursor.currentRange.lowerBound,
+              cursor.completedThrough >= baseRange.lowerBound - 1 else { return false }
+        guard orderedRanges.allSatisfy({ $0.isContained(in: baseRange) }) else { return false }
+        for pair in zip(orderedRanges, orderedRanges.dropFirst()) {
+            guard let upperBound = pair.0.upperBound else { return false }
+            let (expectedLowerBound, overflow) = upperBound.addingReportingOverflow(1)
+            guard !overflow, pair.1.lowerBound == expectedLowerBound else { return false }
+        }
+        return orderedRanges.last?.upperBound == baseRange.upperBound
+    }
+
+    private func validatedAuthorCandidateURL(_ url: URL) throws -> URL {
+        guard isTrustedInspireURL(url), url.user == nil, url.password == nil,
+              matchesEndpointPath(url.path, expected: "/api/authors") else {
+            throw LatticeLensError.endpointChanged
+        }
+        if let fragment = url.fragment, !fragment.hasPrefix(Self.authorCursorFragmentPrefix) {
+            throw LatticeLensError.endpointChanged
+        }
+        return url
+    }
+
     /// A 400 from the author endpoint is usually a stale pagination URL, but
     /// it can also be a short-lived proxy/service rejection.  Give the same
     /// canonical request one finite retry without broadening the global GET
     /// retry policy (where 400 remains a deterministic client error).
     private func getAuthorCandidateData(_ url: URL) async throws -> Data {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.fragment = nil
+        guard let requestURL = components?.url else { throw LatticeLensError.invalidResponse }
         do {
-            return try await get(url)
+            return try await get(requestURL)
         } catch let error as LatticeLensError where error == .httpStatus(400) {
             try await retrySleeper(.milliseconds(500))
-            return try await get(url)
+            return try await get(requestURL)
         }
     }
 
-    private func authorCandidatePartition(for query: String) -> Int? {
-        // URLComponents keeps `+` as a literal plus in query-item values
-        // (rather than decoding it to a space).  INSPIRE's pagination links
-        // commonly mix `+` and `%20` for the spaces around `OR`, `AND`, and
-        // `TO`.  Decode once, then canonicalize all whitespace before matching
-        // the durable control-number range.  This also handles a checkpoint
-        // copied from a proxy that percent-encoded the query value twice.
-        let normalizedQuery = decodeAuthorQuery(query)
-            .split { $0 == " " || $0 == "\t" || $0 == "\n" || $0 == "\r" }
-            .joined(separator: " ")
-        for (index, range) in Self.authorCandidatePartitions.enumerated() {
-            let upperBound = range.upperBound.map { String($0) } ?? "*"
-            if normalizedQuery.contains("control_number:[\(range.lowerBound) TO \(upperBound)]") {
-                return index
-            }
-        }
-        return nil
-    }
-
-    private func incompleteAuthorPartitionError(_ index: Int) -> LatticeLensError {
-        let range = Self.authorCandidatePartitions[index]
+    private func incompleteAuthorPartitionError(_ range: AuthorControlNumberRange) -> LatticeLensError {
         return .incompleteAuthorPartition(lowerBound: range.lowerBound, upperBound: range.upperBound)
     }
 

@@ -7,6 +7,17 @@ not certify the current source tree.
 
 ## Unreleased — Reference_manager 2.0 / v5 in progress
 
+- 2026-10-17 author-index recovery: control-number ranges reporting more than
+  INSPIRE's 10,000-result paging window are recursively divided into adjacent,
+  disjoint child ranges. The split probe page is discarded, remaining work is
+  carried in a validated checkpoint cursor, and open-ended tail ranges advance
+  through finite windows. Pagination identity is now revision 3; a 512-page
+  foreground budget pauses with a resumable checkpoint instead of making a
+  completed-page safety cap permanent. Synthetic regression tests cover the
+  17,477-result case, cursor serialization/resume, open-tail splitting, and
+  preservation of the last completed author generation. No live INSPIRE or
+  full UI acceptance is claimed by these fixtures.
+
 - 2026-10-07 G02 store-path compatibility: fresh production libraries now use
   `Library-v12.store`, separate from the direct-open `Library-v8.store` path
   used by 1.0.11. Existing V8 stores, V11/V12 descriptors, and V7 candidates
