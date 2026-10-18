@@ -7,6 +7,15 @@ not certify the current source tree.
 
 ## Unreleased — Reference_manager 2.0 / v5 in progress
 
+- 2026-10-18 active-V12 migration recovery guard (Build 207): the production
+  factory now verifies a current V12 store before inspecting pending older
+  migration journals, and recovers only the migration identified by the active
+  descriptor when V12 verification fails. This prevents an unrelated stale
+  failed journal from blocking a valid active library. Synthetic regression
+  tests reproduce the stale-journal failure, cover interrupted activation, and
+  assert stage-specific error details. The user's real-library writable
+  startup remains untested; no user data was changed.
+
 - 2026-10-18 exact-cap author-index recovery (Build 205): a partition is now
   split as soon as `hits.total` reaches 10,000, including when a service or
   proxy omits `links.next` at the paging boundary. Parent probe rows are not

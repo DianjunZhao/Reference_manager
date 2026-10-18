@@ -3444,6 +3444,159 @@ final class V4LocalTests: XCTestCase {
         XCTAssertEqual(journal.sourceSchemaVersion, 12)
         XCTAssertEqual(journal.targetSchemaVersion, 12)
         XCTAssertEqual(journal.phase, .activated)
+
+        let reopened = LibraryStoreFactory.makeDefault(environment: environment)
+        let reopenedSnapshot = await reopened.snapshot()
+        XCTAssertNil(reopenedSnapshot.readErrorMessage,
+                     "a V12 store activated from the legacy path must reopen through the production factory")
+        XCTAssertEqual(reopenedSnapshot.papers[paper.literatureID]?.displayTitle, paper.displayTitle)
+    }
+
+    @MainActor
+    func testActiveV12StoreOpensDespiteStaleFailedMigrationJournalWithDamagedBackupReceipt() async throws {
+        let root = try makeProjectLocalTestDirectory(prefix: "active-v12-stale-failed-journal")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Library-v10.store")
+        let paper = makePaper(981_202)
+        let sourceSchema = Schema(versionedSchema: LatticeLensSchemaV10.self)
+        let source = try ModelContainer(for: sourceSchema, configurations: ModelConfiguration(url: sourceURL))
+        try V8TypedStoreCodec.materialize(
+            LibrarySnapshot(papers: [paper.literatureID: paper], schemaVersion: 10),
+            in: source.mainContext, sourceSchemaVersion: 10)
+        try source.mainContext.save()
+        let sourceFamilyBefore = try v10DisposableStoreFamilyHashes(at: sourceURL)
+
+        let firstOpen = LibraryStoreFactory.makeDefault(storeURLOverride: sourceURL)
+        let firstSnapshot = await firstOpen.snapshot()
+        XCTAssertNil(firstSnapshot.readErrorMessage)
+        XCTAssertEqual(firstSnapshot.papers[paper.literatureID]?.displayTitle, paper.displayTitle)
+
+        let descriptorURL = V10StoreMigrationCoordinator.descriptorURL(
+            for: sourceURL, targetSchemaVersion: 12)
+        let descriptor = try JSONDecoder.latticeLens.decode(
+            V10ActiveStoreDescriptor.self, from: Data(contentsOf: descriptorURL))
+        let journalURL = root.appendingPathComponent(
+            ".latticelens-v12-migration-\(descriptor.runID.uuidString).json")
+        let activatedJournal = try JSONDecoder.latticeLens.decode(
+            V10StoreMigrationJournal.self, from: Data(contentsOf: journalURL))
+        let staleID = UUID()
+        let staleJournal = V10StoreMigrationJournal(
+            id: staleID,
+            sourceStoreName: sourceURL.lastPathComponent,
+            stagingStoreName: ".latticelens-v12-stage-\(staleID.uuidString).store",
+            descriptorName: descriptorURL.lastPathComponent,
+            sourceSchemaVersion: activatedJournal.sourceSchemaVersion,
+            targetSchemaVersion: 12,
+            backupManifestID: activatedJournal.backupManifestID,
+            backupManifestHash: String(repeating: "0", count: 64),
+            sourceSummary: activatedJournal.sourceSummary,
+            startedAt: Date(timeIntervalSince1970: 1_750_003_000),
+            updatedAt: Date(timeIntervalSince1970: 1_750_003_001),
+            completedAt: nil,
+            phase: .failed,
+            targetSummary: nil,
+            errorCategory: "simulated_previous_attempt")
+        let staleJournalURL = root.appendingPathComponent(
+            ".latticelens-v12-migration-\(staleID.uuidString).json")
+        try JSONEncoder.latticeLens.encode(staleJournal).write(to: staleJournalURL, options: .atomic)
+
+        let reopened = LibraryStoreFactory.makeDefault(storeURLOverride: sourceURL)
+        let reopenedSnapshot = await reopened.snapshot()
+        XCTAssertNil(reopenedSnapshot.readErrorMessage,
+                     "a stale failed migration must not block a separately verified active V12 store")
+        XCTAssertEqual(reopenedSnapshot.papers[paper.literatureID]?.displayTitle, paper.displayTitle)
+        XCTAssertEqual(try v10DisposableStoreFamilyHashes(at: sourceURL), sourceFamilyBefore,
+                       "ignoring an unrelated failed journal must not mutate the preserved source family")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staleJournalURL.path),
+                      "the failed migration record must be retained for later diagnosis/recovery")
+    }
+
+    @MainActor
+    func testInterruptedV12ActivationRecoversItsOwnJournalBeforeIgnoringStaleFailures() async throws {
+        let root = try makeProjectLocalTestDirectory(prefix: "active-v12-recover-own-journal")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Library-v10.store")
+        let sourceSummary = try seedSyntheticV10Store(at: sourceURL, paperID: 981_203)
+
+        let firstOpen = LibraryStoreFactory.makeDefault(storeURLOverride: sourceURL)
+        let firstSnapshot = await firstOpen.snapshot()
+        XCTAssertNil(firstSnapshot.readErrorMessage)
+
+        let descriptorURL = V10StoreMigrationCoordinator.descriptorURL(
+            for: sourceURL, targetSchemaVersion: 12)
+        let descriptor = try JSONDecoder.latticeLens.decode(
+            V10ActiveStoreDescriptor.self, from: Data(contentsOf: descriptorURL))
+        let journalURL = root.appendingPathComponent(
+            ".latticelens-v12-migration-\(descriptor.runID.uuidString).json")
+        var interruptedJournal = try JSONDecoder.latticeLens.decode(
+            V10StoreMigrationJournal.self, from: Data(contentsOf: journalURL))
+        interruptedJournal.phase = .verified
+        interruptedJournal.completedAt = nil
+        interruptedJournal.updatedAt = Date(timeIntervalSince1970: 1_750_003_100)
+        try JSONEncoder.latticeLens.encode(interruptedJournal).write(to: journalURL, options: .atomic)
+
+        let staleID = UUID()
+        let staleJournal = V10StoreMigrationJournal(
+            id: staleID,
+            sourceStoreName: sourceURL.lastPathComponent,
+            stagingStoreName: ".latticelens-v12-stage-\(staleID.uuidString).store",
+            descriptorName: descriptorURL.lastPathComponent,
+            sourceSchemaVersion: 10,
+            targetSchemaVersion: 12,
+            backupManifestID: descriptor.backupManifestID,
+            backupManifestHash: String(repeating: "0", count: 64),
+            sourceSummary: sourceSummary,
+            startedAt: Date(timeIntervalSince1970: 1_750_003_200),
+            updatedAt: Date(timeIntervalSince1970: 1_750_003_201),
+            completedAt: nil,
+            phase: .failed,
+            targetSummary: nil,
+            errorCategory: "simulated_previous_attempt")
+        let staleJournalURL = root.appendingPathComponent(
+            ".latticelens-v12-migration-\(staleID.uuidString).json")
+        try JSONEncoder.latticeLens.encode(staleJournal).write(to: staleJournalURL, options: .atomic)
+
+        let recovered = LibraryStoreFactory.makeDefault(storeURLOverride: sourceURL)
+        let recoveredSnapshot = await recovered.snapshot()
+        XCTAssertNil(recoveredSnapshot.readErrorMessage,
+                     "recovery must prioritize the journal named by the active descriptor")
+        XCTAssertEqual(recoveredSnapshot.papers[981_203]?.displayTitle, "Canonical fixture 981203")
+        let recoveredJournal = try JSONDecoder.latticeLens.decode(
+            V10StoreMigrationJournal.self, from: Data(contentsOf: journalURL))
+        XCTAssertEqual(recoveredJournal.phase, .activated)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: staleJournalURL.path),
+                      "unrelated failed migration evidence must remain available")
+    }
+
+    @MainActor
+    func testBlockedV12FactoryReportsMigrationStageAndSpecificErrorCase() async throws {
+        let root = try makeProjectLocalTestDirectory(prefix: "active-v12-error-diagnostic")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Library-v10.store")
+        _ = try seedSyntheticV10Store(at: sourceURL, paperID: 981_204)
+        let firstOpen = LibraryStoreFactory.makeDefault(storeURLOverride: sourceURL)
+        let firstSnapshot = await firstOpen.snapshot()
+        XCTAssertNil(firstSnapshot.readErrorMessage)
+
+        let descriptorURL = V10StoreMigrationCoordinator.descriptorURL(
+            for: sourceURL, targetSchemaVersion: 12)
+        let descriptor = try JSONDecoder.latticeLens.decode(
+            V10ActiveStoreDescriptor.self, from: Data(contentsOf: descriptorURL))
+        let backupManifestURL = root
+            .appendingPathComponent("LatticeLens-StoreBackups", isDirectory: true)
+            .appendingPathComponent(descriptor.backupManifestID.uuidString, isDirectory: true)
+            .appendingPathComponent("migration-manifest.json")
+        var manifest = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(contentsOf: backupManifestURL)) as? [String: Any])
+        manifest["manifestHash"] = String(repeating: "0", count: 64)
+        try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+            .write(to: backupManifestURL, options: .atomic)
+
+        let blocked = LibraryStoreFactory.makeDefault(storeURLOverride: sourceURL)
+        let blockedSnapshot = await blocked.snapshot()
+        let reason = try XCTUnwrap(blockedSnapshot.readErrorMessage)
+        XCTAssertTrue(reason.contains("recover the active migration"), reason)
+        XCTAssertTrue(reason.contains("backupMismatch"), reason)
     }
 
     @MainActor

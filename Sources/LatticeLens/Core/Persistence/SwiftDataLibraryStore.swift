@@ -1184,6 +1184,7 @@ enum LibraryStoreFactory {
         let targetSchemaVersion = 12
         let schema = Schema(versionedSchema: LatticeLensSchemaV12.self)
         let requestedStoreURL = storeURLOverride ?? defaultStoreURL(environment: environment)
+        var failureStage = "resolve active library path"
         do {
             let bundleActivationURL = V4BundleActivationCoordinator.descriptorURL(for: requestedStoreURL)
             let hasBundleActivation = FileManager.default.fileExists(atPath: bundleActivationURL.path)
@@ -1192,6 +1193,7 @@ enum LibraryStoreFactory {
             let descriptorURL = V10StoreMigrationCoordinator.descriptorURL(
                 for: baseStoreURL, targetSchemaVersion: targetSchemaVersion)
             let v11DescriptorURL = V10StoreMigrationCoordinator.descriptorURL(for: baseStoreURL)
+            failureStage = "ensure active store directory"
             try ensureActiveStoreDirectory(for: baseStoreURL)
             // Bundle-ID process checks protect the implicit user library only.
             // Explicit test/isolated roots use the per-directory flock lease;
@@ -1199,20 +1201,35 @@ enum LibraryStoreFactory {
             let usesExplicitStoreRoot = storeURLOverride != nil ||
                 AppLaunchConfiguration.productionIsolationStoreRoot(environment: environment) != nil ||
                 environment["LATTICELENS_TEST_STORE_ROOT"]?.isEmpty == false
+            failureStage = "acquire active store owner lease"
             let lease = try ownerLease(for: baseStoreURL,
                                        checkForOtherApplicationInstance: !usesExplicitStoreRoot)
             let backupRoot = baseStoreURL.deletingLastPathComponent()
                 .appendingPathComponent("LatticeLens-StoreBackups", isDirectory: true)
-            try recoverPendingMigrations(near: baseStoreURL, backupRoot: backupRoot)
+
+            // A previously activated V12 descriptor is the authoritative active
+            // library. Verify it before considering older pending journals:
+            // unrelated failed attempts must not make an otherwise valid store
+            // read-only merely because their backup evidence is damaged.
+            failureStage = "verify existing V12 descriptor and store"
+            var verifiedActiveV12URL: URL?
+            do {
+                verifiedActiveV12URL = try verifiedActiveV12StoreURL(
+                    for: baseStoreURL, descriptorURL: descriptorURL, backupRoot: backupRoot)
+            } catch {
+                verifiedActiveV12URL = nil
+            }
+            if verifiedActiveV12URL == nil {
+                failureStage = "recover the active migration or roll back unfinished staging"
+                try recoverPendingMigrations(near: baseStoreURL, backupRoot: backupRoot)
+                failureStage = "verify V12 descriptor and store after recovery"
+                verifiedActiveV12URL = try verifiedActiveV12StoreURL(
+                    for: baseStoreURL, descriptorURL: descriptorURL, backupRoot: backupRoot)
+            }
 
             let activeStoreURL: URL
             let isNewStore: Bool
-            if let resolved = try V10StoreMigrationCoordinator.resolveActiveStoreURL(
-                for: baseStoreURL, targetSchemaVersion: targetSchemaVersion) {
-                _ = try V10StoreMigrationCoordinator.validateActiveDescriptorEvidence(
-                    descriptorURL: descriptorURL, backupRoot: backupRoot,
-                    targetSchemaVersion: targetSchemaVersion)
-                try verifyActiveV12StoreCanOpen(at: resolved)
+            if let resolved = verifiedActiveV12URL {
                 activeStoreURL = resolved
                 isNewStore = false
             } else {
@@ -1259,6 +1276,7 @@ enum LibraryStoreFactory {
                 } else if let sourceURL {
                     var sourceSummary: V10StoreSemanticSummary?
                     var sourceSchemaVersion: Int?
+                    failureStage = "stage source schema to V12"
                     let outcome = try V10StoreMigrationCoordinator.migrate(
                         sourceURL: sourceURL,
                         descriptorURL: descriptorURL,
@@ -1273,21 +1291,26 @@ enum LibraryStoreFactory {
                             return inspected.summary
                         },
                         migrateAndVerify: { stagingURL, reportProgress in
+                            failureStage = "open V12 migration staging store"
                             let stagedConfiguration = ModelConfiguration(schema: schema, url: stagingURL)
                             let staged = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV12.self,
                                                             configurations: stagedConfiguration)
                             let context = ModelContext(staged)
+                            failureStage = "verify V12 staging marker"
                             guard try !context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty,
                                   let expected = sourceSummary,
                                   let sourceVersion = sourceSchemaVersion else {
                                 throw V10StoreMigrationError.semanticMismatch
                             }
+                            failureStage = "migrate category profile in V12 staging store"
                             try V10CategoryProfileBootstrap.migrateOrCreate(in: context)
                             try reportProgress(.categoryMigrated)
+                            failureStage = "verify/rebuild V9 search projection in V12 staging store"
                             if try !V9TypedSearchIndex.isCurrent(in: context) {
                                 try V9TypedSearchIndex.rebuild(in: context)
                             }
                             try reportProgress(.searchIndexReady)
+                            failureStage = "compare V12 staging semantic summary"
                             let result = try V10StoreSemanticSummary.make(from: context,
                                                                          schemaVersion: targetSchemaVersion)
                             guard expected.preservesDomainAndTypedRows(in: result, sourceSchemaVersion: sourceVersion) else {
@@ -1303,22 +1326,32 @@ enum LibraryStoreFactory {
                 }
             }
 
+            failureStage = "open active V12 production container"
             let configuration = ModelConfiguration(schema: schema, url: activeStoreURL)
             let container = try ModelContainer(for: schema, migrationPlan: LatticeLensMigrationPlanV12.self,
                                                configurations: configuration)
             let context = ModelContext(container)
+            failureStage = "verify active V12 marker"
             if try context.fetch(FetchDescriptor<StoredV8StoreMarker>()).isEmpty {
                 guard isNewStore else { throw V10StoreMigrationError.semanticMismatch }
                 try V8TypedStoreCodec.materialize(LibrarySnapshot(schemaVersion: 8, v3SchemaVersion: 3),
                                                   in: context, sourceSchemaVersion: 8)
             }
+            failureStage = "bootstrap V10 category profile"
             try V10CategoryProfileBootstrap.migrateOrCreate(in: context)
+            failureStage = "verify/rebuild V9 search projection"
             if try !V9TypedSearchIndex.isCurrent(in: context) {
                 try V9TypedSearchIndex.rebuild(in: context)
             }
             return V8TypedLibraryStore(modelContainer: container)
         } catch {
-            return V8MigrationBlockedStore(reason: "V12/2.0 staging migration or active-store verification failed; the source library was not opened with the V12 migration plan and remains available for recovery. \(type(of: error))")
+            let errorName: String
+            if let migrationError = error as? V10StoreMigrationError {
+                errorName = String(describing: migrationError)
+            } else {
+                errorName = String(describing: type(of: error))
+            }
+            return V8MigrationBlockedStore(reason: "V12/2.0 staging migration or active-store verification failed at \(failureStage); the source library was not opened with the V12 migration plan and remains available for recovery. \(errorName)")
         }
     }
 
@@ -1340,6 +1373,34 @@ enum LibraryStoreFactory {
     @MainActor
     private static func recoverPendingMigrations(near baseStoreURL: URL, backupRoot: URL) throws {
         let parent = baseStoreURL.deletingLastPathComponent()
+        let activeV12DescriptorURL = V10StoreMigrationCoordinator.descriptorURL(
+            for: baseStoreURL, targetSchemaVersion: 12)
+        if FileManager.default.fileExists(atPath: activeV12DescriptorURL.path) {
+            // When a V12 pointer exists, only its own journal can complete or
+            // validate that activation. A stale journal from an older attempt
+            // must not be allowed to supersede or block the selected store.
+            let descriptor = try JSONDecoder.latticeLens.decode(
+                V10ActiveStoreDescriptor.self, from: Data(contentsOf: activeV12DescriptorURL))
+            let journalURL = parent.appendingPathComponent(
+                ".latticelens-v12-migration-\(descriptor.runID.uuidString).json")
+            guard FileManager.default.fileExists(atPath: journalURL.path) else {
+                throw V10StoreMigrationError.invalidDescriptor
+            }
+            let journal = try JSONDecoder.latticeLens.decode(
+                V10StoreMigrationJournal.self, from: Data(contentsOf: journalURL))
+            guard journal.id == descriptor.runID,
+                  journal.sourceStoreName == baseStoreURL.lastPathComponent,
+                  journal.targetSchemaVersion == 12 else {
+                throw V10StoreMigrationError.invalidJournal
+            }
+            _ = try V10StoreMigrationCoordinator.recover(
+                journalURL: journalURL, parent: parent, descriptorURL: activeV12DescriptorURL,
+                backupRoot: backupRoot, verifyActive: {
+                    try inspectExistingStore(at: $0, schemaVersion: 12).summary
+                })
+            return
+        }
+
         let journals = try FileManager.default.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)
             .filter {
                 ($0.lastPathComponent.hasPrefix(".latticelens-v11-migration-") ||
@@ -1347,6 +1408,7 @@ enum LibraryStoreFactory {
             }
         for journalURL in journals {
             let journal = try JSONDecoder.latticeLens.decode(V10StoreMigrationJournal.self, from: Data(contentsOf: journalURL))
+            guard journal.sourceStoreName == baseStoreURL.lastPathComponent else { continue }
             guard journal.phase != .activated, journal.phase != .rolledBack else { continue }
             let targetDescriptorURL = V10StoreMigrationCoordinator.descriptorURL(
                 for: baseStoreURL, targetSchemaVersion: journal.targetSchemaVersion)
@@ -1399,6 +1461,20 @@ enum LibraryStoreFactory {
             throw V10StoreMigrationError.invalidDescriptor
         }
         _ = try V10StoreSemanticSummary.make(from: container.mainContext, schemaVersion: 12)
+    }
+
+    @MainActor
+    private static func verifiedActiveV12StoreURL(
+        for baseStoreURL: URL,
+        descriptorURL: URL,
+        backupRoot: URL
+    ) throws -> URL? {
+        guard let resolved = try V10StoreMigrationCoordinator.resolveActiveStoreURL(
+            for: baseStoreURL, targetSchemaVersion: 12) else { return nil }
+        _ = try V10StoreMigrationCoordinator.validateActiveDescriptorEvidence(
+            descriptorURL: descriptorURL, backupRoot: backupRoot, targetSchemaVersion: 12)
+        try verifyActiveV12StoreCanOpen(at: resolved)
+        return resolved
     }
 
     /// Establish the one parent directory owned by the active SQLite store
