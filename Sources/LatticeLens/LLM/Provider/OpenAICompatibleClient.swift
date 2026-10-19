@@ -5,6 +5,7 @@ enum LLMClientError: LocalizedError, Equatable, Sendable {
     case invalidResponse
     case providerError
     case redirectRejected
+    case outputLimitReached
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +13,8 @@ enum LLMClientError: LocalizedError, Equatable, Sendable {
         case .invalidResponse: "模型响应格式无效。"
         case .providerError: "模型服务拒绝了请求。"
         case .redirectRejected: "模型 endpoint 的重定向已被安全策略拒绝。"
+        case .outputLimitReached:
+            "模型返回 finish_reason=length：输出 token 上限或上下文长度已达到；不完整结果未保存，也未自动重试。可提高最大输出 token 数或缩短输入后重新生成。"
         }
     }
 }
@@ -263,12 +266,15 @@ struct OpenAICompatibleSSEParser: Sendable {
 /// streamed content.  In addition to the canonical `delta.content` string,
 /// local Ollama/LM Studio builds and newer gateways may emit `choices[].text`
 /// or a content-part array such as `[{'type':'text','text':'...'}]`.
-private enum OpenAICompatiblePayloadDecoder {
+enum OpenAICompatiblePayloadDecoder {
     static func textDeltas(from data: Data) throws -> [String] {
         guard let root = try? JSONDecoder().decode(JSONValue.self, from: data),
               let object = root.objectValue else { throw LLMClientError.malformedSSE }
         if object["error"]?.objectValue != nil { throw LLMClientError.providerError }
         guard let choices = object["choices"]?.arrayValue else { return [] }
+        if choices.contains(where: { $0.objectValue?["finish_reason"]?.stringValue == "length" }) {
+            throw LLMClientError.outputLimitReached
+        }
         return choices.compactMap { choice in
             guard let value = choice.objectValue else { return nil }
             let content = value["delta"]?.objectValue?["content"] ??
@@ -285,6 +291,9 @@ private enum OpenAICompatiblePayloadDecoder {
         if object["error"]?.objectValue != nil { throw LLMClientError.providerError }
         guard let choices = object["choices"]?.arrayValue,
               let first = choices.first?.objectValue else { throw LLMClientError.invalidResponse }
+        if first["finish_reason"]?.stringValue == "length" {
+            throw LLMClientError.outputLimitReached
+        }
         let content = first["message"]?.objectValue?["content"] ?? first["text"]
         guard let value = text(from: content), !value.isEmpty else { throw LLMClientError.invalidResponse }
         return value
@@ -308,7 +317,7 @@ private enum OpenAICompatiblePayloadDecoder {
 struct OpenAICompatibleCompletionRequestBody: Encodable, Sendable {
     /// Bump when request-body byte encoding changes so durable formula jobs
     /// cannot collide with checkpoints created under a different contract.
-    static let serializationContractVersion = "openai-json-sorted-keys-v1"
+    static let serializationContractVersion = "openai-json-sorted-keys-v2-output-limit"
 
     struct Message: Encodable, Sendable {
         let role: String
@@ -322,10 +331,14 @@ struct OpenAICompatibleCompletionRequestBody: Encodable, Sendable {
     let model: String
     let messages: [Message]
     let stream: Bool
+    let maxTokens: Int?
+    let maxCompletionTokens: Int?
     let responseFormat: ResponseFormat?
 
     enum CodingKeys: String, CodingKey {
         case model, messages, stream
+        case maxTokens = "max_tokens"
+        case maxCompletionTokens = "max_completion_tokens"
         case responseFormat = "response_format"
     }
 
@@ -333,6 +346,13 @@ struct OpenAICompatibleCompletionRequestBody: Encodable, Sendable {
         model = profile.effectiveModel
         messages = [Message(role: "system", content: system), Message(role: "user", content: userPayload)]
         stream = profile.usesStreaming
+        if profile.provider == .openAI {
+            maxTokens = nil
+            maxCompletionTokens = profile.maxOutputTokens
+        } else {
+            maxTokens = profile.maxOutputTokens
+            maxCompletionTokens = nil
+        }
         // Keep this in sync with the provider-specific JSON-mode contract used
         // by OpenAICompatibleClient.complete.
         responseFormat = profile.provider == .deepSeek ? ResponseFormat(type: "json_object") : nil

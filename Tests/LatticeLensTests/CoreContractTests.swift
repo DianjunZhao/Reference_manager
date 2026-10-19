@@ -1627,18 +1627,23 @@ final class CoreContractTests: XCTestCase {
 
         let baseline = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
                                        sourceScope: "title_abstract_figure_captions", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
-                                       model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, figureSetHash: "f",
+                                       model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 4_096, figureSetHash: "f",
                                        maximumFigures: 3, terminologyHash: "t", providerCapabilityHash: "stream=true|vision=false")
         let changedScope = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
                                            sourceScope: "fulltext_with_anchors", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
-                                           model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, figureSetHash: "f",
+                                           model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 4_096, figureSetHash: "f",
                                            maximumFigures: 3, terminologyHash: "t", providerCapabilityHash: "stream=true|vision=false")
         let changedCapability = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
                                                 sourceScope: "title_abstract_figure_captions", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
-                                                model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, figureSetHash: "f",
+                                                model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 8_192, figureSetHash: "f",
                                                 maximumFigures: 0, terminologyHash: "different", providerCapabilityHash: "stream=true|vision=true")
         XCTAssertNotEqual(baseline.value, changedScope.value)
         XCTAssertNotEqual(baseline.value, changedCapability.value)
+        let changedOutputLimit = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
+                                                 sourceScope: "title_abstract_figure_captions", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
+                                                 model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 8_192, figureSetHash: "f",
+                                                 maximumFigures: 3, terminologyHash: "t", providerCapabilityHash: "stream=true|vision=false")
+        XCTAssertNotEqual(baseline.value, changedOutputLimit.value)
     }
 
     func testEndpointPolicyAndSSEContract() throws {
@@ -1660,6 +1665,16 @@ final class CoreContractTests: XCTestCase {
         let eofPayload = "data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"格\"},{\"type\":\"text\",\"text\":\"点\"}]}}]}\n"
         XCTAssertEqual(try localParser.consume(Data(eofPayload.utf8)), [])
         XCTAssertEqual(try localParser.finish(), ["格点"])
+
+        var truncatedParser = OpenAICompatibleSSEParser()
+        let truncatedPayload = "data: {\"choices\":[{\"delta\":{\"content\":\"partial JSON\"},\"finish_reason\":\"length\"}]}\n\n"
+        XCTAssertThrowsError(try truncatedParser.consume(Data(truncatedPayload.utf8))) { error in
+            XCTAssertEqual(error as? LLMClientError, .outputLimitReached)
+        }
+        let truncatedCompletion = Data(#"{"choices":[{"message":{"content":"partial JSON"},"finish_reason":"length"}]}"#.utf8)
+        XCTAssertThrowsError(try OpenAICompatiblePayloadDecoder.completionText(from: truncatedCompletion)) { error in
+            XCTAssertEqual(error as? LLMClientError, .outputLimitReached)
+        }
 
         XCTAssertTrue(PaperInsightPrompt.systemInstruction.contains("exact root keys"))
         XCTAssertTrue(PaperInsightPrompt.systemInstruction.contains("no wrapper"))

@@ -36,7 +36,7 @@ actor InsightWorkflow {
                                promptVersion: PaperInsightPrompt.version, insightSchemaVersion: ProductContract.insightSchemaVersion,
                                sourceScope: ProductContract.sourceScope, provider: settings.activeProvider.rawValue,
                                normalizedBaseURL: baseURL, model: profile.effectiveModel, credentialRevision: settings.credentialRevision, mode: settings.mode,
-                               detailLevel: settings.detailLevel,
+                               detailLevel: settings.detailLevel, maxOutputTokens: profile.maxOutputTokens,
                                figureSetHash: StableHash.sha256(source.figures.map(\.key).sorted().joined(separator: "|")),
                                maximumFigures: settings.maximumFigures,
                                terminologyHash: StableHash.sha256(settings.terminology.map { "\($0.source)|\($0.preferredZH)|\($0.note)" }.sorted().joined(separator: "\n")),

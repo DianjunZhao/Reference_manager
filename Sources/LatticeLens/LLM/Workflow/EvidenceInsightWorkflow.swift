@@ -67,6 +67,7 @@ actor EvidenceInsightWorkflow {
             credentialRevision: settings.credentialRevision,
             mode: settings.mode,
             detailLevel: settings.detailLevel,
+            maxOutputTokens: profile.maxOutputTokens,
             maximumFigures: settings.maximumFigures,
             terminologyHash: StableHash.sha256(settings.terminology.map { "\($0.source)|\($0.preferredZH)|\($0.note)" }.sorted().joined(separator: "\n")),
             providerCapabilityHash: StableHash.sha256("stream=\(profile.usesStreaming)|vision=\(profile.supportsVision)")

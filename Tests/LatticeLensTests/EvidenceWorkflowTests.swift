@@ -18,10 +18,14 @@ private struct FormulaBatchRequestBodyFixture: Encodable {
     let model: String
     let messages: [Message]
     let stream: Bool
+    let maxTokens: Int?
+    let maxCompletionTokens: Int?
     let responseFormat: ResponseFormat?
 
     enum CodingKeys: String, CodingKey {
         case model, messages, stream
+        case maxTokens = "max_tokens"
+        case maxCompletionTokens = "max_completion_tokens"
         case responseFormat = "response_format"
     }
 
@@ -29,6 +33,13 @@ private struct FormulaBatchRequestBodyFixture: Encodable {
         model = profile.effectiveModel
         messages = [Message(role: "system", content: system), Message(role: "user", content: userPayload)]
         stream = profile.usesStreaming
+        if profile.provider == .openAI {
+            maxTokens = nil
+            maxCompletionTokens = profile.maxOutputTokens
+        } else {
+            maxTokens = profile.maxOutputTokens
+            maxCompletionTokens = nil
+        }
         responseFormat = profile.provider == .deepSeek ? ResponseFormat(type: "json_object") : nil
     }
 
@@ -646,7 +657,8 @@ final class EvidenceWorkflowTests: XCTestCase {
                                               chunkIDs: [chunk.id], promptVersion: EvidenceInsightPrompt.version,
                                               schemaVersion: PaperInsightV2Validator.schemaVersion, sourceScope: PaperInsightV2Validator.sourceScope,
                                               provider: "openAI", normalizedBaseURL: "https://example.test/v1", model: "fixture", credentialRevision: 0,
-                                              mode: .fast, detailLevel: .standard, maximumFigures: 3, terminologyHash: StableHash.sha256(""),
+                                              mode: .fast, detailLevel: .standard, maxOutputTokens: ProviderProfile.defaultMaximumOutputTokens,
+                                              maximumFigures: 3, terminologyHash: StableHash.sha256(""),
                                               providerCapabilityHash: StableHash.sha256("stream=false|vision=false"))
         XCTAssertNotEqual(first.cacheKey, changed.value)
     }
@@ -963,6 +975,7 @@ final class EvidenceWorkflowTests: XCTestCase {
         let expectedFingerprint = StableHash.sha256([
             profile.provider.rawValue, "https://fixture.invalid/v1", profile.effectiveModel,
             String(profile.usesStreaming), String(profile.supportsVision),
+            String(profile.maxOutputTokens),
             String(profile.discoveryCredentialRevision),
             OpenAICompatibleCompletionRequestBody.serializationContractVersion, "fixture-settings"
         ].joined(separator: "|"))

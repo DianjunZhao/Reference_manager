@@ -286,6 +286,16 @@ struct SettingsView: View {
                                 optionTitle: { $0.displayName }
                             )
                         }
+                        SettingsControlRow("最大输出 token") {
+                            SettingsMenuButton(
+                                title: "最大输出 token",
+                                selection: activeProfileBinding(\.maxOutputTokens),
+                                options: ProviderProfile.maximumOutputTokenChoices,
+                                optionTitle: { String($0) }
+                            )
+                        }
+                        Text("每次请求分别应用此上限；达到 token/上下文长度限制时，不完整 JSON 会失败且不会自动重试。")
+                            .font(.caption).foregroundStyle(.secondary)
                         SettingsControlRow("重要图像") {
                             SettingsMenuButton(
                                 title: "重要图像",
@@ -623,6 +633,12 @@ struct ProductionSettingsView: View {
                     SettingsMenuButton(title: "详细度", selection: $draft.detailLevel,
                                        options: InsightDetailLevel.allCases,
                                        optionTitle: { $0.displayName })
+                    SettingsMenuButton(title: "最大输出 token",
+                                       selection: activeProfileBinding(\.maxOutputTokens),
+                                       options: ProviderProfile.maximumOutputTokenChoices,
+                                       optionTitle: String.init)
+                    Text("每次请求分别应用；触及 token/上下文上限时不完整结果会失败，不会自动重试。")
+                        .font(.caption).foregroundStyle(.secondary)
                     SettingsMenuButton(title: "重要图像", selection: $draft.maximumFigures,
                                        options: [0, 3, 5], optionTitle: String.init)
                     Text("证据范围：标题 + 摘要 + captions；不发送全文或图像像素。")

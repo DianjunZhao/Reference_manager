@@ -709,6 +709,7 @@ struct EvidenceInsightCacheKey: Hashable, Sendable {
     let credentialRevision: Int
     let mode: InsightMode
     let detailLevel: InsightDetailLevel
+    let maxOutputTokens: Int
     let maximumFigures: Int
     let terminologyHash: String
     let providerCapabilityHash: String
@@ -718,7 +719,7 @@ struct EvidenceInsightCacheKey: Hashable, Sendable {
             String(paperID), paperUpdated?.ISO8601Format() ?? "", documentHash,
             chunkIDs.sorted().joined(separator: "|"), promptVersion, schemaVersion,
             sourceScope, provider, normalizedBaseURL, model, String(credentialRevision),
-            mode.rawValue, detailLevel.rawValue, String(maximumFigures), terminologyHash,
+            mode.rawValue, detailLevel.rawValue, String(maxOutputTokens), String(maximumFigures), terminologyHash,
             providerCapabilityHash
         ]
         return StableHash.sha256(fields.joined(separator: "|"))

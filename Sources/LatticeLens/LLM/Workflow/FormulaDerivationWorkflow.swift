@@ -131,6 +131,7 @@ actor FormulaDerivationWorkflow {
         return StableHash.sha256([
             profile.provider.rawValue, endpoint, profile.effectiveModel,
             String(profile.usesStreaming), String(profile.supportsVision),
+            String(profile.maxOutputTokens),
             String(profile.discoveryCredentialRevision),
             OpenAICompatibleCompletionRequestBody.serializationContractVersion,
             settingsFingerprint ?? ""

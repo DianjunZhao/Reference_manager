@@ -33,9 +33,39 @@ final class V5FinalTests: XCTestCase {
         let settings = LLMSettings()
         XCTAssertEqual(settings.activeProvider, .localOpenAICompatible)
         XCTAssertEqual(settings.activeProfile.baseURL, "http://127.0.0.1:11434/v1")
+        XCTAssertEqual(settings.activeProfile.maxOutputTokens, ProviderProfile.defaultMaximumOutputTokens)
         XCTAssertFalse(LLMProvider.localOpenAICompatible.apiKeyIsRequired)
         XCTAssertTrue(LLMProvider.openAI.apiKeyIsRequired)
         XCTAssertTrue(LLMProvider.allCases.contains(.localOpenAICompatible))
+    }
+
+    func testMaximumOutputTokensArePersistedBoundedAndProviderSpecific() throws {
+        let oldProfileJSON = Data(#"{"provider":"localOpenAICompatible","baseURL":"http://127.0.0.1:11434/v1","manualModel":"fixture"}"#.utf8)
+        let oldProfile = try JSONDecoder.latticeLens.decode(ProviderProfile.self, from: oldProfileJSON)
+        XCTAssertEqual(oldProfile.maxOutputTokens, ProviderProfile.defaultMaximumOutputTokens)
+        XCTAssertEqual(ProviderProfile(provider: .openAI, baseURL: "https://example.test/v1", maxOutputTokens: 3).maxOutputTokens,
+                       ProviderProfile.defaultMaximumOutputTokens)
+
+        func body(for profile: ProviderProfile) throws -> [String: Any] {
+            let data = try OpenAICompatibleCompletionRequestBody(
+                system: "system", userPayload: "payload", profile: profile).encoded()
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+
+        let openAI = try body(for: ProviderProfile(provider: .openAI, baseURL: "https://api.openai.com/v1",
+                                                   manualModel: "fixture", maxOutputTokens: 8_192))
+        XCTAssertEqual(openAI["max_completion_tokens"] as? Int, 8_192)
+        XCTAssertNil(openAI["max_tokens"])
+
+        let deepSeek = try body(for: ProviderProfile(provider: .deepSeek, baseURL: "https://api.deepseek.com/v1",
+                                                     manualModel: "fixture", maxOutputTokens: 2_048))
+        XCTAssertEqual(deepSeek["max_tokens"] as? Int, 2_048)
+        XCTAssertNil(deepSeek["max_completion_tokens"])
+
+        let local = try body(for: ProviderProfile(provider: .localOpenAICompatible,
+                                                  baseURL: "http://127.0.0.1:11434/v1", manualModel: "fixture"))
+        XCTAssertEqual(local["max_tokens"] as? Int, ProviderProfile.defaultMaximumOutputTokens)
+        XCTAssertNil(local["max_completion_tokens"])
     }
 
     func testLegacySingleOpenAIProfileDoesNotSilentlySwitchToLocal() {
@@ -420,6 +450,37 @@ final class V5FinalTests: XCTestCase {
         XCTAssertEqual(savedSnapshot.insights[artifact.cacheKey]?.paperID, paper.literatureID)
     }
 
+    func testOutputTokenLimitFailsWithoutPublishingPartialInsight() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [V5TruncatedLLMURLProtocol.self]
+        let client = OpenAICompatibleClient(session: URLSession(configuration: configuration))
+        let store = InMemoryLibraryStore()
+        let profile = ProviderProfile(provider: .localOpenAICompatible,
+                                      baseURL: "http://127.0.0.1:11434/v1",
+                                      manualModel: "fixture-local")
+        let settings = LLMSettings(activeProvider: .localOpenAICompatible,
+                                   profiles: [LLMProvider.localOpenAICompatible.rawValue: profile])
+        let paper = Paper(literatureID: 77,
+                          titles: [PaperTitle(value: "A lattice report", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "A bounded fixture abstract.", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: "2401.00077",
+                          arxivCategories: ["hep-lat"], doi: nil, citationCount: nil,
+                          publicationStatus: nil, updated: Date(timeIntervalSince1970: 77),
+                          figures: [], firstSeenAt: Date(timeIntervalSince1970: 77), isRead: false)
+        let workflow = InsightWorkflow(store: store, client: client,
+                                       timeouts: V4AnalysisTimeouts(connect: 1, firstContent: 1, idle: 1, hard: 5))
+
+        do {
+            _ = try await workflow.generate(for: paper, settings: settings, apiKey: "") { _ in }
+            XCTFail("a response marked finish_reason=length must fail closed")
+        } catch {
+            XCTAssertEqual(error as? LLMClientError, .outputLimitReached)
+        }
+        let snapshot = await store.snapshot()
+        XCTAssertTrue(snapshot.insights.isEmpty,
+                      "partial JSON must not replace or publish an InsightArtifact")
+    }
+
     @MainActor
     func testV9TypedStoreSearchUsesDurableIncrementalPaperTokenRows() async throws {
         func paper(_ id: Int, title: String) -> Paper {
@@ -635,6 +696,31 @@ private final class V5LLMURLProtocol: URLProtocol, @unchecked Sendable {
         let data = try! JSONSerialization.data(withJSONObject: payload, options: [])
         let body = "data: \(String(decoding: data, as: UTF8.self))\n"
         client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private final class V5TruncatedLLMURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.path == "/v1/chat/completions"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                             headerFields: ["Content-Type": "text/event-stream"]) else {
+            client?.urlProtocol(self, didFailWithError: LLMClientError.invalidResponse)
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        let payload = try! JSONSerialization.data(withJSONObject: [
+            "choices": [["delta": ["content": "{\"schema_version\":"], "finish_reason": "length"]]
+        ])
+        client?.urlProtocol(self, didLoad: Data("data: \(String(decoding: payload, as: UTF8.self))\n\n".utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 

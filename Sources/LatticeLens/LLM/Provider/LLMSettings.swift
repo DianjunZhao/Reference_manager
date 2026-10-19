@@ -34,6 +34,9 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 struct ProviderProfile: Codable, Hashable, Sendable {
+    static let maximumOutputTokenChoices = [1_024, 2_048, 4_096, 8_192, 16_384]
+    static let defaultMaximumOutputTokens = 4_096
+
     /// This value is part of the profile's runtime policy.  `activeProfile`
     /// always resets it from `LLMSettings.activeProvider`, preventing an old
     /// serialized custom profile from gaining loopback privileges.
@@ -42,19 +45,24 @@ struct ProviderProfile: Codable, Hashable, Sendable {
     var selectedModel: String
     var manualModel: String
     var usesStreaming: Bool
+    /// Per-request output bound. The value is part of request/cache identity;
+    /// old settings without this field migrate to a finite default.
+    var maxOutputTokens: Int
     /// Vision is a user-confirmed capability, never inferred from a model id.
     var supportsVision: Bool
     /// Injected by LLMSettings.activeProfile; this is a non-secret cache
     /// generation and is never serialized as a credential or key hash.
     var discoveryCredentialRevision: Int
 
-    init(provider: LLMProvider = .customOpenAICompatible, baseURL: String, selectedModel: String = "", manualModel: String = "", usesStreaming: Bool = true, supportsVision: Bool = false,
+    init(provider: LLMProvider = .customOpenAICompatible, baseURL: String, selectedModel: String = "", manualModel: String = "", usesStreaming: Bool = true,
+         maxOutputTokens: Int = Self.defaultMaximumOutputTokens, supportsVision: Bool = false,
          discoveryCredentialRevision: Int = 0) {
         self.provider = provider
         self.baseURL = baseURL
         self.selectedModel = selectedModel
         self.manualModel = manualModel
         self.usesStreaming = usesStreaming
+        self.maxOutputTokens = Self.normalizedMaximumOutputTokens(maxOutputTokens)
         self.supportsVision = supportsVision
         self.discoveryCredentialRevision = max(0, discoveryCredentialRevision)
     }
@@ -64,7 +72,14 @@ struct ProviderProfile: Codable, Hashable, Sendable {
         return selected.isEmpty ? manualModel.trimmingCharacters(in: .whitespacesAndNewlines) : selected
     }
 
-    private enum CodingKeys: String, CodingKey { case provider, baseURL, selectedModel, manualModel, usesStreaming, supportsVision, discoveryCredentialRevision }
+    private static func normalizedMaximumOutputTokens(_ value: Int) -> Int {
+        maximumOutputTokenChoices.contains(value) ? value : defaultMaximumOutputTokens
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case provider, baseURL, selectedModel, manualModel, usesStreaming, maxOutputTokens
+        case supportsVision, discoveryCredentialRevision
+    }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -73,6 +88,8 @@ struct ProviderProfile: Codable, Hashable, Sendable {
         selectedModel = try values.decodeIfPresent(String.self, forKey: .selectedModel) ?? ""
         manualModel = try values.decodeIfPresent(String.self, forKey: .manualModel) ?? ""
         usesStreaming = try values.decodeIfPresent(Bool.self, forKey: .usesStreaming) ?? true
+        maxOutputTokens = Self.normalizedMaximumOutputTokens(
+            try values.decodeIfPresent(Int.self, forKey: .maxOutputTokens) ?? Self.defaultMaximumOutputTokens)
         supportsVision = try values.decodeIfPresent(Bool.self, forKey: .supportsVision) ?? false
         discoveryCredentialRevision = try values.decodeIfPresent(Int.self, forKey: .discoveryCredentialRevision) ?? 0
     }
@@ -183,7 +200,8 @@ struct LLMSettings: Codable, Sendable {
         let normalized = (try? APIEndpointBuilder.normalizedBaseURL(from: profile.baseURL, provider: profile.provider).absoluteString) ?? "invalid"
         let terms = terminology.map { "\($0.source)|\($0.preferredZH)|\($0.note)" }.sorted().joined(separator: "\n")
         return StableHash.sha256([activeProvider.rawValue, normalized, profile.effectiveModel, String(profile.usesStreaming),
-                                  String(profile.supportsVision), String(credentialRevision), mode.rawValue,
+                                  String(profile.maxOutputTokens), String(profile.supportsVision),
+                                  String(credentialRevision), mode.rawValue,
                                   detailLevel.rawValue, String(maximumFigures), terms].joined(separator: "|"))
     }
 
