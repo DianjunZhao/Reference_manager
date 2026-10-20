@@ -170,10 +170,10 @@ actor VisionWorkflow {
     private let store: any LibraryStoring
     private let client: any VisionCompleting
     private let loader: any VisionImageLoading
-    private let timeouts: V4AnalysisTimeouts
+    private let timeouts: V4AnalysisTimeouts?
 
     init(store: any LibraryStoring, client: any VisionCompleting = OpenAICompatibleClient(),
-         loader: any VisionImageLoading = URLVisionImageLoader(), timeouts: V4AnalysisTimeouts = .default) {
+         loader: any VisionImageLoading = URLVisionImageLoader(), timeouts: V4AnalysisTimeouts? = nil) {
         self.store = store; self.client = client; self.loader = loader; self.timeouts = timeouts
     }
 
@@ -276,8 +276,15 @@ actor VisionWorkflow {
         onDelta: @escaping @Sendable (String) async -> Void
     ) async throws -> String {
         let client = self.client
+        let requestTimeouts: V4AnalysisTimeouts
+        if let timeouts {
+            requestTimeouts = timeouts
+        } else {
+            requestTimeouts = V4AnalysisTimeouts.default.usingHardTimeout(
+                TimeInterval(profile.requestTimeoutSeconds))
+        }
         return try await V4AnalysisDeadlineEnforcer.perform(
-            timeouts: timeouts,
+            timeouts: requestTimeouts,
             maximumResponseBytes: maximumResponseBytes,
             onTransportState: onTransportState,
             onDelta: onDelta
@@ -285,6 +292,7 @@ actor VisionWorkflow {
             try await client.completeVision(system: system, userPayload: userPayload, images: images,
                                             profile: profile, apiKey: apiKey,
                                             maximumResponseBytes: maximumResponseBytes,
+                                            requestTimeout: requestTimeouts.hard,
                                             onTransportState: transport, onDelta: delta)
         }
     }

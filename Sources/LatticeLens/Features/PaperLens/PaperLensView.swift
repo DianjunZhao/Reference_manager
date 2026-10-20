@@ -1546,6 +1546,6 @@ private struct InsightStatusBar: View {
     private func elapsedSuffix(at date: Date) -> String {
         guard viewModel.isInsightRunning else { return "" }
         guard let started = viewModel.insightStartedAt else { return "" }
-        return " · \(max(0, Int(date.timeIntervalSince(started)))) s"
+        return " · 任务 \(max(0, Int(date.timeIntervalSince(started)))) s"
     }
 }

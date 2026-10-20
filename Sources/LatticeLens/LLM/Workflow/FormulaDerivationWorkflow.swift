@@ -110,11 +110,11 @@ enum FormulaDerivationWorkflowError: LocalizedError {
 actor FormulaDerivationWorkflow {
     private let client: any LLMCompleting
     private let store: any FormulaJobStoring
-    private let timeouts: V4AnalysisTimeouts
+    private let timeouts: V4AnalysisTimeouts?
 
     init(client: any LLMCompleting = OpenAICompatibleClient(),
          store: any FormulaJobStoring = InMemoryFormulaJobStore(),
-         timeouts: V4AnalysisTimeouts = .default) {
+         timeouts: V4AnalysisTimeouts? = nil) {
         self.client = client
         self.store = store
         self.timeouts = timeouts
@@ -501,9 +501,16 @@ actor FormulaDerivationWorkflow {
                 message: "公式批次 \(batch.index + 1)/\(batch.total) segment 正在接收"))
         }
         let provider = client
-        let requestTimeout = timeouts.hard
+        let requestTimeouts: V4AnalysisTimeouts
+        if let timeouts {
+            requestTimeouts = timeouts
+        } else {
+            requestTimeouts = V4AnalysisTimeouts.default.usingHardTimeout(
+                TimeInterval(profile.requestTimeoutSeconds))
+        }
+        let requestTimeout = requestTimeouts.hard
         let response = try await V4AnalysisDeadlineEnforcer.perform(
-            timeouts: timeouts,
+            timeouts: requestTimeouts,
             maximumResponseBytes: PaperInsightValidator.maximumResponseBytes,
             onTransportState: transport,
             onDelta: delta

@@ -2314,7 +2314,8 @@ private actor VisionMockClient: VisionCompleting {
     private var count = 0
     init(response: String) { self.response = response }
     func completeVision(system: String, userPayload: String, images: [VisionInputImage], profile: ProviderProfile, apiKey: String,
-                        maximumResponseBytes: Int, onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
+                        maximumResponseBytes: Int, requestTimeout: TimeInterval,
+                        onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
                         onDelta: @escaping @Sendable (String) async -> Void) async throws -> String {
         count += 1
         await onTransportState(.waitingFirstContent)
@@ -2547,7 +2548,8 @@ private actor DelayedVisionClient: VisionCompleting {
     private var count = 0
 
     func completeVision(system: String, userPayload: String, images: [VisionInputImage], profile: ProviderProfile, apiKey: String,
-                        maximumResponseBytes: Int, onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
+                        maximumResponseBytes: Int, requestTimeout: TimeInterval,
+                        onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
                         onDelta: @escaping @Sendable (String) async -> Void) async throws -> String {
         count += 1
         try await Task.sleep(for: .milliseconds(100))

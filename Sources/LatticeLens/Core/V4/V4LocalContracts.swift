@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 
 // MARK: - v4 local product state
 
@@ -390,6 +391,10 @@ struct V4AnalysisTimeouts: Sendable, Equatable {
     /// HTTP request. Each prose/formula request uses the same finite phase and
     /// resource limits; the job can continue or resume across many attempts.
     static let evidence = V4AnalysisTimeouts.default
+
+    func usingHardTimeout(_ seconds: TimeInterval) -> V4AnalysisTimeouts {
+        V4AnalysisTimeouts(connect: connect, firstContent: firstContent, idle: idle, hard: seconds)
+    }
 }
 
 /// A deadline identifies the transport phase that failed.  It deliberately
@@ -419,29 +424,34 @@ enum V4AnalysisDeadlineError: LocalizedError, Equatable, Sendable {
 /// transport task and the deadline task, so a callback arriving after timeout
 /// is ignored before it reaches ObservableObject/UI state.
 private actor V4AnalysisDeadlineMonitor {
-    private let startedAt: Date
+    // Deadlines measure elapsed request time, so they must use a monotonic
+    // clock rather than wall-clock Date (which can jump after time sync or
+    // manual clock changes).
+    private let startedAtUptimeNanoseconds: UInt64
     private let timeouts: V4AnalysisTimeouts
     private let maximumResponseBytes: Int
-    private var connectedAt: Date?
-    private var firstContentAt: Date?
-    private var lastContentAt: Date?
+    private var connectedAtUptimeNanoseconds: UInt64?
+    private var firstContentAtUptimeNanoseconds: UInt64?
+    private var lastContentAtUptimeNanoseconds: UInt64?
     private var receivedBytes = 0
     private var terminalFailure: V4AnalysisDeadlineError?
 
-    init(timeouts: V4AnalysisTimeouts, maximumResponseBytes: Int, startedAt: Date = Date()) {
+    init(timeouts: V4AnalysisTimeouts, maximumResponseBytes: Int,
+         startedAtUptimeNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) {
         self.timeouts = timeouts
         self.maximumResponseBytes = maximumResponseBytes
-        self.startedAt = startedAt
+        self.startedAtUptimeNanoseconds = startedAtUptimeNanoseconds
     }
 
     /// Returns false when a previously terminal request produced a late
     /// callback.  The caller must then avoid publishing that callback.
-    func recordTransport(_ state: LLMTransportState, at date: Date = Date()) -> Bool {
-        evaluate(at: date)
+    func recordTransport(_ state: LLMTransportState,
+                         at uptimeNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) -> Bool {
+        evaluate(at: uptimeNanoseconds)
         guard terminalFailure == nil else { return false }
         switch state {
         case .connected:
-            connectedAt = connectedAt ?? date
+            connectedAtUptimeNanoseconds = connectedAtUptimeNanoseconds ?? uptimeNanoseconds
         case .waitingFirstContent:
             break
         case .receivedTransportActivity:
@@ -450,12 +460,13 @@ private actor V4AnalysisDeadlineMonitor {
             // decoded-content idle deadline.
             break
         }
-        evaluate(at: date)
+        evaluate(at: uptimeNanoseconds)
         return terminalFailure == nil
     }
 
-    func recordDelta(_ value: String, at date: Date = Date()) -> Bool {
-        evaluate(at: date)
+    func recordDelta(_ value: String,
+                     at uptimeNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) -> Bool {
+        evaluate(at: uptimeNanoseconds)
         guard terminalFailure == nil else { return false }
         let byteCount = value.lengthOfBytes(using: .utf8)
         receivedBytes += byteCount
@@ -463,14 +474,14 @@ private actor V4AnalysisDeadlineMonitor {
             terminalFailure = .responseTooLarge
             return false
         }
-        firstContentAt = firstContentAt ?? date
-        lastContentAt = date
-        evaluate(at: date)
+        firstContentAtUptimeNanoseconds = firstContentAtUptimeNanoseconds ?? uptimeNanoseconds
+        lastContentAtUptimeNanoseconds = uptimeNanoseconds
+        evaluate(at: uptimeNanoseconds)
         return terminalFailure == nil
     }
 
-    func failure(at date: Date = Date()) -> V4AnalysisDeadlineError? {
-        evaluate(at: date)
+    func failure(at uptimeNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) -> V4AnalysisDeadlineError? {
+        evaluate(at: uptimeNanoseconds)
         return terminalFailure
     }
 
@@ -483,38 +494,48 @@ private actor V4AnalysisDeadlineMonitor {
         }
     }
 
-    private func nextWakeNanoseconds(at date: Date = Date()) -> UInt64 {
-        var deadlines = [Date]()
+    private func nextWakeNanoseconds(at uptimeNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) -> UInt64 {
+        var deadlines = [UInt64]()
         if timeouts.hard.isFinite {
-            deadlines.append(startedAt.addingTimeInterval(timeouts.hard))
+            deadlines.append(deadline(after: timeouts.hard, from: startedAtUptimeNanoseconds))
         }
-        if connectedAt == nil, timeouts.connect.isFinite {
-            deadlines.append(startedAt.addingTimeInterval(timeouts.connect))
-        } else if firstContentAt == nil, timeouts.firstContent.isFinite {
-            deadlines.append((connectedAt ?? startedAt).addingTimeInterval(timeouts.firstContent))
-        } else if let lastContentAt, timeouts.idle.isFinite {
-            deadlines.append(lastContentAt.addingTimeInterval(timeouts.idle))
+        if connectedAtUptimeNanoseconds == nil, timeouts.connect.isFinite {
+            deadlines.append(deadline(after: timeouts.connect, from: startedAtUptimeNanoseconds))
+        } else if firstContentAtUptimeNanoseconds == nil, timeouts.firstContent.isFinite {
+            deadlines.append(deadline(after: timeouts.firstContent,
+                                     from: connectedAtUptimeNanoseconds ?? startedAtUptimeNanoseconds))
+        } else if let lastContentAtUptimeNanoseconds, timeouts.idle.isFinite {
+            deadlines.append(deadline(after: timeouts.idle, from: lastContentAtUptimeNanoseconds))
         }
         // With no finite deadline, wake only occasionally as a cancellation
         // fallback.  `Task.sleep` itself is cancellation-aware, so this does
         // not defer the user's Cancel action.
-        let seconds = deadlines.min().map { max(0.001, min(60, $0.timeIntervalSince(date))) } ?? 60
-        return UInt64(seconds * 1_000_000_000)
+        guard let nextDeadline = deadlines.min() else { return 60_000_000_000 }
+        guard nextDeadline > uptimeNanoseconds else { return 1_000_000 }
+        return min(60_000_000_000, nextDeadline - uptimeNanoseconds)
     }
 
-    private func evaluate(at date: Date) {
+    private func deadline(after seconds: TimeInterval, from start: UInt64) -> UInt64 {
+        let delta = seconds * 1_000_000_000
+        guard delta.isFinite, delta < Double(UInt64.max - start) else { return .max }
+        return start + UInt64(delta)
+    }
+
+    private func evaluate(at uptimeNanoseconds: UInt64) {
         guard terminalFailure == nil else { return }
-        if timeouts.hard.isFinite && date >= startedAt.addingTimeInterval(timeouts.hard) {
-            terminalFailure = .hard
-        } else if connectedAt == nil, timeouts.connect.isFinite,
-                  date >= startedAt.addingTimeInterval(timeouts.connect) {
+        if connectedAtUptimeNanoseconds == nil, timeouts.connect.isFinite,
+           uptimeNanoseconds >= deadline(after: timeouts.connect, from: startedAtUptimeNanoseconds) {
             terminalFailure = .connect
-        } else if firstContentAt == nil, timeouts.firstContent.isFinite,
-                  date >= (connectedAt ?? startedAt).addingTimeInterval(timeouts.firstContent) {
+        } else if firstContentAtUptimeNanoseconds == nil, timeouts.firstContent.isFinite,
+                  uptimeNanoseconds >= deadline(after: timeouts.firstContent,
+                                                from: connectedAtUptimeNanoseconds ?? startedAtUptimeNanoseconds) {
             terminalFailure = .firstContent
-        } else if let lastContentAt, timeouts.idle.isFinite,
-                  date >= lastContentAt.addingTimeInterval(timeouts.idle) {
+        } else if let lastContentAtUptimeNanoseconds, timeouts.idle.isFinite,
+                  uptimeNanoseconds >= deadline(after: timeouts.idle, from: lastContentAtUptimeNanoseconds) {
             terminalFailure = .idle
+        } else if timeouts.hard.isFinite,
+                  uptimeNanoseconds >= deadline(after: timeouts.hard, from: startedAtUptimeNanoseconds) {
+            terminalFailure = .hard
         }
     }
 }

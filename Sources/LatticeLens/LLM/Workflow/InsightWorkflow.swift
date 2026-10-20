@@ -15,10 +15,12 @@ enum InsightWorkflowState: Equatable, Sendable {
 actor InsightWorkflow {
     private let store: any LibraryStoring
     private let client: any LLMCompleting
-    private let timeouts: V4AnalysisTimeouts
+    /// Explicit values are deterministic test/embedding overrides. Product
+    /// requests otherwise take their finite hard budget from the active profile.
+    private let timeouts: V4AnalysisTimeouts?
 
     init(store: any LibraryStoring, client: any LLMCompleting = OpenAICompatibleClient(),
-         timeouts: V4AnalysisTimeouts = .default) {
+         timeouts: V4AnalysisTimeouts? = nil) {
         self.store = store
         self.client = client
         self.timeouts = timeouts
@@ -52,7 +54,10 @@ actor InsightWorkflow {
         let profile = settings.activeProfile
         let source = InsightSourcePayload(paper: paper)
         let cacheKey = try Self.cacheKey(for: paper, settings: settings)
-        if let cached = await store.snapshot().insights[cacheKey.value] {
+        // Use the store's bounded cache-key lookup.  Materializing a complete
+        // library snapshot here makes a one-paper cache hit scale with every
+        // author, search posting, and artifact in the library.
+        if let cached = await store.insight(cacheKey: cacheKey.value) {
             await onState(.completed(cacheHit: true, requestCount: 0))
             return cached
         }
@@ -156,14 +161,28 @@ actor InsightWorkflow {
         onDelta: @escaping @Sendable (String) async -> Void
     ) async throws -> String {
         let client = self.client
+        let requestTimeouts: V4AnalysisTimeouts
+        if let timeouts {
+            requestTimeouts = timeouts
+        } else {
+            requestTimeouts = V4AnalysisTimeouts.default.usingHardTimeout(
+                TimeInterval(profile.requestTimeoutSeconds))
+        }
         return try await V4AnalysisDeadlineEnforcer.perform(
-            timeouts: timeouts,
+            timeouts: requestTimeouts,
             maximumResponseBytes: maximumResponseBytes,
             onTransportState: onTransportState,
             onDelta: onDelta
         ) { transport, delta in
-            try await client.complete(system: system, userPayload: userPayload, profile: profile, apiKey: apiKey,
-                                      maximumResponseBytes: maximumResponseBytes, onTransportState: transport, onDelta: delta)
+            if let configurable = client as? any LLMRequestTimeoutConfiguring {
+                return try await configurable.complete(
+                    system: system, userPayload: userPayload, profile: profile, apiKey: apiKey,
+                    maximumResponseBytes: maximumResponseBytes, requestTimeout: requestTimeouts.hard,
+                    onTransportState: transport, onDelta: delta
+                )
+            }
+            return try await client.complete(system: system, userPayload: userPayload, profile: profile, apiKey: apiKey,
+                                             maximumResponseBytes: maximumResponseBytes, onTransportState: transport, onDelta: delta)
         }
     }
 }

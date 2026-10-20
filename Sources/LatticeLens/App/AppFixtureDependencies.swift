@@ -89,6 +89,7 @@ struct AppFixtureLLMClient: LLMCompleting, VisionCompleting {
         profile: ProviderProfile,
         apiKey: String,
         maximumResponseBytes: Int,
+        requestTimeout: TimeInterval,
         onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
         onDelta: @escaping @Sendable (String) async -> Void
     ) async throws -> String {

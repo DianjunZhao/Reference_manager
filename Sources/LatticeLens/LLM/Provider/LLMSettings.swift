@@ -36,6 +36,8 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable, Sendable {
 struct ProviderProfile: Codable, Hashable, Sendable {
     static let maximumOutputTokenChoices = [1_024, 2_048, 4_096, 8_192, 16_384]
     static let defaultMaximumOutputTokens = 4_096
+    static let requestTimeoutChoices = [600, 900, 1_200, 1_800, 3_600]
+    static let defaultRequestTimeoutSeconds = 1_800
 
     /// This value is part of the profile's runtime policy.  `activeProfile`
     /// always resets it from `LLMSettings.activeProvider`, preventing an old
@@ -48,6 +50,8 @@ struct ProviderProfile: Codable, Hashable, Sendable {
     /// Per-request output bound. The value is part of request/cache identity;
     /// old settings without this field migrate to a finite default.
     var maxOutputTokens: Int
+    /// Finite per-request budget. Phase deadlines and cancellation remain separate.
+    var requestTimeoutSeconds: Int
     /// Vision is a user-confirmed capability, never inferred from a model id.
     var supportsVision: Bool
     /// Injected by LLMSettings.activeProfile; this is a non-secret cache
@@ -55,7 +59,9 @@ struct ProviderProfile: Codable, Hashable, Sendable {
     var discoveryCredentialRevision: Int
 
     init(provider: LLMProvider = .customOpenAICompatible, baseURL: String, selectedModel: String = "", manualModel: String = "", usesStreaming: Bool = true,
-         maxOutputTokens: Int = Self.defaultMaximumOutputTokens, supportsVision: Bool = false,
+         maxOutputTokens: Int = Self.defaultMaximumOutputTokens,
+         requestTimeoutSeconds: Int = Self.defaultRequestTimeoutSeconds,
+         supportsVision: Bool = false,
          discoveryCredentialRevision: Int = 0) {
         self.provider = provider
         self.baseURL = baseURL
@@ -63,6 +69,7 @@ struct ProviderProfile: Codable, Hashable, Sendable {
         self.manualModel = manualModel
         self.usesStreaming = usesStreaming
         self.maxOutputTokens = Self.normalizedMaximumOutputTokens(maxOutputTokens)
+        self.requestTimeoutSeconds = Self.normalizedRequestTimeoutSeconds(requestTimeoutSeconds)
         self.supportsVision = supportsVision
         self.discoveryCredentialRevision = max(0, discoveryCredentialRevision)
     }
@@ -76,8 +83,12 @@ struct ProviderProfile: Codable, Hashable, Sendable {
         maximumOutputTokenChoices.contains(value) ? value : defaultMaximumOutputTokens
     }
 
+    private static func normalizedRequestTimeoutSeconds(_ value: Int) -> Int {
+        requestTimeoutChoices.contains(value) ? value : defaultRequestTimeoutSeconds
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case provider, baseURL, selectedModel, manualModel, usesStreaming, maxOutputTokens
+        case provider, baseURL, selectedModel, manualModel, usesStreaming, maxOutputTokens, requestTimeoutSeconds
         case supportsVision, discoveryCredentialRevision
     }
 
@@ -90,6 +101,8 @@ struct ProviderProfile: Codable, Hashable, Sendable {
         usesStreaming = try values.decodeIfPresent(Bool.self, forKey: .usesStreaming) ?? true
         maxOutputTokens = Self.normalizedMaximumOutputTokens(
             try values.decodeIfPresent(Int.self, forKey: .maxOutputTokens) ?? Self.defaultMaximumOutputTokens)
+        requestTimeoutSeconds = Self.normalizedRequestTimeoutSeconds(
+            try values.decodeIfPresent(Int.self, forKey: .requestTimeoutSeconds) ?? Self.defaultRequestTimeoutSeconds)
         supportsVision = try values.decodeIfPresent(Bool.self, forKey: .supportsVision) ?? false
         discoveryCredentialRevision = try values.decodeIfPresent(Int.self, forKey: .discoveryCredentialRevision) ?? 0
     }

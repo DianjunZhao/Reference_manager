@@ -294,7 +294,17 @@ struct SettingsView: View {
                                 optionTitle: { String($0) }
                             )
                         }
+                        SettingsControlRow("单次请求硬时限") {
+                            SettingsMenuButton(
+                                title: "单次请求硬时限",
+                                selection: activeProfileBinding(\.requestTimeoutSeconds),
+                                options: ProviderProfile.requestTimeoutChoices,
+                                optionTitle: { "\($0 / 60) 分钟" }
+                            )
+                        }
                         Text("每次请求分别应用此上限；达到 token/上下文长度限制时，不完整 JSON 会失败且不会自动重试。")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("默认最多 30 分钟；连接、首内容、内容空闲和取消仍分别受限。")
                             .font(.caption).foregroundStyle(.secondary)
                         SettingsControlRow("重要图像") {
                             SettingsMenuButton(
@@ -637,7 +647,13 @@ struct ProductionSettingsView: View {
                                        selection: activeProfileBinding(\.maxOutputTokens),
                                        options: ProviderProfile.maximumOutputTokenChoices,
                                        optionTitle: String.init)
+                    SettingsMenuButton(title: "单次请求硬时限",
+                                       selection: activeProfileBinding(\.requestTimeoutSeconds),
+                                       options: ProviderProfile.requestTimeoutChoices,
+                                       optionTitle: { "\($0 / 60) 分钟" })
                     Text("每次请求分别应用；触及 token/上下文上限时不完整结果会失败，不会自动重试。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("默认最多 30 分钟；连接、首内容、内容空闲和取消仍分别受限。")
                         .font(.caption).foregroundStyle(.secondary)
                     SettingsMenuButton(title: "重要图像", selection: $draft.maximumFigures,
                                        options: [0, 3, 5], optionTitle: String.init)

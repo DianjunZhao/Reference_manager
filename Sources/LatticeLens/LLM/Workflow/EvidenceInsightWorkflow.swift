@@ -6,14 +6,14 @@ actor EvidenceInsightWorkflow {
     private let store: any LibraryStoring
     private let client: any LLMCompleting
     private let retriever: LocalEvidenceRetriever
-    private let timeouts: V4AnalysisTimeouts
+    private let timeouts: V4AnalysisTimeouts?
     private let formulaJobs: any FormulaJobStoring
 
     init(
         store: any LibraryStoring,
         client: any LLMCompleting = OpenAICompatibleClient(),
         retriever: LocalEvidenceRetriever = LocalEvidenceRetriever(),
-        timeouts: V4AnalysisTimeouts = .evidence,
+        timeouts: V4AnalysisTimeouts? = nil,
         formulaJobs: (any FormulaJobStoring)? = nil
     ) {
         self.store = store
@@ -275,9 +275,16 @@ actor EvidenceInsightWorkflow {
         onDelta: @escaping @Sendable (String) async -> Void
     ) async throws -> String {
         let client = self.client
-        let requestTimeout = self.timeouts.hard
+        let requestTimeouts: V4AnalysisTimeouts
+        if let timeouts {
+            requestTimeouts = timeouts
+        } else {
+            requestTimeouts = V4AnalysisTimeouts.evidence.usingHardTimeout(
+                TimeInterval(profile.requestTimeoutSeconds))
+        }
+        let requestTimeout = requestTimeouts.hard
         return try await V4AnalysisDeadlineEnforcer.perform(
-            timeouts: timeouts,
+            timeouts: requestTimeouts,
             maximumResponseBytes: maximumResponseBytes,
             onTransportState: onTransportState,
             onDelta: onDelta

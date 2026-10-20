@@ -165,6 +165,7 @@ protocol VisionCompleting: Sendable {
         profile: ProviderProfile,
         apiKey: String,
         maximumResponseBytes: Int,
+        requestTimeout: TimeInterval,
         onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
         onDelta: @escaping @Sendable (String) async -> Void
     ) async throws -> String
@@ -556,6 +557,7 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         profile: ProviderProfile,
         apiKey: String,
         maximumResponseBytes: Int = PaperInsightValidator.maximumResponseBytes,
+        requestTimeout: TimeInterval = V4AnalysisTimeouts.default.hard,
         onTransportState: @escaping @Sendable (LLMTransportState) async -> Void = { _ in },
         onDelta: @escaping @Sendable (String) async -> Void = { _ in }
     ) async throws -> String {
@@ -579,7 +581,8 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         ]
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: profile.provider)
         request.httpMethod = "POST"
-        request.timeoutInterval = V4AnalysisTimeouts.default.hard
+        request.timeoutInterval = requestTimeout.isFinite && requestTimeout > 0
+            ? requestTimeout : Self.defaultRequestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
         await onTransportState(.waitingFirstContent)

@@ -2391,7 +2391,8 @@ final class AppViewModel: ObservableObject {
         insightStartedAt = Date()
         let runID = UUID()
         let started = insightStartedAt ?? Date()
-        let timeouts = V4AnalysisTimeouts.default
+        let timeouts = V4AnalysisTimeouts.default.usingHardTimeout(
+            TimeInterval(settings.activeProfile.requestTimeoutSeconds))
         let sourceHash = StableHash.sha256((try? JSONEncoder.latticeLens.encode(InsightSourcePayload(paper: paper))) ?? Data())
         let requestTotal = settings.mode == .deep ? 2 : 1
         analysisRunState = V4AnalysisRunState(runID: runID, paperIDs: [paper.literatureID], requestIndex: 1,

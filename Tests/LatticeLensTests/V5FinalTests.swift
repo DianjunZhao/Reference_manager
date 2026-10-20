@@ -34,6 +34,7 @@ final class V5FinalTests: XCTestCase {
         XCTAssertEqual(settings.activeProvider, .localOpenAICompatible)
         XCTAssertEqual(settings.activeProfile.baseURL, "http://127.0.0.1:11434/v1")
         XCTAssertEqual(settings.activeProfile.maxOutputTokens, ProviderProfile.defaultMaximumOutputTokens)
+        XCTAssertEqual(settings.activeProfile.requestTimeoutSeconds, ProviderProfile.defaultRequestTimeoutSeconds)
         XCTAssertFalse(LLMProvider.localOpenAICompatible.apiKeyIsRequired)
         XCTAssertTrue(LLMProvider.openAI.apiKeyIsRequired)
         XCTAssertTrue(LLMProvider.allCases.contains(.localOpenAICompatible))
@@ -43,8 +44,17 @@ final class V5FinalTests: XCTestCase {
         let oldProfileJSON = Data(#"{"provider":"localOpenAICompatible","baseURL":"http://127.0.0.1:11434/v1","manualModel":"fixture"}"#.utf8)
         let oldProfile = try JSONDecoder.latticeLens.decode(ProviderProfile.self, from: oldProfileJSON)
         XCTAssertEqual(oldProfile.maxOutputTokens, ProviderProfile.defaultMaximumOutputTokens)
+        XCTAssertEqual(oldProfile.requestTimeoutSeconds, ProviderProfile.defaultRequestTimeoutSeconds)
         XCTAssertEqual(ProviderProfile(provider: .openAI, baseURL: "https://example.test/v1", maxOutputTokens: 3).maxOutputTokens,
                        ProviderProfile.defaultMaximumOutputTokens)
+        XCTAssertEqual(ProviderProfile(provider: .openAI, baseURL: "https://example.test/v1",
+                                       requestTimeoutSeconds: 601).requestTimeoutSeconds,
+                       ProviderProfile.defaultRequestTimeoutSeconds)
+        let extendedProfile = ProviderProfile(provider: .openAI, baseURL: "https://example.test/v1",
+                                              requestTimeoutSeconds: 3_600)
+        let encodedExtendedProfile = try JSONEncoder.latticeLens.encode(extendedProfile)
+        XCTAssertEqual(try JSONDecoder.latticeLens.decode(ProviderProfile.self, from: encodedExtendedProfile),
+                       extendedProfile)
 
         func body(for profile: ProviderProfile) throws -> [String: Any] {
             let data = try OpenAICompatibleCompletionRequestBody(
@@ -450,6 +460,30 @@ final class V5FinalTests: XCTestCase {
         XCTAssertEqual(savedSnapshot.insights[artifact.cacheKey]?.paperID, paper.literatureID)
     }
 
+    func testInsightWorkflowAppliesTheSelectedFiniteProviderDeadline() async throws {
+        let store = InMemoryLibraryStore()
+        let client = V5RequestTimeoutClient()
+        let profile = ProviderProfile(provider: .openAI, baseURL: "https://example.test/v1",
+                                      manualModel: "fixture", requestTimeoutSeconds: 3_600)
+        let settings = LLMSettings(activeProvider: .openAI,
+                                   profiles: [LLMProvider.openAI.rawValue: profile])
+        let paper = Paper(literatureID: 78,
+                          titles: [PaperTitle(value: "A bounded timeout fixture", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "No unsupported physics claim.", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: nil,
+                          arxivCategories: ["hep-lat"], doi: nil, citationCount: nil,
+                          publicationStatus: nil, updated: Date(timeIntervalSince1970: 78),
+                          figures: [], firstSeenAt: Date(timeIntervalSince1970: 78), isRead: false)
+        let workflow = InsightWorkflow(store: store, client: client)
+
+        _ = try await workflow.generate(for: paper, settings: settings, apiKey: "fixture-key") { _ in }
+
+        let observedTimeouts = await client.observedTimeouts()
+        XCTAssertEqual(observedTimeouts, [3_600])
+        XCTAssertEqual(profile.maxOutputTokens, ProviderProfile.defaultMaximumOutputTokens,
+                       "extending the request budget must not lower the JSON/output token bound")
+    }
+
     func testOutputTokenLimitFailsWithoutPublishingPartialInsight() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [V5TruncatedLLMURLProtocol.self]
@@ -700,6 +734,41 @@ private final class V5LLMURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+}
+
+private actor V5RequestTimeoutClient: LLMCompleting, LLMRequestTimeoutConfiguring {
+    private(set) var requestTimeouts: [TimeInterval?] = []
+    private let response = #"{"schema_version":"paper-insight-v1","source_scope":"title_abstract_figure_captions","title_zh":"格点报告","abstract_zh":"摘要","physics":{"research_question":"研究问题","background":"物理背景","method_and_data_flow":["方法"],"main_results":["主要结论"],"lattice_conventions_reported":[],"missing_information":["格点参数未提供"],"caveats":["摘要级"]},"important_figures":[],"terminology":[]}"#
+
+    func complete(system: String, userPayload: String, profile: ProviderProfile, apiKey: String,
+                  maximumResponseBytes: Int,
+                  onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
+                  onDelta: @escaping @Sendable (String) async -> Void) async throws -> String {
+        try await respond(maximumResponseBytes: maximumResponseBytes,
+                          onTransportState: onTransportState, onDelta: onDelta)
+    }
+
+    func complete(system: String, userPayload: String, profile: ProviderProfile, apiKey: String,
+                  maximumResponseBytes: Int, requestTimeout: TimeInterval?,
+                  onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
+                  onDelta: @escaping @Sendable (String) async -> Void) async throws -> String {
+        requestTimeouts.append(requestTimeout)
+        return try await respond(maximumResponseBytes: maximumResponseBytes,
+                                 onTransportState: onTransportState, onDelta: onDelta)
+    }
+
+    func observedTimeouts() -> [TimeInterval?] { requestTimeouts }
+
+    private func respond(maximumResponseBytes: Int,
+                         onTransportState: @escaping @Sendable (LLMTransportState) async -> Void,
+                         onDelta: @escaping @Sendable (String) async -> Void) async throws -> String {
+        guard response.lengthOfBytes(using: .utf8) <= maximumResponseBytes else {
+            throw LatticeLensError.schemaViolation("timeout fixture response exceeded its byte limit")
+        }
+        await onTransportState(.connected)
+        await onDelta(response)
+        return response
+    }
 }
 
 private final class V5TruncatedLLMURLProtocol: URLProtocol, @unchecked Sendable {
