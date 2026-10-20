@@ -1358,7 +1358,7 @@ private struct V12FormulaDiskBenchmark {
             "schema_version": "latticelens-benchmark-v12-formula",
             "persistence_schema_version": 12,
             "input_manifest_sha256": inputManifestSHA256,
-            "build": ["configuration": "SwiftPM-debug-XCTest", "product_version": "2.0.0", "build_number": 209],
+            "build": ["configuration": "SwiftPM-debug-XCTest", "product_version": "2.0.0", "build_number": 210],
             "machine": [
                 "architecture": benchmarkArchitectureName(),
                 "operating_system": ProcessInfo.processInfo.operatingSystemVersionString,

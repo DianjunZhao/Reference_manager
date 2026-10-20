@@ -36,7 +36,8 @@ enum LLMProvider: String, Codable, CaseIterable, Identifiable, Sendable {
 struct ProviderProfile: Codable, Hashable, Sendable {
     static let maximumOutputTokenChoices = [1_024, 2_048, 4_096, 8_192, 16_384]
     static let defaultMaximumOutputTokens = 4_096
-    static let requestTimeoutChoices = [600, 900, 1_200, 1_800, 3_600]
+    static let maximumRequestTimeoutSeconds = 3_600
+    static let requestTimeoutChoices = [600, 900, 1_200, 1_800, maximumRequestTimeoutSeconds]
     static let defaultRequestTimeoutSeconds = 1_800
 
     /// This value is part of the profile's runtime policy.  `activeProfile`

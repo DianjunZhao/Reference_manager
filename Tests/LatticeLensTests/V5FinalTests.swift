@@ -105,6 +105,17 @@ final class V5FinalTests: XCTestCase {
         XCTAssertEqual(withKey.value(forHTTPHeaderField: "Authorization"), "Bearer local-token")
     }
 
+    func testSafeURLSessionTimersCannotPreemptTheMaximumProviderDeadline() {
+        let configuration = OpenAICompatibleClient.safeSessionConfiguration()
+        XCTAssertGreaterThanOrEqual(configuration.timeoutIntervalForRequest,
+                                     OpenAICompatibleClient.maximumURLSessionRequestTimeout)
+        XCTAssertGreaterThanOrEqual(configuration.timeoutIntervalForResource,
+                                     OpenAICompatibleClient.maximumURLSessionRequestTimeout)
+        XCTAssertEqual(OpenAICompatibleClient.maximumURLSessionRequestTimeout,
+                       TimeInterval(ProviderProfile.maximumRequestTimeoutSeconds) +
+                        OpenAICompatibleClient.urlSessionTimeoutGraceSeconds)
+    }
+
     func testTLSFailureDiagnosticIsSafeAndActionable() throws {
         let endpoint = try XCTUnwrap(URL(string: "https://gateway.example.test/v1/chat/completions"))
         let classified = LLMTransportError.classify(URLError(.secureConnectionFailed), endpoint: endpoint)
@@ -460,6 +471,30 @@ final class V5FinalTests: XCTestCase {
         XCTAssertEqual(savedSnapshot.insights[artifact.cacheKey]?.paperID, paper.literatureID)
     }
 
+    func testProductionClientBatchesSSECallbacksWithoutChangingResponseBytes() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [V5BatchedSSEURLProtocol.self]
+        let client = OpenAICompatibleClient(session: URLSession(configuration: configuration))
+        let profile = ProviderProfile(provider: .localOpenAICompatible,
+                                      baseURL: "http://127.0.0.1:11434/v1",
+                                      manualModel: "fixture-local", usesStreaming: true)
+        let recorder = V5DeltaBatchRecorder()
+
+        let response = try await client.complete(
+            system: "fixture", userPayload: "fixture", profile: profile, apiKey: "",
+            maximumResponseBytes: 1_024, requestTimeout: 10,
+            onTransportState: { _ in },
+            onDelta: { delta in await recorder.append(delta) }
+        )
+
+        let publishedBatches = await recorder.values()
+        XCTAssertEqual(response, String(repeating: "x", count: V5BatchedSSEURLProtocol.eventCount))
+        XCTAssertEqual(publishedBatches.joined(), response,
+                       "coalescing must preserve exact decoded response bytes and order")
+        XCTAssertLessThan(publishedBatches.count, 64,
+                          "many small SSE events should not cause one UI/actor hop per token")
+    }
+
     func testInsightWorkflowAppliesTheSelectedFiniteProviderDeadline() async throws {
         let store = InMemoryLibraryStore()
         let client = V5RequestTimeoutClient()
@@ -729,6 +764,46 @@ private final class V5LLMURLProtocol: URLProtocol, @unchecked Sendable {
         ]
         let data = try! JSONSerialization.data(withJSONObject: payload, options: [])
         let body = "data: \(String(decoding: data, as: UTF8.self))\n"
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private actor V5DeltaBatchRecorder {
+    private var recorded: [String] = []
+
+    func append(_ value: String) { recorded.append(value) }
+    func values() -> [String] { recorded }
+}
+
+private final class V5BatchedSSEURLProtocol: URLProtocol, @unchecked Sendable {
+    static let eventCount = 512
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.path == "/v1/chat/completions"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                             headerFields: ["Content-Type": "text/event-stream"]) else {
+            client?.urlProtocol(self, didFailWithError: LLMClientError.invalidResponse)
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        var body = String()
+        body.reserveCapacity(Self.eventCount * 64)
+        for _ in 0..<Self.eventCount {
+            let event = try! JSONSerialization.data(withJSONObject: [
+                "choices": [["delta": ["content": "x"]]]
+            ])
+            body += "data: \(String(decoding: event, as: UTF8.self))\n\n"
+        }
+        body += "data: [DONE]\n\n"
         client?.urlProtocol(self, didLoad: Data(body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }

@@ -373,6 +373,9 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
     /// Phase deadlines and user cancellation still bound the interactive
     /// workflow; this avoids URLSession cutting off a healthy long stream.
     private static let defaultRequestTimeout = V4AnalysisTimeouts.default.hard
+    static let urlSessionTimeoutGraceSeconds: TimeInterval = 60
+    static let maximumURLSessionRequestTimeout: TimeInterval =
+        TimeInterval(ProviderProfile.maximumRequestTimeoutSeconds) + urlSessionTimeoutGraceSeconds
 
     init(session: URLSession? = nil) { self.session = session ?? Self.makeSafeSession() }
 
@@ -446,9 +449,13 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         let url = try APIEndpointBuilder.endpoint(baseURL: profile.baseURL, path: "chat/completions", provider: profile.provider)
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: profile.provider)
         request.httpMethod = "POST"
-        let boundedRequestTimeout = requestTimeout.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-            ?? Self.defaultRequestTimeout
-        request.timeoutInterval = boundedRequestTimeout
+        let boundedRequestTimeout = Self.boundedHardTimeout(requestTimeout)
+        // URLRequest.timeoutInterval is an inactivity bound. The workflow's
+        // connect/first-content/idle/hard monitor remains authoritative; leave
+        // a small transport grace so URLSession cannot win the race at the
+        // exact application deadline.
+        request.timeoutInterval = min(boundedRequestTimeout + Self.urlSessionTimeoutGraceSeconds,
+                                      Self.maximumURLSessionRequestTimeout)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try OpenAICompatibleCompletionRequestBody(
             system: system, userPayload: userPayload, profile: profile
@@ -488,27 +495,24 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
                 if inputBuffer.count >= 16 * 1024 || now.timeIntervalSince(lastParserFlush) >= 0.1 {
                     let buffered = inputBuffer
                     inputBuffer.removeAll(keepingCapacity: true)
-                    for delta in try parser.consume(buffered) {
-                        responseBytes += delta.lengthOfBytes(using: .utf8)
-                        guard responseBytes <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("流式响应超过本地字节上限") }
-                        result += delta
+                    if let delta = try Self.appendDeltas(parser.consume(buffered), to: &result,
+                                                         responseBytes: &responseBytes,
+                                                         maximumResponseBytes: maximumResponseBytes) {
                         await onDelta(delta)
                     }
                     lastParserFlush = now
                 }
             }
             if !inputBuffer.isEmpty {
-                for delta in try parser.consume(inputBuffer) {
-                    responseBytes += delta.lengthOfBytes(using: .utf8)
-                    guard responseBytes <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("流式响应超过本地字节上限") }
-                    result += delta
+                if let delta = try Self.appendDeltas(parser.consume(inputBuffer), to: &result,
+                                                     responseBytes: &responseBytes,
+                                                     maximumResponseBytes: maximumResponseBytes) {
                     await onDelta(delta)
                 }
             }
-            for delta in try parser.finish() {
-                responseBytes += delta.lengthOfBytes(using: .utf8)
-                guard responseBytes <= maximumResponseBytes else { throw LatticeLensError.schemaViolation("流式响应超过本地字节上限") }
-                result += delta
+            if let delta = try Self.appendDeltas(parser.finish(), to: &result,
+                                                 responseBytes: &responseBytes,
+                                                 maximumResponseBytes: maximumResponseBytes) {
                 await onDelta(delta)
             }
             return result
@@ -581,8 +585,9 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         ]
         var request = Self.authorizedRequest(url: url, apiKey: apiKey, provider: profile.provider)
         request.httpMethod = "POST"
-        request.timeoutInterval = requestTimeout.isFinite && requestTimeout > 0
-            ? requestTimeout : Self.defaultRequestTimeout
+        let boundedRequestTimeout = Self.boundedHardTimeout(requestTimeout)
+        request.timeoutInterval = min(boundedRequestTimeout + Self.urlSessionTimeoutGraceSeconds,
+                                      Self.maximumURLSessionRequestTimeout)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
         await onTransportState(.waitingFirstContent)
@@ -623,12 +628,43 @@ struct OpenAICompatibleClient: Sendable, LLMCompleting, LLMRequestTimeoutConfigu
         }
     }
 
-    private static func makeSafeSession() -> URLSession {
+    private static func boundedHardTimeout(_ requested: TimeInterval?) -> TimeInterval {
+        guard let requested, requested.isFinite, requested > 0 else {
+            return min(Self.defaultRequestTimeout, TimeInterval(ProviderProfile.maximumRequestTimeoutSeconds))
+        }
+        return min(requested, TimeInterval(ProviderProfile.maximumRequestTimeoutSeconds))
+    }
+
+    /// Combines parser output from one bounded input block into one workflow
+    /// update. The assembled response and byte-limit semantics are unchanged;
+    /// only redundant actor/MainActor hops for adjacent SSE events are removed.
+    private static func appendDeltas(_ deltas: [String], to result: inout String,
+                                     responseBytes: inout Int,
+                                     maximumResponseBytes: Int) throws -> String? {
+        guard !deltas.isEmpty else { return nil }
+        let combined = deltas.joined()
+        let (nextByteCount, overflow) = responseBytes.addingReportingOverflow(combined.utf8.count)
+        guard !overflow, nextByteCount <= maximumResponseBytes else {
+            throw LatticeLensError.schemaViolation("流式响应超过本地字节上限")
+        }
+        responseBytes = nextByteCount
+        result += combined
+        return combined
+    }
+
+    static func safeSessionConfiguration() -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = Self.defaultRequestTimeout
-        configuration.timeoutIntervalForResource = Self.defaultRequestTimeout + 60
+        // The app's per-request hard limit is at most 3,600 s. Give both
+        // URLSession timers a grace margin so they cannot truncate a stream
+        // before that deadline; the app's phase/idle monitors remain tighter.
+        configuration.timeoutIntervalForRequest = Self.maximumURLSessionRequestTimeout
+        configuration.timeoutIntervalForResource = Self.maximumURLSessionRequestTimeout
         configuration.httpShouldSetCookies = false
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: configuration, delegate: RedirectBlockingDelegate(), delegateQueue: nil)
+        return configuration
+    }
+
+    private static func makeSafeSession() -> URLSession {
+        URLSession(configuration: Self.safeSessionConfiguration(), delegate: RedirectBlockingDelegate(), delegateQueue: nil)
     }
 }

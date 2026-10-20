@@ -1736,8 +1736,10 @@ final class EvidenceWorkflowTests: XCTestCase {
             XCTAssertEqual(metrics.requests, 1, "a timed-out evidence disclosure must not be retried")
             XCTAssertEqual(metrics.method, "POST", "the intercepted production request must use the expected completion method")
             XCTAssertGreaterThan(metrics.stops, 0, "timing out must cancel the underlying URLSession request")
-            XCTAssertEqual(try XCTUnwrap(metrics.requestTimeout), timeouts.hard, accuracy: 0.01,
-                           "the production client must receive the finite max-resource request budget")
+            XCTAssertEqual(try XCTUnwrap(metrics.requestTimeout),
+                           min(timeouts.hard + OpenAICompatibleClient.urlSessionTimeoutGraceSeconds,
+                               OpenAICompatibleClient.maximumURLSessionRequestTimeout), accuracy: 0.01,
+                           "the transport inactivity timeout must leave grace beyond the app's hard deadline")
         }
         let snapshot = await store.snapshot()
         XCTAssertTrue(snapshot.evidenceInsights.isEmpty,
@@ -1871,8 +1873,10 @@ final class EvidenceWorkflowTests: XCTestCase {
                        "the second timed request must be the formula batch, not another prose attempt")
         XCTAssertTrue(metrics.requests.allSatisfy { $0.requestTimeout.isFinite && $0.requestTimeout > 0 })
         for request in metrics.requests {
-            XCTAssertEqual(request.requestTimeout, timeouts.hard, accuracy: 0.01,
-                           "both real-client requests must receive the finite per-request resource deadline")
+            XCTAssertEqual(request.requestTimeout,
+                           min(timeouts.hard + OpenAICompatibleClient.urlSessionTimeoutGraceSeconds,
+                               OpenAICompatibleClient.maximumURLSessionRequestTimeout), accuracy: 0.01,
+                           "both requests must retain transport grace beyond the app's hard deadline")
         }
         XCTAssertTrue(metrics.stoppedRequestIndices.contains(2),
                       "the timed-out formula request must stop its underlying URLSession task")
@@ -1970,7 +1974,9 @@ final class EvidenceWorkflowTests: XCTestCase {
                       "cancelling the workflow must stop the active formula URLSession request")
         for request in metrics.requests {
             XCTAssertTrue(request.requestTimeout.isFinite && request.requestTimeout > 0)
-            XCTAssertEqual(request.requestTimeout, timeouts.hard, accuracy: 0.01)
+            XCTAssertEqual(request.requestTimeout,
+                           min(timeouts.hard + OpenAICompatibleClient.urlSessionTimeoutGraceSeconds,
+                               OpenAICompatibleClient.maximumURLSessionRequestTimeout), accuracy: 0.01)
         }
 
         let executionFingerprint = FormulaDerivationWorkflow.executionFingerprint(
