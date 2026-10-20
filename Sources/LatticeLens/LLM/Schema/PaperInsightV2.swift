@@ -357,7 +357,7 @@ enum PaperInsightV2Validator {
                 // A value and its unit must be recoverable from one original
                 // anchor, never by concatenating two unrelated snippets.
                 let quotes = claim.evidenceIDs.compactMap { source.sourceByAnchor[$0] }
-                guard numericTokensAreAnchored(claim.textZH, quotes: quotes) else {
+                guard NumericClaimEvidence.isAnchored(claim.textZH, quotes: quotes) else {
                     throw LatticeLensError.schemaViolation("v2 精确数值或单位无法回查 evidence")
                 }
             case .missing:
@@ -719,14 +719,14 @@ enum PaperInsightV2Validator {
                 let quotes = supportingAnchorIDs.compactMap { source.sourceByAnchor[$0] }
                 let numericContent = [step.textZH, step.ruleOrAssumption,
                                       step.beforeTeX ?? "", step.afterTeX ?? ""].joined(separator: " ")
-                guard numericTokensAreAnchored(numericContent, quotes: quotes) else {
+                guard NumericClaimEvidence.isAnchored(numericContent, quotes: quotes) else {
                     throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的步骤数值无法回查同一来源 anchor。")
                 }
                 dependencies[equationID, default: []].formUnion(step.referencedEquationIDs)
             }
             let conclusionQuotes = derivationAnchorIDs.compactMap { source.sourceByAnchor[$0] }
             if let conclusion = claim.conclusionZH,
-               !numericTokensAreAnchored(conclusion, quotes: conclusionQuotes) {
+               !NumericClaimEvidence.isAnchored(conclusion, quotes: conclusionQuotes) {
                 throw LatticeLensError.schemaViolation("编号公式覆盖无效：\(equation.label) 的结论数值无法回查来源 anchor。")
             }
             if !isBatchPayload {
@@ -821,53 +821,6 @@ enum PaperInsightV2Validator {
               status == EpistemicStatus.direct.rawValue || status == EpistemicStatus.missing.rawValue else {
             throw LatticeLensError.schemaViolation("physics.research_question 必须是 direct 或 missing")
         }
-    }
-
-    private static func numericTokensAreAnchored(_ text: String, quotes: [String]) -> Bool {
-        // Only numbers carrying a physical unit/uncertainty, or an explicit
-        // ensemble/count context, are treated as physics tokens.  Years,
-        // equation labels, reference numbers and page numbers therefore do
-        // not force a claim to cite an unrelated anchor.
-        let normalizedText = normalizeFormulaTeXForNumericAnchoring(text)
-        let normalizedQuotes = quotes.map(normalizeFormulaTeXForNumericAnchoring)
-        let pattern = #"(?<![0-9A-Za-z])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?(?:\s*(?:±|\+/-)\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)?(?:\s*(?:GeV|MeV|keV|TeV|fm(?:\^-?\d+)?|GeV\^\d+|%|a(?:\^-?\d+)?|L\^3[×x*]T|L|T|cfg(?:s)?|ensembles?))?(?![0-9A-Za-z])"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return false }
-        let range = NSRange(normalizedText.startIndex..., in: normalizedText)
-        let values = regex.matches(in: normalizedText, range: range).compactMap { match -> String? in
-            guard let swiftRange = Range(match.range, in: normalizedText) else { return nil }
-            let token = String(normalizedText[swiftRange])
-            let hasUnit = token.range(of: #"(?:GeV|MeV|keV|TeV|fm|%|\ba\b|\bL\b|\bT\b|cfg|ensemble)"#, options: [.regularExpression, .caseInsensitive]) != nil
-            let hasUncertainty = token.contains("±") || token.contains("+/-") || token.contains("(")
-            if hasUnit || hasUncertainty { return token }
-            let contextStart = normalizedText.index(swiftRange.lowerBound, offsetBy: -32, limitedBy: normalizedText.startIndex) ?? normalizedText.startIndex
-            let contextEnd = normalizedText.index(swiftRange.upperBound, offsetBy: 32, limitedBy: normalizedText.endIndex) ?? normalizedText.endIndex
-            let context = normalizedText[contextStart..<contextEnd]
-            return context.range(of: #"ensemble|configuration|config|sample|trajectory|t[_ -]?sep|source[ -]?sink|momentum"#, options: [.regularExpression, .caseInsensitive]) != nil ? token : nil
-        }
-        return values.allSatisfy { token in
-            let pattern = "(?<![0-9A-Za-z])\(NSRegularExpression.escapedPattern(for: token))(?![0-9A-Za-z])"
-            return normalizedQuotes.contains { quote in
-                (try? NSRegularExpression(pattern: pattern))?.firstMatch(in: quote, range: NSRange(quote.startIndex..., in: quote)) != nil
-            }
-        }
-    }
-
-    private static func normalizeFormulaTeXForNumericAnchoring(_ value: String) -> String {
-        var normalized = value
-        if let unitCommand = try? NSRegularExpression(
-            pattern: #"\\(?:mathrm|text|operatorname|mbox)\s*\{([^{}]*)\}"#
-        ) {
-            normalized = unitCommand.stringByReplacingMatches(
-                in: normalized, range: NSRange(normalized.startIndex..., in: normalized),
-                withTemplate: "$1"
-            )
-        }
-        normalized = normalized.replacingOccurrences(of: #"\\(?:,|;|:|quad|qquad)"#,
-                                                     with: " ", options: .regularExpression)
-        normalized = normalized.replacingOccurrences(of: #"\\!"#, with: "", options: .regularExpression)
-        normalized = normalized.replacingOccurrences(of: #"\\pm"#, with: "±", options: .regularExpression)
-        normalized = normalized.replacingOccurrences(of: #"\\times"#, with: "×", options: .regularExpression)
-        return normalized
     }
 
     private static func object(_ raw: JSONValue, keys: Set<String>, path: String) throws -> [String: JSONValue] {

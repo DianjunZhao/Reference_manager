@@ -1597,7 +1597,7 @@ final class CoreContractTests: XCTestCase {
         XCTAssertThrowsError(try PaperInsightValidator.decode(Data(duplicate.utf8), source: source, maximumFigures: 3))
     }
 
-    func testInsightValidatorRejectsTrailingControlOverlongAndUnanchoredNumericClaims() throws {
+    func testInsightValidatorRejectsMalformedResponsesAndDoesNotMisanchorNumericClaims() throws {
         let paper = Paper(literatureID: 8, titles: [PaperTitle(value: "A 2024 study", source: "fixture")],
                           abstracts: [PaperAbstract(value: "The record was deposited in 2024.", source: "fixture")],
                           preprintDate: nil, earliestDate: nil, arxivID: nil, arxivCategories: [], doi: nil,
@@ -1616,34 +1616,100 @@ final class CoreContractTests: XCTestCase {
         let overlong = valid.replacingOccurrences(of: "\"title_zh\":\"标题\"", with: "\"title_zh\":\"\(tooLongTitle)\"")
         XCTAssertThrowsError(try PaperInsightValidator.decode(Data(overlong.utf8), source: source, maximumFigures: 0))
 
-        let numeric = valid.replacingOccurrences(of: "主要结论", with: "主要结论为 2")
-        XCTAssertThrowsError(try PaperInsightValidator.decode(Data(numeric.utf8), source: source, maximumFigures: 0),
-                             "数值 2 不能被 source 中的 2024 误锚定")
+        let numeric = valid.replacingOccurrences(of: "主要结论", with: "主要结论为 2.0 GeV")
+        XCTAssertNoThrow(try PaperInsightValidator.decode(Data(numeric.utf8), source: source, maximumFigures: 0),
+                         "不受支持的精确数值应被局部剔除，不应使整份解释失败")
+    }
+
+    func testInsightValidatorDropsOnlyUnanchoredNumericMetadataClaims() throws {
+        let paper = Paper(literatureID: 88,
+                          titles: [PaperTitle(value: "A metadata-only report", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "The resonance is at 2.1 GeV.", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: nil, arxivCategories: [], doi: nil,
+                          citationCount: nil, publicationStatus: nil, updated: nil,
+                          figures: [PaperFigure(key: "fig1", url: nil, label: "Figure 1",
+                                                caption: "The peak is at 2.5 GeV.", source: "fixture", filename: nil),
+                                    PaperFigure(key: "fig2", url: nil, label: "Figure 2",
+                                                caption: "The other channel is at 3.3 GeV.", source: "fixture", filename: nil)],
+                          firstSeenAt: Date(), isRead: false)
+        let source = InsightSourcePayload(paper: paper)
+        let raw = #"""
+        {"schema_version":"paper-insight-v1","source_scope":"title_abstract_figure_captions","title_zh":"标题 3.3 GeV","abstract_zh":"摘要中给出 3.3 GeV","physics":{"research_question":"研究问题位于 4.4 GeV","background":"研究强相互作用体系","method_and_data_flow":["摘要报告 2.1 GeV。","拟合结果为 4.4 GeV。"],"main_results":["图注峰值为 2.5 GeV。","格距为 0.08 fm。"],"lattice_conventions_reported":["格距 a=0.08 fm。"],"missing_information":["格距 0.08 fm 未提供。"],"caveats":["外推到 4.4 GeV。"]},"important_figures":[{"figure_key":"fig1","caption_zh":"峰值位于 2.5 GeV。","why_important":"拟合峰值为 3.3 GeV。","evidence_mode":"caption_only"}],"terminology":[{"source":"a=0.08 fm","zh":"格距","note":"格距为 0.08 fm"}]}
+        """#
+
+        let insight = try PaperInsightValidator.decode(Data(raw.utf8), source: source, maximumFigures: 1)
+        XCTAssertEqual(insight.titleZH, paper.titles[0].value, "unsupported title numbers must fall back to source text")
+        XCTAssertEqual(insight.abstractZH, paper.abstracts[0].value, "unsupported translated numbers must fall back to source text")
+        XCTAssertEqual(insight.physics.researchQuestion, "摘要与图注未提供可回查的研究问题。")
+        XCTAssertEqual(insight.physics.background, "研究强相互作用体系")
+        XCTAssertEqual(insight.physics.methodAndDataFlow, ["摘要报告 2.1 GeV。"])
+        XCTAssertEqual(insight.physics.mainResults, ["图注峰值为 2.5 GeV。"])
+        XCTAssertTrue(insight.physics.latticeConventionsReported.isEmpty)
+        XCTAssertTrue(insight.physics.caveats.isEmpty)
+        XCTAssertTrue(insight.physics.missingInformation.contains(
+            "部分含精确数值的内容未能在本次摘要或图注中回查，已省略；未将其作为物理结论保存。"
+        ))
+        XCTAssertEqual(insight.importantFigures.first?.captionZH, "峰值位于 2.5 GeV。")
+        XCTAssertFalse(insight.importantFigures.first?.whyImportant.contains("3.3") ?? true)
+        XCTAssertTrue(insight.terminology.isEmpty)
     }
 
     func testTitleOnlyTranslationAndCacheKeyAreStrictlyScoped() throws {
         XCTAssertEqual(try PaperInsightPrompt.decodeTitleTranslation(Data("{\"title_zh\":\"标题\"}".utf8)), "标题")
         XCTAssertThrowsError(try PaperInsightPrompt.decodeTitleTranslation(Data("{\"title_zh\":\"标题\",\"extra\":\"x\"}".utf8)))
+        XCTAssertEqual(try PaperInsightPrompt.decodeTitleTranslation(
+            Data("{\"title_zh\":\"标题所述质量为 3.3 GeV\"}".utf8), sourceTitles: ["A paper title"]
+        ), "A paper title", "title-only translation must not introduce an unsupported physical value")
+        let translationWithInventedValues = Data(
+            "{\"title_zh\":\"标题质量 3.3 GeV\",\"abstract_zh\":\"质量 3.3 GeV\"}".utf8
+        )
+        let safeTranslation = try PaperInsightPrompt.decodeTranslation(
+            translationWithInventedValues, sourceTitle: "A title", sourceAbstract: "An abstract without a value"
+        )
+        XCTAssertEqual(safeTranslation.titleZH, "A title")
+        XCTAssertEqual(safeTranslation.abstractZH, "An abstract without a value")
 
         let baseline = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
                                        sourceScope: "title_abstract_figure_captions", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
                                        model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 4_096, figureSetHash: "f",
+                                       sourcePayloadHash: "source-a",
                                        maximumFigures: 3, terminologyHash: "t", providerCapabilityHash: "stream=true|vision=false")
         let changedScope = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
                                            sourceScope: "fulltext_with_anchors", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
                                            model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 4_096, figureSetHash: "f",
+                                           sourcePayloadHash: "source-a",
                                            maximumFigures: 3, terminologyHash: "t", providerCapabilityHash: "stream=true|vision=false")
         let changedCapability = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
                                                 sourceScope: "title_abstract_figure_captions", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
                                                 model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 8_192, figureSetHash: "f",
+                                                sourcePayloadHash: "source-a",
                                                 maximumFigures: 0, terminologyHash: "different", providerCapabilityHash: "stream=true|vision=true")
         XCTAssertNotEqual(baseline.value, changedScope.value)
         XCTAssertNotEqual(baseline.value, changedCapability.value)
         let changedOutputLimit = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
                                                  sourceScope: "title_abstract_figure_captions", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
                                                  model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 8_192, figureSetHash: "f",
+                                                 sourcePayloadHash: "source-a",
                                                  maximumFigures: 3, terminologyHash: "t", providerCapabilityHash: "stream=true|vision=false")
         XCTAssertNotEqual(baseline.value, changedOutputLimit.value)
+
+        let changedSource = InsightCacheKey(paperID: 1, paperUpdated: nil, promptVersion: "p", insightSchemaVersion: "s",
+                                            sourceScope: "title_abstract_figure_captions", provider: "openAI", normalizedBaseURL: "https://example.test/v1",
+                                            model: "m", credentialRevision: 1, mode: .fast, detailLevel: .standard, maxOutputTokens: 4_096, figureSetHash: "f",
+                                            sourcePayloadHash: "source-b",
+                                            maximumFigures: 3, terminologyHash: "t", providerCapabilityHash: "stream=true|vision=false")
+        XCTAssertNotEqual(baseline.value, changedSource.value)
+
+        let paper = Paper(literatureID: 1, titles: [PaperTitle(value: "A title", source: "fixture")],
+                          abstracts: [PaperAbstract(value: "An abstract", source: "fixture")],
+                          preprintDate: nil, earliestDate: nil, arxivID: nil, arxivCategories: [], doi: nil,
+                          citationCount: nil, publicationStatus: nil, updated: nil, figures: [],
+                          firstSeenAt: Date(timeIntervalSince1970: 1), isRead: false)
+        var changedPaper = paper
+        changedPaper.abstracts = [PaperAbstract(value: "An edited abstract", source: "fixture")]
+        XCTAssertNotEqual(try InsightWorkflow.cacheKey(for: paper, settings: LLMSettings()).value,
+                          try InsightWorkflow.cacheKey(for: changedPaper, settings: LLMSettings()).value,
+                          "actual source text changes must invalidate even when INSPIRE updated is nil")
     }
 
     func testEndpointPolicyAndSSEContract() throws {

@@ -137,8 +137,8 @@ struct InsightSourcePayload: Codable, Sendable {
     }
 
     var figureKeyAllowlist: Set<String> { Set(figures.map(\.key)) }
-    var sourceText: String {
-        (titles.map(\.value) + abstracts.map(\.value) + figures.compactMap(\.caption) + figures.compactMap(\.label)).joined(separator: "\n")
+    var numericEvidenceQuotes: [String] {
+        abstracts.map(\.value) + figures.compactMap(\.caption).filter { !$0.isEmpty }
     }
 
     private static func truncate(_ value: String, field: String, truncations: inout [String]) -> String {
@@ -146,6 +146,54 @@ struct InsightSourcePayload: Codable, Sendable {
         truncations.append(field)
         let scalars = value.unicodeScalars.prefix(maximumTextScalars)
         return String(String.UnicodeScalarView(scalars))
+    }
+}
+
+/// One numeric-provenance policy shared by metadata-scoped and full-text
+/// insight validation. Years and bare equation/page labels are not treated as
+/// physical values; quantities, uncertainties, and explicit lattice/count
+/// contexts must match a supplied source quote.
+enum NumericClaimEvidence {
+    static func isAnchored(_ text: String, quotes: [String]) -> Bool {
+        let normalizedText = normalizeFormulaTeX(text)
+        let normalizedQuotes = quotes.map(normalizeFormulaTeX)
+        let pattern = #"(?<![0-9A-Za-z])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?(?:\s*(?:±|\+/-)\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)?(?:\s*(?:GeV|MeV|keV|TeV|fm(?:\^-?\d+)?|GeV\^\d+|%|a(?:\^-?\d+)?|L\^3[×x*]T|L|T|cfg(?:s)?|ensembles?))?(?![0-9A-Za-z])"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return false }
+        let range = NSRange(normalizedText.startIndex..., in: normalizedText)
+        let values = regex.matches(in: normalizedText, range: range).compactMap { match -> String? in
+            guard let swiftRange = Range(match.range, in: normalizedText) else { return nil }
+            let token = String(normalizedText[swiftRange])
+            let hasUnit = token.range(of: #"(?:GeV|MeV|keV|TeV|fm|%|\ba\b|\bL\b|\bT\b|cfg|ensemble)"#,
+                                      options: [.regularExpression, .caseInsensitive]) != nil
+            let hasUncertainty = token.contains("±") || token.contains("+/-") || token.contains("(")
+            if hasUnit || hasUncertainty { return token }
+            let contextStart = normalizedText.index(swiftRange.lowerBound, offsetBy: -32, limitedBy: normalizedText.startIndex) ?? normalizedText.startIndex
+            let contextEnd = normalizedText.index(swiftRange.upperBound, offsetBy: 32, limitedBy: normalizedText.endIndex) ?? normalizedText.endIndex
+            let context = normalizedText[contextStart..<contextEnd]
+            return context.range(of: #"ensemble|configuration|config|sample|trajectory|t[_ -]?sep|source[ -]?sink|momentum"#,
+                                 options: [.regularExpression, .caseInsensitive]) != nil ? token : nil
+        }
+        return values.allSatisfy { token in
+            let pattern = "(?<![0-9A-Za-z])\(NSRegularExpression.escapedPattern(for: token))(?![0-9A-Za-z])"
+            return normalizedQuotes.contains { quote in
+                (try? NSRegularExpression(pattern: pattern))?.firstMatch(in: quote, range: NSRange(quote.startIndex..., in: quote)) != nil
+            }
+        }
+    }
+
+    private static func normalizeFormulaTeX(_ value: String) -> String {
+        var normalized = value
+        if let unitCommand = try? NSRegularExpression(pattern: #"\\(?:mathrm|text|operatorname|mbox)\s*\{([^{}]*)\}"#) {
+            normalized = unitCommand.stringByReplacingMatches(in: normalized,
+                                                               range: NSRange(normalized.startIndex..., in: normalized),
+                                                               withTemplate: "$1")
+        }
+        normalized = normalized.replacingOccurrences(of: #"\\(?:,|;|:|quad|qquad)"#,
+                                                     with: " ", options: .regularExpression)
+        normalized = normalized.replacingOccurrences(of: #"\\!"#, with: "", options: .regularExpression)
+        normalized = normalized.replacingOccurrences(of: #"\\pm"#, with: "±", options: .regularExpression)
+        normalized = normalized.replacingOccurrences(of: #"\\times"#, with: "×", options: .regularExpression)
+        return normalized
     }
 }
 
@@ -188,27 +236,92 @@ enum PaperInsightValidator {
         }) else {
             throw LatticeLensError.schemaViolation("模型返回了不在本次资料中的图像 key")
         }
-        let claims = [insight.physics.researchQuestion, insight.physics.background] + insight.physics.methodAndDataFlow +
-            insight.physics.mainResults + insight.physics.latticeConventionsReported + insight.physics.missingInformation + insight.physics.caveats
-        guard claims.allSatisfy({ isNumericallySupported($0, by: source.sourceText) }) else {
-            throw LatticeLensError.schemaViolation("带精确数值的物理陈述缺少摘要或 caption 锚点")
-        }
-        return insight
+        return normalizeNumericClaims(insight, source: source)
     }
 
-    private static func isNumericallySupported(_ claim: String, by source: String) -> Bool {
-        guard let expression = try? NSRegularExpression(pattern: "(?<![0-9A-Za-z])[0-9]+(?:[.][0-9]+)?(?:\\s*(?:GeV|MeV|fm|%|a|L|T))?(?![0-9A-Za-z])", options: []) else { return false }
-        let range = NSRange(claim.startIndex..., in: claim)
-        let numericTokens = expression.matches(in: claim, range: range).compactMap { match -> String? in
-            guard let swiftRange = Range(match.range, in: claim) else { return nil }
-            return String(claim[swiftRange])
+    private static func normalizeNumericClaims(_ insight: PaperInsightV1, source: InsightSourcePayload) -> PaperInsightV1 {
+        let evidenceQuotes = source.numericEvidenceQuotes
+        var omittedUnsupportedNumbers = false
+
+        func keep(_ claim: String) -> Bool {
+            NumericClaimEvidence.isAnchored(claim, quotes: evidenceQuotes)
         }
-        return numericTokens.allSatisfy { token in
-            let escaped = NSRegularExpression.escapedPattern(for: token)
-            let boundary = "(?<![0-9A-Za-z])\(escaped)(?![0-9A-Za-z])"
-            guard let tokenExpression = try? NSRegularExpression(pattern: boundary) else { return false }
-            return tokenExpression.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)) != nil
+        func filter(_ claims: [String]) -> [String] {
+            claims.filter { claim in
+                let supported = keep(claim)
+                if !supported { omittedUnsupportedNumbers = true }
+                return supported
+            }
         }
+        func translated(_ candidate: String, quotes: [String], fallback: String) -> String {
+            guard NumericClaimEvidence.isAnchored(candidate, quotes: quotes) else {
+                omittedUnsupportedNumbers = true
+                return fallback
+            }
+            return candidate
+        }
+
+        let title = translated(insight.titleZH, quotes: source.titles.map(\.value),
+                               fallback: source.titles.first?.value ?? insight.titleZH)
+        let abstract = translated(insight.abstractZH, quotes: source.abstracts.map(\.value),
+                                  fallback: source.abstracts.first?.value ?? insight.abstractZH)
+        let question = keep(insight.physics.researchQuestion)
+            ? insight.physics.researchQuestion : "摘要与图注未提供可回查的研究问题。"
+        if question != insight.physics.researchQuestion { omittedUnsupportedNumbers = true }
+        let background = keep(insight.physics.background)
+            ? insight.physics.background : "摘要与图注未提供可回查的物理背景。"
+        if background != insight.physics.background { omittedUnsupportedNumbers = true }
+
+        var figures = [ImportantFigureInsight]()
+        for figure in insight.importantFigures {
+            guard let caption = source.figures.first(where: { $0.key == figure.figureKey })?.caption,
+                  !caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                omittedUnsupportedNumbers = true
+                continue
+            }
+            let translatedCaption = translated(figure.captionZH, quotes: [caption], fallback: caption)
+            let explanation: String
+            if NumericClaimEvidence.isAnchored(figure.whyImportant, quotes: [caption]) {
+                explanation = figure.whyImportant
+            } else {
+                omittedUnsupportedNumbers = true
+                explanation = "本条目仅依据所提供的图注；图像像素未纳入本次分析。"
+            }
+            figures.append(ImportantFigureInsight(figureKey: figure.figureKey, captionZH: translatedCaption,
+                                                  whyImportant: explanation, evidenceMode: figure.evidenceMode))
+        }
+
+        var terminology = [InsightTerminology]()
+        for item in insight.terminology {
+            if [item.source, item.zh, item.note].allSatisfy(keep) {
+                terminology.append(item)
+            } else {
+                omittedUnsupportedNumbers = true
+            }
+        }
+
+        var missing = filter(insight.physics.missingInformation)
+        if omittedUnsupportedNumbers {
+            let notice = "部分含精确数值的内容未能在本次摘要或图注中回查，已省略；未将其作为物理结论保存。"
+            if !missing.contains(notice) { missing.append(notice) }
+        }
+        return PaperInsightV1(
+            schemaVersion: insight.schemaVersion,
+            sourceScope: insight.sourceScope,
+            titleZH: title,
+            abstractZH: abstract,
+            physics: InsightPhysics(
+                researchQuestion: question,
+                background: background,
+                methodAndDataFlow: filter(insight.physics.methodAndDataFlow),
+                mainResults: filter(insight.physics.mainResults),
+                latticeConventionsReported: filter(insight.physics.latticeConventionsReported),
+                missingInformation: missing,
+                caveats: filter(insight.physics.caveats)
+            ),
+            importantFigures: figures,
+            terminology: terminology
+        )
     }
 
     private static func validateShape(_ raw: JSONValue) throws {

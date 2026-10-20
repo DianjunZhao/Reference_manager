@@ -146,7 +146,10 @@ actor EvidenceInsightWorkflow {
                     onTransportState: transport,
                     onDelta: receive
                 )
-                let translation = try PaperInsightPrompt.decodeTranslation(Data(translationResponse.utf8))
+                let translation = try PaperInsightPrompt.decodeTranslation(
+                    Data(translationResponse.utf8), sourceTitle: paper.displayTitle,
+                    sourceAbstract: paper.preferredAbstract
+                )
                 await onState(.connecting)
                 let payload = try EvidenceInsightPrompt.userPayload(
                     source: proseSource,

@@ -7,6 +7,17 @@ not certify the current source tree.
 
 ## Unreleased — Reference_manager 2.0 / v5 in progress
 
+- 2026-10-20 numeric evidence-boundary and frozen Vision payload fix (Build 212):
+  V1 metadata analysis now omits unsupported numerical claims field-by-field and
+  records a safe notice instead of rejecting the complete response. Translation
+  values are checked against their own source fields; figure explanations are
+  checked against that figure's caption. V1 cache identity now hashes the exact
+  bounded metadata payload, including when INSPIRE `updated` is absent. Vision
+  consent binds the exact title/caption JSON and resized image bytes, and its
+  cache lookup uses a bounded store accessor. Shared numeric-token recognition
+  preserves the existing V2 evidence policy. Host-free fixture tests only;
+  no live provider or real-library result is claimed.
+
 - 2026-10-20 stream-inactivity deadline fix (Build 211): after the first decoded
   response delta, bounded response-body activity and SSE keep-alives refresh the
   stream-idle deadline. They still cannot satisfy the separate first-content

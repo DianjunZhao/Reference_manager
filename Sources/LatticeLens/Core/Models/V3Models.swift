@@ -173,6 +173,7 @@ struct VisionPreflight: Codable, Hashable, Sendable {
     let totalBytes: Int
     let endpoint: String
     let requestCount: Int
+    let requestPayloadHash: String
     let frozenHash: String
 }
 

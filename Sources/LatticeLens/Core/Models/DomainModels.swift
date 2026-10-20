@@ -464,6 +464,7 @@ struct InsightCacheKey: Codable, Hashable, Sendable {
     let detailLevel: InsightDetailLevel
     let maxOutputTokens: Int
     let figureSetHash: String
+    let sourcePayloadHash: String
     let maximumFigures: Int
     let terminologyHash: String
     let providerCapabilityHash: String
@@ -471,7 +472,8 @@ struct InsightCacheKey: Codable, Hashable, Sendable {
     var value: String {
         let fields = [String(paperID), paperUpdated?.ISO8601Format() ?? "", promptVersion, insightSchemaVersion, sourceScope,
                       provider, normalizedBaseURL, model, String(credentialRevision), mode.rawValue, detailLevel.rawValue,
-                      String(maxOutputTokens), figureSetHash, String(maximumFigures), terminologyHash, providerCapabilityHash]
+                      String(maxOutputTokens), figureSetHash, sourcePayloadHash, String(maximumFigures), terminologyHash,
+                      providerCapabilityHash]
         return StableHash.sha256(fields.joined(separator: "|"))
     }
 }

@@ -1624,13 +1624,36 @@ final class EvidenceWorkflowTests: XCTestCase {
         let workflow = VisionWorkflow(store: store, client: client, loader: loader)
         var settings = LLMSettings(profiles: ["openAI": ProviderProfile(baseURL: "https://example.test/v1", selectedModel: "vision-fixture", usesStreaming: false, supportsVision: true)],
                                    automaticAnalysis: false, maximumFigures: 3)
-        let first = try await workflow.generate(for: paper, settings: settings, apiKey: "fixture") { _ in }
+        let prepared = try await workflow.prepare(for: paper, settings: settings)
+        var changedTitle = paper
+        changedTitle.titles = [PaperTitle(value: "A different title", source: "fixture")]
+        do {
+            _ = try await workflow.generate(for: changedTitle, prepared: prepared, settings: settings, apiKey: "fixture") { _ in }
+            XCTFail("标题在用户确认后改变时，必须拒绝发送冻结确认之外的请求载荷")
+        } catch {}
+        let requestsBeforeConsentBoundPayload = await client.requestCount()
+        XCTAssertEqual(requestsBeforeConsentBoundPayload, 0, "preflight mismatch must be rejected before provider disclosure")
+
+        await store.resetSnapshotReadCount()
+        let first = try await workflow.generate(for: paper, prepared: prepared, settings: settings, apiKey: "fixture") { _ in }
         let second = try await workflow.generate(for: paper, settings: settings, apiKey: "fixture") { _ in }
         XCTAssertEqual(first, second)
         let visionRequestCount = await client.requestCount()
         XCTAssertEqual(visionRequestCount, 1)
+        let snapshotReadsDuringVisionCacheLookup = await store.snapshotReadCount()
+        XCTAssertEqual(snapshotReadsDuringVisionCacheLookup, 0,
+                       "Vision cache hit/miss must use the bounded typed accessor, not decode the whole library")
         XCTAssertEqual(first.insights.first?.evidenceMode, "vision")
         XCTAssertEqual(first.figureKeys, ["fig1"])
+
+        let changedTitlePrepared = try await workflow.prepare(for: changedTitle, settings: settings)
+        let changedTitleArtifact = try await workflow.generate(
+            for: changedTitle, prepared: changedTitlePrepared, settings: settings, apiKey: "fixture"
+        ) { _ in }
+        XCTAssertNotEqual(first.cacheKey, changedTitleArtifact.cacheKey,
+                          "Vision cache identity must bind exact text payload even when updated is unchanged")
+        let requestCountAfterChangedTitle = await client.requestCount()
+        XCTAssertEqual(requestCountAfterChangedTitle, 2)
         settings.profiles["openAI"]?.supportsVision = false
         do {
             _ = try await workflow.generate(for: paper, settings: settings, apiKey: "fixture") { _ in }

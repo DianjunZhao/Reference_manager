@@ -66,6 +66,7 @@ protocol LibraryStoring: Sendable {
     func papers(forIDs: [Int]) async -> [Int: Paper]
     func trackedAuthorRecids() async -> Set<Int>
     func insight(cacheKey: String) async -> InsightArtifact?
+    func visionArtifact(cacheKey: String) async -> VisionArtifact?
     func paperContext(paperID: Int, insightCacheKey: String?) async -> LibraryPaperContextProjection
     func upsert(authors: [Author]) async throws
     func upsert(papers: [Paper], for authorRecid: Int) async throws -> PaperUpsertReport
@@ -240,6 +241,10 @@ extension LibraryStoring {
 
     func insight(cacheKey: String) async -> InsightArtifact? {
         (await snapshot()).insights[cacheKey]
+    }
+
+    func visionArtifact(cacheKey: String) async -> VisionArtifact? {
+        (await snapshot()).visionArtifacts[cacheKey]
     }
 
     func paperContext(paperID: Int, insightCacheKey: String?) async -> LibraryPaperContextProjection {
@@ -743,6 +748,7 @@ actor InMemoryLibraryStore: LibraryStoring {
     }
 
     func insight(cacheKey: String) -> InsightArtifact? { value.insights[cacheKey] }
+    func visionArtifact(cacheKey: String) -> VisionArtifact? { value.visionArtifacts[cacheKey] }
 
     func paperContext(paperID: Int, insightCacheKey: String?) -> LibraryPaperContextProjection {
         LibraryPaperContextProjection(

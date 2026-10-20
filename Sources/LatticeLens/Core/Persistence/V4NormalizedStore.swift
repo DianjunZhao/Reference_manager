@@ -3537,6 +3537,17 @@ actor V8TypedLibraryStore: LibraryStoring, EvidenceInsightPublicationStoring, Ca
         }
     }
 
+    func visionArtifact(cacheKey: String) -> VisionArtifact? {
+        do {
+            let descriptor = FetchDescriptor<StoredV8AIArtifact>(predicate: #Predicate { $0.cacheKey == cacheKey })
+            guard let row = try modelContext.fetch(descriptor).first, row.workflowKind == "vision" else { return nil }
+            return try JSONDecoder.latticeLens.decode(VisionArtifact.self, from: row.artifactData)
+        } catch {
+            availabilityFailure = "V8 typed store vision 缓存读取失败；资料库保持只读"
+            return nil
+        }
+    }
+
     func paperContext(paperID: Int, insightCacheKey: String?) async -> LibraryPaperContextProjection {
         do {
             let paper = try typedPaper(id: paperID)

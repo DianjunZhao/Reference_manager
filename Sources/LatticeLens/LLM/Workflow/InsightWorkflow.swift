@@ -34,12 +34,14 @@ actor InsightWorkflow {
         let profile = settings.activeProfile
         let baseURL = try APIEndpointBuilder.normalizedBaseURL(from: profile.baseURL, provider: profile.provider).absoluteString
         let source = InsightSourcePayload(paper: paper)
+        let sourcePayloadHash = StableHash.sha256(try JSONEncoder.latticeLens.encode(source))
         return InsightCacheKey(paperID: paper.literatureID, paperUpdated: paper.updated,
                                promptVersion: PaperInsightPrompt.version, insightSchemaVersion: ProductContract.insightSchemaVersion,
                                sourceScope: ProductContract.sourceScope, provider: settings.activeProvider.rawValue,
                                normalizedBaseURL: baseURL, model: profile.effectiveModel, credentialRevision: settings.credentialRevision, mode: settings.mode,
                                detailLevel: settings.detailLevel, maxOutputTokens: profile.maxOutputTokens,
                                figureSetHash: StableHash.sha256(source.figures.map(\.key).sorted().joined(separator: "|")),
+                               sourcePayloadHash: sourcePayloadHash,
                                maximumFigures: settings.maximumFigures,
                                terminologyHash: StableHash.sha256(settings.terminology.map { "\($0.source)|\($0.preferredZH)|\($0.note)" }.sorted().joined(separator: "\n")),
                                providerCapabilityHash: StableHash.sha256("stream=\(profile.usesStreaming)|vision=\(profile.supportsVision)"))
@@ -77,7 +79,8 @@ actor InsightWorkflow {
                                                               userPayload: titleRequest, profile: profile, apiKey: apiKey,
                                                               maximumResponseBytes: PaperInsightValidator.maximumResponseBytes,
                                                               onTransportState: transport, onDelta: receive)
-                let titleZH = try PaperInsightPrompt.decodeTitleTranslation(Data(titleResponse.utf8))
+                let titleZH = try PaperInsightPrompt.decodeTitleTranslation(Data(titleResponse.utf8),
+                                                                            sourceTitles: source.titles.map(\.value))
                 let insight = titleOnlyInsight(titleZH: titleZH)
                 let artifact = InsightArtifact(cacheKey: cacheKey.value, paperID: paper.literatureID, insight: insight, createdAt: Date())
                 try await store.save(insight: artifact)
@@ -92,7 +95,10 @@ actor InsightWorkflow {
                                                                       userPayload: translationRequest, profile: profile, apiKey: apiKey,
                                                                       maximumResponseBytes: PaperInsightValidator.maximumResponseBytes,
                                                                       onTransportState: transport, onDelta: receive)
-                let translation = try PaperInsightPrompt.decodeTranslation(Data(translationResponse.utf8))
+                let translation = try PaperInsightPrompt.decodeTranslation(
+                    Data(translationResponse.utf8), sourceTitle: source.titles.first?.value,
+                    sourceAbstract: source.abstracts.first?.value
+                )
                 await onState(.connecting)
                 let analysisRequest = try PaperInsightPrompt.userPayload(source: source, detail: settings.detailLevel,
                                                                           maximumFigures: settings.maximumFigures,

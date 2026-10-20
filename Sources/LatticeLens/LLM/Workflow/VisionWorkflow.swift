@@ -163,6 +163,7 @@ struct VisionPreparedRequest: Sendable {
     let paperUpdated: Date?
     let figures: [PaperFigure]
     let images: [VisionInputImage]
+    let userPayload: String
     let preflight: VisionPreflight
 }
 
@@ -195,8 +196,12 @@ actor VisionWorkflow {
         var images = [VisionInputImage]()
         for figure in figures { try Task.checkCancellation(); images.append(try await loader.load(figure: figure)) }
         let baseURL = try APIEndpointBuilder.normalizedBaseURL(from: profile.baseURL, provider: profile.provider).absoluteString
-        let preflight = makePreflight(paperID: paper.literatureID, images: images, endpoint: baseURL)
-        return VisionPreparedRequest(paperID: paper.literatureID, paperUpdated: paper.updated, figures: figures, images: images, preflight: preflight)
+        let userPayload = try VisionInsightPrompt.userPayload(paper: paper, figures: figures, images: images)
+        let requestPayloadHash = Self.requestPayloadHash(userPayload: userPayload, images: images)
+        let preflight = makePreflight(paperID: paper.literatureID, images: images, endpoint: baseURL,
+                                      requestPayloadHash: requestPayloadHash)
+        return VisionPreparedRequest(paperID: paper.literatureID, paperUpdated: paper.updated, figures: figures,
+                                     images: images, userPayload: userPayload, preflight: preflight)
     }
 
     /// Executes one provider request from a previously prepared payload.  A
@@ -214,25 +219,29 @@ actor VisionWorkflow {
             throw LatticeLensError.schemaViolation("Vision frozen preflight 与当前论文/figure set 不一致。")
         }
         let baseURL = try APIEndpointBuilder.normalizedBaseURL(from: profile.baseURL, provider: profile.provider).absoluteString
-        let expectedPreflight = makePreflight(paperID: paper.literatureID, images: prepared.images, endpoint: baseURL)
-        guard expectedPreflight == prepared.preflight else {
+        let currentPayload = try VisionInsightPrompt.userPayload(paper: paper, figures: prepared.figures, images: prepared.images)
+        let requestPayloadHash = Self.requestPayloadHash(userPayload: currentPayload, images: prepared.images)
+        let expectedPreflight = makePreflight(paperID: paper.literatureID, images: prepared.images, endpoint: baseURL,
+                                              requestPayloadHash: requestPayloadHash)
+        guard currentPayload == prepared.userPayload, expectedPreflight == prepared.preflight else {
             throw LatticeLensError.schemaViolation("Vision frozen preflight hash 不匹配；未发送请求。")
         }
         let images = prepared.images
-        let figures = prepared.figures
         let preflightHash = prepared.preflight.frozenHash
         let limit = min(3, settings.maximumFigures)
         let key = StableHash.sha256([String(paper.literatureID), paper.updated?.ISO8601Format() ?? "", VisionInsightPrompt.version,
                                     profile.effectiveModel, baseURL, String(settings.credentialRevision), String(limit),
                                     images.map { "\($0.figureKey)|\($0.originalHash)" }.sorted().joined(separator: "|"),
-                                    "supportsVision=\(profile.supportsVision)", preflightHash].joined(separator: "|"))
-        if let cached = (await store.snapshot()).visionArtifacts[key] { await onState(.completed(cacheHit: true, requestCount: 0)); return cached }
-        let payload = try VisionInsightPrompt.userPayload(paper: paper, figures: figures, images: images)
+                                    "supportsVision=\(profile.supportsVision)", requestPayloadHash, preflightHash].joined(separator: "|"))
+        if let cached = await store.visionArtifact(cacheKey: key) {
+            await onState(.completed(cacheHit: true, requestCount: 0))
+            return cached
+        }
         do {
             await onState(.connecting)
             let response = try await completeVisionRequest(
                 system: VisionInsightPrompt.systemInstruction,
-                userPayload: payload,
+                userPayload: prepared.userPayload,
                 images: images,
                 profile: profile,
                 apiKey: apiKey,
@@ -306,15 +315,25 @@ actor VisionWorkflow {
         return try await generate(for: paper, prepared: prepared, settings: settings, apiKey: apiKey, onState: onState)
     }
 
-    private func makePreflight(paperID: Int, images: [VisionInputImage], endpoint: String) -> VisionPreflight {
+    private static func requestPayloadHash(userPayload: String, images: [VisionInputImage]) -> String {
+        let imageIdentity = images.map {
+            "\($0.figureKey)|\($0.mimeType)|\($0.originalHash)|\(StableHash.sha256($0.data))"
+        }.joined(separator: "\n")
+        return StableHash.sha256(userPayload + "\n" + imageIdentity)
+    }
+
+    private func makePreflight(paperID: Int, images: [VisionInputImage], endpoint: String,
+                               requestPayloadHash: String) -> VisionPreflight {
         let draft = VisionPreflight(paperID: paperID, figureKeys: images.map(\.figureKey),
                                     originalDimensions: Dictionary(uniqueKeysWithValues: images.map { ($0.figureKey, [$0.originalPixelWidth ?? 0, $0.originalPixelHeight ?? 0]) }),
                                     resizedDimensions: Dictionary(uniqueKeysWithValues: images.map { ($0.figureKey, [$0.resizedPixelWidth ?? 0, $0.resizedPixelHeight ?? 0]) }),
                                     imageBytes: Dictionary(uniqueKeysWithValues: images.map { ($0.figureKey, $0.byteCount) }),
-                                    totalBytes: images.reduce(0) { $0 + $1.byteCount }, endpoint: endpoint, requestCount: 1, frozenHash: "")
+                                    totalBytes: images.reduce(0) { $0 + $1.byteCount }, endpoint: endpoint, requestCount: 1,
+                                    requestPayloadHash: requestPayloadHash, frozenHash: "")
         let frozenHash = StableHash.sha256((try? JSONEncoder.latticeLens.encode(draft)) ?? Data())
         return VisionPreflight(paperID: draft.paperID, figureKeys: draft.figureKeys, originalDimensions: draft.originalDimensions,
                                resizedDimensions: draft.resizedDimensions, imageBytes: draft.imageBytes, totalBytes: draft.totalBytes,
-                               endpoint: draft.endpoint, requestCount: draft.requestCount, frozenHash: frozenHash)
+                               endpoint: draft.endpoint, requestCount: draft.requestCount,
+                               requestPayloadHash: draft.requestPayloadHash, frozenHash: frozenHash)
     }
 }
