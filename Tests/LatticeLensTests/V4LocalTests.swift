@@ -5633,19 +5633,28 @@ final class V4LocalTests: XCTestCase {
         }
     }
 
-    func testTransportHeartbeatDoesNotRefreshDecodedContentIdleDeadline() async {
-        let timeouts = V4AnalysisTimeouts(connect: 0.2, firstContent: 0.2, idle: 0.04, hard: 0.5)
-        await assertDeadline(.idle, timeouts: timeouts) { transport, delta in
+    func testTransportHeartbeatKeepsActiveStreamAliveAfterPartialContent() async throws {
+        let timeouts = V4AnalysisTimeouts(connect: 0.2, firstContent: 0.2, idle: 0.08, hard: 1.0)
+        let recorder = V4DeadlineCallbackRecorder()
+        let response = try await V4AnalysisDeadlineEnforcer.perform(
+            timeouts: timeouts,
+            maximumResponseBytes: 100,
+            onTransportState: { _ in },
+            onDelta: { value in await recorder.record(value) }
+        ) { transport, delta in
             await transport(.connected)
             await transport(.waitingFirstContent)
             await delta("{")
             for _ in 0..<8 {
-                try await Task.sleep(nanoseconds: 10_000_000)
+                try await Task.sleep(nanoseconds: 20_000_000)
                 await transport(.receivedTransportActivity)
             }
             await delta("}")
             return "{}"
         }
+        let callbacks = await recorder.snapshot()
+        XCTAssertEqual(response, "{}")
+        XCTAssertEqual(callbacks, ["{", "}"])
     }
 
     func testAnalysisDeadlineEnforcerDropsLateCallbacksAndDoesNotRetry() async throws {

@@ -479,20 +479,24 @@ final class V5FinalTests: XCTestCase {
                                       baseURL: "http://127.0.0.1:11434/v1",
                                       manualModel: "fixture-local", usesStreaming: true)
         let recorder = V5DeltaBatchRecorder()
+        let transportRecorder = V5TransportStateRecorder()
 
         let response = try await client.complete(
             system: "fixture", userPayload: "fixture", profile: profile, apiKey: "",
             maximumResponseBytes: 1_024, requestTimeout: 10,
-            onTransportState: { _ in },
+            onTransportState: { state in await transportRecorder.append(state) },
             onDelta: { delta in await recorder.append(delta) }
         )
 
         let publishedBatches = await recorder.values()
+        let transportStates = await transportRecorder.values()
         XCTAssertEqual(response, String(repeating: "x", count: V5BatchedSSEURLProtocol.eventCount))
         XCTAssertEqual(publishedBatches.joined(), response,
                        "coalescing must preserve exact decoded response bytes and order")
         XCTAssertLessThan(publishedBatches.count, 64,
                           "many small SSE events should not cause one UI/actor hop per token")
+        XCTAssertTrue(transportStates.contains(.receivedTransportActivity),
+                      "raw SSE bytes, including comments, must reach the idle-deadline monitor")
     }
 
     func testInsightWorkflowAppliesTheSelectedFiniteProviderDeadline() async throws {
@@ -778,6 +782,13 @@ private actor V5DeltaBatchRecorder {
     func values() -> [String] { recorded }
 }
 
+private actor V5TransportStateRecorder {
+    private var recorded: [LLMTransportState] = []
+
+    func append(_ state: LLMTransportState) { recorded.append(state) }
+    func values() -> [LLMTransportState] { recorded }
+}
+
 private final class V5BatchedSSEURLProtocol: URLProtocol, @unchecked Sendable {
     static let eventCount = 512
 
@@ -795,7 +806,7 @@ private final class V5BatchedSSEURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        var body = String()
+        var body = ": keep-alive\n\n"
         body.reserveCapacity(Self.eventCount * 64)
         for _ in 0..<Self.eventCount {
             let event = try! JSONSerialization.data(withJSONObject: [

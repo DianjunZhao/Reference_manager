@@ -481,7 +481,7 @@ class OldAppRollbackProcessCleanupTests(unittest.TestCase):
 
 class InputManifestContractTests(unittest.TestCase):
     def test_verifier_and_benchmark_fixture_share_the_project_release_identity(self):
-        self.assertEqual((VERIFIER.PRODUCT_VERSION, VERIFIER.BUILD_NUMBER), ("2.0.0", 210))
+        self.assertEqual((VERIFIER.PRODUCT_VERSION, VERIFIER.BUILD_NUMBER), ("2.0.0", 211))
         source = (ROOT / "Tests" / "LatticeLensTests" / "V4BenchmarkTests.swift").read_text(encoding="utf-8")
         match = re.search(r'"build_number":\s*(\d+)', source)
         self.assertIsNotNone(match)

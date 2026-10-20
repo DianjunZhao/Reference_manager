@@ -7,6 +7,15 @@ not certify the current source tree.
 
 ## Unreleased — Reference_manager 2.0 / v5 in progress
 
+- 2026-10-20 stream-inactivity deadline fix (Build 211): after the first decoded
+  response delta, bounded response-body activity and SSE keep-alives refresh the
+  stream-idle deadline. They still cannot satisfy the separate first-content
+  deadline, and the finite hard request deadline is unchanged. A regression
+  reproduces partial text followed by active transport heartbeats: Build 210
+  failed it with `LLM stream idle deadline exceeded`, while Build 211 continues
+  until the stream becomes genuinely quiet or reaches its hard deadline. This
+  is host-free fixture evidence, not a live provider-throughput claim.
+
 - 2026-10-18 active-V12 migration recovery guard (Build 207): the production
   factory now verifies a current V12 store before inspecting pending older
   migration journals, and recovers only the migration identified by the active

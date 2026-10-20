@@ -382,10 +382,10 @@ struct V4AnalysisTimeouts: Sendable, Equatable {
     var isValidRequestBudget: Bool {
         [connect, firstContent, idle, hard].allSatisfy { $0.isFinite && $0 > 0 }
     }
-    /// Real providers may spend more than 30 s preparing a long paper report
-    /// or pause between SSE chunks.  These finite budgets avoid false idle
-    /// failures while retaining a hard upper bound and the one-request
-    /// fail-closed contract.
+    /// Real providers may spend time preparing long paper reports or pause
+    /// between decoded SSE chunks. The finite stream-idle budget is refreshed
+    /// by response-body activity after content begins; first-content and hard
+    /// deadlines remain independent and finite.
     static let `default` = V4AnalysisTimeouts(connect: 30, firstContent: 120, idle: 120, hard: 600)
     /// Evidence is a multi-request, user-cancellable job, not an unbounded
     /// HTTP request. Each prose/formula request uses the same finite phase and
@@ -432,7 +432,7 @@ private actor V4AnalysisDeadlineMonitor {
     private let maximumResponseBytes: Int
     private var connectedAtUptimeNanoseconds: UInt64?
     private var firstContentAtUptimeNanoseconds: UInt64?
-    private var lastContentAtUptimeNanoseconds: UInt64?
+    private var lastTransportActivityAtUptimeNanoseconds: UInt64?
     private var receivedBytes = 0
     private var terminalFailure: V4AnalysisDeadlineError?
 
@@ -455,10 +455,10 @@ private actor V4AnalysisDeadlineMonitor {
         case .waitingFirstContent:
             break
         case .receivedTransportActivity:
-            // Raw response bytes and SSE heartbeats are not decoded model
-            // content. They must not satisfy first-content or extend the
-            // decoded-content idle deadline.
-            break
+            // Transport activity is not decoded content, so first-content
+            // remains governed by its own deadline. Once content has started,
+            // it proves the stream is still alive and refreshes stream-idle.
+            lastTransportActivityAtUptimeNanoseconds = uptimeNanoseconds
         }
         evaluate(at: uptimeNanoseconds)
         return terminalFailure == nil
@@ -475,7 +475,7 @@ private actor V4AnalysisDeadlineMonitor {
             return false
         }
         firstContentAtUptimeNanoseconds = firstContentAtUptimeNanoseconds ?? uptimeNanoseconds
-        lastContentAtUptimeNanoseconds = uptimeNanoseconds
+        lastTransportActivityAtUptimeNanoseconds = uptimeNanoseconds
         evaluate(at: uptimeNanoseconds)
         return terminalFailure == nil
     }
@@ -504,8 +504,8 @@ private actor V4AnalysisDeadlineMonitor {
         } else if firstContentAtUptimeNanoseconds == nil, timeouts.firstContent.isFinite {
             deadlines.append(deadline(after: timeouts.firstContent,
                                      from: connectedAtUptimeNanoseconds ?? startedAtUptimeNanoseconds))
-        } else if let lastContentAtUptimeNanoseconds, timeouts.idle.isFinite {
-            deadlines.append(deadline(after: timeouts.idle, from: lastContentAtUptimeNanoseconds))
+        } else if let lastTransportActivityAtUptimeNanoseconds, timeouts.idle.isFinite {
+            deadlines.append(deadline(after: timeouts.idle, from: lastTransportActivityAtUptimeNanoseconds))
         }
         // With no finite deadline, wake only occasionally as a cancellation
         // fallback.  `Task.sleep` itself is cancellation-aware, so this does
@@ -530,8 +530,9 @@ private actor V4AnalysisDeadlineMonitor {
                   uptimeNanoseconds >= deadline(after: timeouts.firstContent,
                                                 from: connectedAtUptimeNanoseconds ?? startedAtUptimeNanoseconds) {
             terminalFailure = .firstContent
-        } else if let lastContentAtUptimeNanoseconds, timeouts.idle.isFinite,
-                  uptimeNanoseconds >= deadline(after: timeouts.idle, from: lastContentAtUptimeNanoseconds) {
+        } else if firstContentAtUptimeNanoseconds != nil,
+                  let lastTransportActivityAtUptimeNanoseconds, timeouts.idle.isFinite,
+                  uptimeNanoseconds >= deadline(after: timeouts.idle, from: lastTransportActivityAtUptimeNanoseconds) {
             terminalFailure = .idle
         } else if timeouts.hard.isFinite,
                   uptimeNanoseconds >= deadline(after: timeouts.hard, from: startedAtUptimeNanoseconds) {

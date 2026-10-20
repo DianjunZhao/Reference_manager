@@ -74,8 +74,10 @@ enum LLMTransportState: String, Equatable, Sendable {
     case connected
     /// The request is waiting for the first response-body byte.
     case waitingFirstContent
-    /// A response-body byte or transport heartbeat arrived. This does not
-    /// imply decoded model content and must not reset content-idle deadlines.
+    /// A response-body byte or transport heartbeat arrived. This cannot satisfy
+    /// the first-content deadline, but after the first decoded delta it refreshes
+    /// the stream-idle deadline so active reasoning/keep-alives are not mistaken
+    /// for a stalled transport.
     case receivedTransportActivity
 }
 
